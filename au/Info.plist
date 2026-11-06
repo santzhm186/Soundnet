@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleDevelopmentRegion</key><string>en</string>
+<key>CFBundleExecutable</key><string>Soundnet</string>
+<key>CFBundleIdentifier</key><string>audio.ternary.instrument</string>
+<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+<key>CFBundleName</key><string>Soundnet</string>
+<key>CFBundlePackageType</key><string>BNDL</string>
+<key>CFBundleShortVersionString</key><string>1.3.0</string>
+<key>CFBundleVersion</key><string>4</string>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>AudioComponents</key><array><dict>
+<key>name</key><string>Soundnet: Soundnet</string>
+<key>description</key><string>Three-oscillator instrument with sidechain, delay, EQ and rhythm arpeggiator</string>
+<key>factoryFunction</key><string>TernaryUnitFactory</string>
+<key>type</key><string>aumu</string>
+<key>subtype</key><string>Tern</string>
+<key>manufacturer</key><string>Trny</string>
+<key>version</key><integer>66304</integer>
+<key>sandboxSafe</key><true/>
+<key>tags</key><array><string>Synthesizer</string></array>
+</dict></array>
+</dict></plist>

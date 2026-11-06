@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>data</key>
+	<data>
+	AAAAAAAAAAAAAAAZAAAAAEAAAAAAAAABPyj1wwAAAAIAAAAAAAAAA0BAAAAAAAAEPsKP
+	XAAAAAXBQAAAAAAABgAAAAAAAAAHPjhR7AAAAAhBQAAAAAAACT6uFHsAAAAKPmFHrgAA
+	AAs/MzMzAAAADD9PXCkAAAANP4AAAAAAAA5DmwAAAAAADz6j1woAAAAQPfXCjwAAABEA
+	AAAAAAAAEgAAAAAAAAATAAAAAAAAABQAAAAAAAAAFUAAAAAAAAAWQuAAAAAAABc/GZma
+	AAAAGD89cKQ=
+	</data>
+	<key>element-name</key>
+	<dict>
+		<key>1</key>
+		<dict>
+			<key>0</key>
+			<string>Side Chain</string>
+		</dict>
+		<key>2</key>
+		<dict>
+			<key>0</key>
+			<string>Stereo Out</string>
+		</dict>
+	</dict>
+	<key>manufacturer</key>
+	<integer>1416785529</integer>
+	<key>name</key>
+	<string>Untitled</string>
+	<key>subtype</key>
+	<integer>1415934574</integer>
+	<key>type</key>
+	<integer>1635085685</integer>
+	<key>version</key>
+	<integer>0</integer>
+</dict>
+</plist>

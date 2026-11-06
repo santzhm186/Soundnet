@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+  <key>CFBundleDisplayName</key><string>Soundnet</string>
+  <key>CFBundleExecutable</key><string>Soundnet</string>
+  <key>CFBundleIdentifier</key><string>studio.ternary.instrument</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Soundnet</string>
+  <key>CFBundleIconFile</key><string>Ternary</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.3.0</string>
+  <key>CFBundleVersion</key><string>4</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>在你打开音频输入时，Ternary 需要读取麦克风或声卡的信号，以混合或处理声音。</string>
+</dict>
+</plist>
