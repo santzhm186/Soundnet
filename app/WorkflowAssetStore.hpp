@@ -9,10 +9,12 @@ struct PreparedAssets {
     NSDictionary *dictionary = nil;
     MidiClip clip{};
     NoteModel model{};
+    GraphSpec graph;
 
     bool load(NSDictionary *input) {
         if (![input isKindOfClass:NSDictionary.class] ||
             !triassets::decode(input,clip,model,nullptr)) return false;
+        if(input[@"graph"] && !triassets::decodeGraph(input[@"graph"],graph,nullptr))return false;
         dictionary = CFBridgingRelease(CFPropertyListCreateDeepCopy(nullptr,
             (__bridge CFDictionaryRef)input,kCFPropertyListImmutable));
         return dictionary != nil;
@@ -26,6 +28,10 @@ struct WorkflowAssetStore {
             id previous = current[key], replacement = next.dictionary[key];
             return previous != replacement && ![previous isEqual:replacement];
         };
+        if(changed(@"graph")) {
+            if(next.dictionary[@"graph"])engine.setGraph(next.graph);
+            else engine.clearGraph();
+        }
         if (changed(@"clip")) engine.setClip(next.clip);
         if (changed(@"model")) engine.setModel(next.model);
         current = next.dictionary;

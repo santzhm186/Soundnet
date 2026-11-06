@@ -104,7 +104,8 @@ NSArray *evaluatePitchModel(NSURL *url, NSString **why) {
 bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NSString **why) {
     if (![assets isKindOfClass:NSDictionary.class]) return fail(why,@"工作流素材应为对象。");
     for (id key in assets)
-        if (!([key isEqual:@"clip"] || [key isEqual:@"model"])) return fail(why,@"工作流包含未知类型的素材。");
+        if (!([key isEqual:@"clip"] || [key isEqual:@"model"] || [key isEqual:@"graph"])) return fail(why,@"工作流包含未知类型的素材。");
+    if(assets[@"graph"]) { tri::GraphSpec graph; if(!decodeGraph(assets[@"graph"],graph,why))return false; }
     tri::MidiClip nextClip;
     tri::NoteModel nextModel;
     NSDictionary *c=assets[@"clip"], *m=assets[@"model"];
@@ -131,6 +132,49 @@ bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NS
     model=nextModel;
     return true;
 }
+
+bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) {
+    if(![document isKindOfClass:NSDictionary.class] || ![document[@"version"] isEqual:@3] ||
+       ![document[@"nodes"] isKindOfClass:NSArray.class] || ![document[@"edges"] isKindOfClass:NSArray.class])
+        return fail(why,@"请选择版本 3 的 Soundnet 工作流。");
+    auto integer=[](id v,double min,double max) {
+        return numeric(v) && std::isfinite([v doubleValue]) && [v doubleValue]>=min &&
+            [v doubleValue]<=max && std::trunc([v doubleValue])==[v doubleValue];
+    };
+    tri::GraphSpec next;
+    for(id obj in document[@"nodes"]) {
+        if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,26) ||
+           !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
+           !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
+            return fail(why,@"节点的实例 ID、类型或坐标无效。");
+        tri::GraphNode node;
+        node.id=[obj[@"id"] unsignedLongLongValue];node.type=[obj[@"type"] intValue];
+        node.x=[obj[@"x"] floatValue];node.y=[obj[@"y"] floatValue];
+        for(id key in obj[@"parameters"]) {
+            if(![key isKindOfClass:NSString.class])return fail(why,@"参数标识无效。");
+            NSScanner *scan=[NSScanner scannerWithString:key];int pid=0;
+            if(![scan scanInt:&pid] || !scan.isAtEnd || pid<0 || pid>=tri::ParamCount ||
+                tri::routeParam(pid) || !numeric(obj[@"parameters"][key]))return fail(why,@"参数标识或值无效。");
+            node.parameters[pid]=[obj[@"parameters"][key] floatValue];
+        }
+        if(obj[@"asset"]) {
+            NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":nil;
+            if(!kind || !decode(@{kind:obj[@"asset"]},node.clip,node.model,why))return fail(why,@"节点素材无效。");
+        }
+        next.nodes.push_back(std::move(node));
+    }
+    for(id edge in document[@"edges"]) {
+        if(![edge isKindOfClass:NSDictionary.class] || !integer(edge[@"source"],1,9007199254740991.) ||
+            !integer(edge[@"target"],1,9007199254740991.) || !integer(edge[@"port"],0,3))return fail(why,@"连线格式无效。");
+        if(edge[@"sourcePort"] && !integer(edge[@"sourcePort"],0,1))return fail(why,@"输出端口无效。");
+        next.edges.push_back({[edge[@"source"] unsignedLongLongValue],[edge[@"target"] unsignedLongLongValue],[edge[@"port"] intValue],[edge[@"sourcePort"] intValue]});
+    }
+    std::vector<size_t> order;
+    if(!tri::graphOrder(next,order))return fail(why,@"节点 ID 重复、端口类型不匹配或图中存在回路。");
+    graph=std::move(next);return true;
+}
+
 bool validate(NSDictionary *assets, NSString **why) {
     tri::MidiClip clip;
     tri::NoteModel model;

@@ -1,62 +1,62 @@
 # Soundnet
 
-Soundnet 是 macOS 原生音乐工作流编辑器，提供独立 App 和 Logic Pro 可加载的 Audio Unit v2。画布上有三种连线：音符、时钟、立体声音频。同一条旋律可以触发内置振荡器，也可以经过模型变换后送给其他乐器。声卡或 DAW 侧链的音频可以直接进入效果器。
+Soundnet 2.0 是 macOS 原生音乐节点工作流，提供独立 App 和 Logic 可加载的 AU v2 插件。
 
-## 先运行一条线路
+输入 → 节点处理 → 输出。每个节点都有独立的实例 ID、参数、素材和运行状态。画布右键可从「输入」「处理」「逻辑」「输出」中添加节点，同一种节点可添加多个，实例数量由可用内存和实时处理能力决定。
 
-1. 打开 Soundnet，选择「工作流 → 打开工作流 JSON…」，载入 [四拍模型示例](examples/clip-model.json)。
-2. 点「MIDI Clip」，勾选「启用播放」。五个音符依次经过音高镜像模型和一个振荡器发声。点「节奏速度」可以调整 BPM。
-3. 在 Logic 中，把 Soundnet AU 放进软件乐器轨道的乐器插槽，可用同一份工作流。要跟随工程走带，在速度节点选择「DAW 工程速度」，再按 Logic 的播放键。
+## 节点与信号
 
-示例工作流内嵌原始 MIDI 和模型计算出的映射，移到另一台 Mac 也能播放。示例目录同时提供 [原始 MIDI](examples/FourBeat.mid) 和 [Core ML 音高镜像模型](examples/PitchMirror.mlmodel)，可用来试验素材导入。
+- 音符信号连接本地 MIDI、DAW MIDI、MIDI Clip、和弦、和声走向、ARP、力度、音符模型、振荡器与 MIDI 输出。
+- 音频信号连接硬件或 DAW 音频输入、振荡器、混音器、EQ、Delay 与硬件或 DAW 音频输出。
+- 时钟信号来自独立的节奏速度节点或 DAW 时钟节点，控制 Clip、ARP、走向和力度的时间。
+- 触发信号连接开始、停止、等待、次数条件和播放器。开始、停止节点也可接收上游触发并转换为相应命令。多个触发来源可连接同一输入。
+- MIDI Clip 提供音符输出和独立的「循环完成」触发输出。次数条件每收到 X 次信号输出一次，然后重新计数。等待节点按秒延后转发收到的开始或停止命令。
 
-![Soundnet 中的四拍工作流，速度节点驱动 MIDI Clip，音符经模型变换后送入振荡器和硬件输出。](docs/workflow.png)
+本地 MIDI 与 DAW MIDI、MIDI Clip 是不同节点。硬件音频与 DAW 音频、模块 BPM 与 DAW 时钟、硬件输出与 DAW 输出也分别提供独立节点。
 
-## 输入、节奏和输出
+## 试用触发工作流
 
-| 用途 | 独立 App | Logic / AU 宿主 |
-| --- | --- | --- |
-| 本地 MIDI | 电脑键盘、屏幕琴键、CoreMIDI 输入 | 插件的屏幕琴键 |
-| DAW MIDI | DAW 把轨道送至 `Soundnet MIDI In` | 当前乐器轨的现场 MIDI 或 MIDI 区域 |
-| MIDI Clip | 导入标准 MIDI 文件，可单次或循环播放 | 相同，可跟随宿主播放、停止或定位 |
-| 时钟 | 速度模块的 BPM，也可对虚拟 MIDI 端口发送 MIDI Clock 和传输消息 | DAW 工程速度和走带，或速度模块自己的 BPM |
-| 音频输出 | 系统当前选中的扬声器或声卡 | 当前乐器通道的立体声输出，可继续送往总线或效果器 |
-| MIDI 输出 | `Soundnet MIDI Out` 虚拟源 | 宿主须接收 AU 的 MIDI 输出回调 |
+打开 [三次循环后等待示例](examples/three-loops-then-wait.json)，选择「开始触发器」，按「发送触发信号」。
 
-「DAW MIDI 演奏」模板可直接弹奏宿主轨道。「MIDI Clip → 模型 → 音频」可自己载入素材。「空白工作流」可从节点库开始搭线。保存的线路可在 App 与 AU 之间互换，两个环境分别连接自己的输出端。
+第一个 Clip 播放三轮后，循环完成信号达到次数条件，停止第一个 Clip。另一条触发线等待一秒后开始第二个 Clip。两个 Clip 使用自己的素材与播放状态，分别经过振荡器后进入混音器。
 
-## 节点
+示例使用独立版的硬件输出。在 AU 中删除该输出，从右键菜单添加「DAW 音频输出」，把混音器连接过去。
 
-- **音符来源与处理**：本地 MIDI、DAW MIDI、MIDI Clip、和弦、和声走向、力度自动化、ARP 和音符模型。和弦与走向都提供预设和自定义输入，例如 `F#m7`、`Cmaj7 | Am7 | Dm7 | G7`。ARP 提供 Bossa Nova、Reggae 等节奏型，每音可重复 1–8 次。
-- **时钟**：将节奏速度节点接到 Clip、ARP、走向或力度节点，可以显式控制时间来源。Clip 采用四分音符为拍，保留多轨音符、力度、踏板延音和结尾休止。
-- **模型**：载入本地 Core ML 单输入、单输出音高模型（Int64 或 Double 标量），或者包含 128 个 MIDI 音高值的 JSON 映射。导入时对 0–127 每个音高运行一次模型，实时演奏直接使用结果。模型变更可撤销，映射随工程保存。接口适用于由单个音高决定输出的无状态处理。
-- **音频**：三个振荡器各有正弦、方波、锯齿、三角波，独立 A/S/R、电平与音高。外部音频、四路混音、三段 EQ、立体声 Delay 和音频输出可以重新组合。单独处理外部声音可使用「外部音频效果器」模板。
-- **MIDI 输出**：连接一个音符来源即可驱动下游软件。振荡器和音频输出可以从这条工作流中移除。
+## 操作
 
-1.4 提供 18 个模块槽位，包括三个振荡器槽。可移除、恢复和重新连接各槽位，支持一出多接、信号类型检查和回路检测。旧工程中的 MIDI 输入默认兼容合并，DAW MIDI 节点接出连线后会分离两个来源。
+- 右键画布插入节点。拖节点移动，拖输出圆点到输入圆点接线。
+- 右键可复制、断开或删除选中节点。复制会生成新的实例 ID，并复制参数和素材。
+- 拖动空白平移，滚轮移动画布，Command + 滚轮缩放，「适配」显示整张图。
+- 右侧编辑所选实例的参数。MIDI Clip 和模型的素材存放在该实例内。
+- 振荡器 Wave 0/1/2/3 分别为正弦、方波、锯齿、三角波。每实例有自己的 A/D/S/R、音高与电平。
+- ARP 的 Rhythm 0/1/2/3/4 分别为直拍、Bossa Nova、Reggae、Disco、十六分音符。Arp Repeat 控制每音重复次数。
+- 和弦与走向提供预制入口，也可输入 Cmaj7 或 Cmaj7 | Am7 | Dm7 | G7。
+- 开始/停止触发器中的按钮发送一次信号，等待节点可保存多个待发信号。重新打开工程会恢复工作流，手动按钮的历史点击不会重发。
+- 音频和音符依赖必须无回路。触发反馈通过播放器状态或等待队列处理。
+- 「保存」导出版本 3 JSON，包括实例、接线、每实例参数和素材。「打开」兼容旧工作流并转换为实例。
+- 撤销、重做支持节点添加、删除、复制、参数、连线和素材编辑。
 
-## 构建和安装
+## 主机接口
 
-需要 macOS 13 或更新版本，以及支持 C++23 的 Xcode Command Line Tools。
+独立版的本地 MIDI 接收屏幕琴键、电脑键盘和连接的 MIDI 输入。外部 DAW 可发送到 Soundnet MIDI In；MIDI 输出使用 Soundnet MIDI Out。DAW 时钟可从虚拟端口接收 MIDI Clock 与走带消息。
+
+AU 的 DAW MIDI 来自当前乐器轨道，DAW 音频输入来自侧链，DAW 输出返回当前轨道。MIDI 输出需要宿主接收 AU 的 MIDI 输出回调。硬件音频输入输出在独立 App 中连接系统所选设备。
+
+Core ML 音符模型仍使用单音高、无状态输入输出。每个模型实例拥有独立映射，导入阶段计算结果，实时线程读取映射。
+
+## 构建与验证
+
+需要 macOS 13+ 和支持 C++23 的 Xcode Command Line Tools。
 
 ```sh
 ./build-all.sh
-```
-
-产物在 `build/release/Soundnet.app` 和 `build/release/Soundnet.component`，均包含 arm64 与 x86_64，并采用本地签名。将 component 放到 `~/Library/Audio/Plug-Ins/Components/` 后，在 Logic 中选择「AU Instruments → Soundnet → Soundnet」。为兼容旧 Logic 工程，Audio Unit 沿用初版的四字符标识。同一插件目录只需安装一份 Soundnet 或旧版 Ternary。
-
-## 验证
-
-```sh
-mkdir -p build/tests
-for test in EngineTests MusicNodesTests WorkflowSourcesTests; do
-  xcrun clang++ -O2 -std=c++17 "tests/$test.cpp" -o "build/tests/$test" && "build/tests/$test" || exit 1
-done
-xcrun clang++ -O2 -std=c++17 -fobjc-arc tests/AssetImportTests.mm src/WorkflowAssets.mm \
-  -framework Foundation -framework CoreML -o build/tests/AssetImportTests
-build/tests/AssetImportTests
-build/release/Soundnet.app/Contents/MacOS/Soundnet --self-test
+xcrun clang++ -std=c++17 -O2 tests/InstanceGraphTests.cpp -o build/instance-tests
+build/instance-tests
 auval -strict -v aumu Tern Trny
 ```
 
-[中文使用说明](docs/使用说明.txt)。Apple AudioUnitSDK 的第三方源码及 Apache 2.0 许可证位于 `au/vendor/`。
+产物位于 build/release，包含 arm64 和 x86_64。AU 的四字符标识沿用旧版，以读取已有工程。实例图存放在 AU 工程状态中。旧参数 ID 继续用于旧音色兼容，实例参数通过工作流编辑器和项目状态保存。
+
+实例图在控制线程验证并编译，音频线程按依赖顺序执行。拓扑发布使用交换计划，节点状态按实例 ID 复用，新增、删除或移动其他节点会保留现有实例的运行状态。
+
+Apple AudioUnitSDK 第三方源码与 Apache 2.0 许可证在 au/vendor/。

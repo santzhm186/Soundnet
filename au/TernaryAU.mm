@@ -213,6 +213,7 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
     }
 public:
     explicit TernaryUnit(AudioComponentInstance instance) : Base(instance,1,1) {
+        engine.setHosted(true);
         replaceLayout(tri::layout::defaults());
         engine.setMidiOutput(this,emitEvent);
         CreateElements();

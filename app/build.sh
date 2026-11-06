@@ -13,7 +13,7 @@ else
 fi
 xcrun clang++ -std=c++17 -O2 -fobjc-arc -fvisibility=hidden \
   -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 \
-  "$project/app/main.mm" "$project/app/TRIHost.mm" "$project/src/WorkflowAssets.mm" "$project/ui/TriEditor.mm" "$project/ui/WorkflowCanvas.mm" \
+  "$project/app/main.mm" "$project/app/TRIHost.mm" "$project/src/WorkflowAssets.mm" "$project/ui/InstanceEditor.mm" \
   -framework Cocoa -framework AudioToolbox -framework AVFoundation -framework AVFAudio \
   -framework CoreMIDI -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore -o "$app/MacOS/Soundnet"
 codesign --force --sign - "$destination/Soundnet.app"
