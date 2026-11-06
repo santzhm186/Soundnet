@@ -1,0 +1,144 @@
+{
+  "version" : 1,
+  "parameters" : {
+    "Osc 2 Attack" : -1,
+    "Progression Play" : 0,
+    "Osc 3 Attack" : -1,
+    "Progress Quality 6" : 0,
+    "Attack" : 0.012000000104308128,
+    "Osc 3 Level" : 0.18000000715255737,
+    "Velocity Maximum" : 112,
+    "Delay Feedback" : 0.31999999284744263,
+    "Osc 3 Sustain" : -1,
+    "Clock Host Sync" : 1,
+    "Osc 3 Release" : -1,
+    "Osc 2 Wave" : 3,
+    "Delay Time" : 310,
+    "Progress Quality 7" : 0,
+    "Master" : 0.74000000953674316,
+    "Rhythm" : 0,
+    "Osc 1 Tune" : 0,
+    "Progress Root 1" : 60,
+    "EQ Mid" : 0,
+    "Progress Root 2" : 69,
+    "Progress Quality 8" : 0,
+    "Progress Root 3" : 62,
+    "Progress Root 4" : 67,
+    "Chord Root" : 66,
+    "Progress Quality 1" : 3,
+    "Progress Root 5" : 60,
+    "Osc 3 Wave" : 0,
+    "Gate" : 0.60000002384185791,
+    "Chord Quality" : 4,
+    "EQ High" : 0,
+    "Progress Root 6" : 60,
+    "Progress Root 7" : 60,
+    "Progress Root 8" : 60,
+    "Audio Input" : 1,
+    "Velocity Shape" : 0,
+    "Osc 2 Tune" : -12,
+    "Progress Quality 2" : 4,
+    "Progression Length" : 4,
+    "Osc 2 Sustain" : -1,
+    "Osc 2 Release" : -1,
+    "Osc 2 Level" : 0.37999999523162842,
+    "Sustain" : 0.69999998807907104,
+    "Bars Per Chord" : 1,
+    "EQ Low" : 0,
+    "Progress Quality 3" : 4,
+    "Clock BPM" : 112,
+    "Osc 3 Tune" : 12,
+    "Arp Repeat" : 1,
+    "Decay" : 0.2199999988079071,
+    "Progress Quality 4" : 2,
+    "Release" : 0.23999999463558197,
+    "Osc 1 Sustain" : -1,
+    "Osc 1 Release" : -1,
+    "Progress Quality 5" : 0,
+    "Delay Mix" : 0.11999999731779099,
+    "Velocity Beats" : 4,
+    "Velocity Minimum" : 48,
+    "Osc 1 Wave" : 2,
+    "Osc 1 Level" : 0.6600000262260437,
+    "Arpeggiator" : 1,
+    "Tempo" : 112,
+    "Chord Play" : 0,
+    "Osc 1 Attack" : -1
+  },
+  "connections" : {
+    "mix.4" : "input",
+    "osc2.notes" : "arp",
+    "velocity.notes" : "progression",
+    "mix.2" : "osc2",
+    "arp.clock" : "clock",
+    "progression.clock" : "clock",
+    "output.audio" : "delay",
+    "osc1.notes" : "arp",
+    "velocity.clock" : "clock",
+    "mix.3" : "osc3",
+    "osc3.notes" : "arp",
+    "eq.audio" : "mix",
+    "delay.audio" : "eq",
+    "mix.1" : "osc1",
+    "arp.notes" : "velocity"
+  },
+  "nodes" : {
+    "osc1" : [
+      -1,
+      -1
+    ],
+    "velocity" : [
+      -1,
+      -1
+    ],
+    "output" : [
+      -1,
+      -1
+    ],
+    "delay" : [
+      -1,
+      -1
+    ],
+    "eq" : [
+      -1,
+      -1
+    ],
+    "osc3" : [
+      -1,
+      -1
+    ],
+    "input" : [
+      -1,
+      -1
+    ],
+    "midi" : [
+      -1,
+      -1
+    ],
+    "arp" : [
+      -1,
+      -1
+    ],
+    "chord" : [
+      -1,
+      -1
+    ],
+    "osc2" : [
+      -1,
+      -1
+    ],
+    "mix" : [
+      -1,
+      -1
+    ],
+    "progression" : [
+      -1,
+      -1
+    ],
+    "clock" : [
+      -1,
+      -1
+    ]
+  },
+  "format" : "audio.ternary.workflow"
+}

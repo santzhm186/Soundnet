@@ -99,7 +99,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (void)setupMIDI {
     __weak TRIHost *weakSelf = self;
-    OSStatus err = MIDIClientCreateWithBlock(CFSTR("Ternary"), &_client, ^(const MIDINotification *n){
+    OSStatus err = MIDIClientCreateWithBlock(CFSTR("Soundnet"), &_client, ^(const MIDINotification *n){
         if (n->messageID == kMIDIMsgSetupChanged || n->messageID == kMIDIMsgObjectAdded ||
             n->messageID == kMIDIMsgObjectRemoved)
             dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf refreshSources]; });
@@ -109,9 +109,9 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     MIDIReceiveBlock receive = ^(const MIDIEventList *list, void *) {
         MIDIEventListForEachEvent(list, receiveUMP, rt);
     };
-    _midiReady = !MIDIInputPortCreateWithProtocol(_client,CFSTR("Ternary Input"),
+    _midiReady = !MIDIInputPortCreateWithProtocol(_client,CFSTR("Soundnet Input"),
                                                    kMIDIProtocol_1_0,&_port,receive);
-    MIDIDestinationCreateWithProtocol(_client,CFSTR("Ternary MIDI In"),kMIDIProtocol_1_0,&_destination,receive);
+    MIDIDestinationCreateWithProtocol(_client,CFSTR("Soundnet MIDI In"),kMIDIProtocol_1_0,&_destination,receive);
     [self refreshSources];
 }
 - (void)refreshSources {

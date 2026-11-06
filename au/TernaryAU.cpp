@@ -286,6 +286,15 @@ public:
             if (!tri::routeParam(id) && !present[id]) SetParameterRT(id,tri::params[id].def);
         return noErr;
     }
+    OSStatus GetParameterList(AudioUnitScope scope, AudioUnitParameterID* ids, UInt32& count) override {
+        if(scope!=global)return Base::GetParameterList(scope,ids,count);
+        count=0;
+        for(int id=0;id<tri::ParamCount;++id)if(!tri::routeParam(id)) {
+            if(ids)ids[count]=id;
+            ++count;
+        }
+        return noErr;
+    }
     OSStatus GetParameterInfo(AudioUnitScope scope,AudioUnitParameterID id, AudioUnitParameterInfo& info) override {
         if (scope != global || id >= tri::ParamCount) return kAudioUnitErr_InvalidParameter;
         const auto& spec = tri::params[id];

@@ -38,7 +38,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x10200,"system found installed 1.2");
+            check(version==0x10300,"system found installed 1.2");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);
@@ -51,19 +51,19 @@ int main(int argc,char** argv) {
             unit=remote;
         } else {
             NSString* bundlePath=[NSString stringWithUTF8String:argv[1]];
-            NSString* binary=[bundlePath stringByAppendingPathComponent:@"Contents/MacOS/Ternary"];
+            NSString* binary=[bundlePath stringByAppendingPathComponent:@"Contents/MacOS/Soundnet"];
             void* lib=dlopen(binary.fileSystemRepresentation,RTLD_NOW);
             if (!lib) { fprintf(stderr,"%s\n",dlerror()); return 1; }
             auto factory=reinterpret_cast<AudioComponentFactoryFunction>(dlsym(lib,"TernaryUnitFactory"));
             check(factory,"exported factory");
-            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x10200,factory);
+            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x10300,factory);
             check(comp,"component registration");
             requireOK(AudioComponentInstanceNew(comp,&unit),"AudioComponentInstanceNew");
         }
         auto global=kAudioUnitScope_Global;
         UInt32 bytes=0;
         requireOK(AudioUnitGetPropertyInfo(unit,kAudioUnitProperty_ParameterList,global,0,&bytes,nullptr),"parameter list");
-        check(bytes==sizeof(UInt32)*tri::RouteArpIn,"complete parameter list");
+        check(bytes==sizeof(UInt32)*(tri::ParamCount-(tri::RouteVelocityClock-tri::RouteArpIn+1)),"complete parameter list");
         for (int id=0;id<tri::RouteArpIn;++id) {
             AudioUnitParameterInfo info{};
             bytes=sizeof(info);

@@ -5,7 +5,12 @@ destination="${1:?Usage: build.sh destination-directory}"
 app="$destination/Soundnet.app/Contents"
 mkdir -p "$app/MacOS" "$app/Resources"
 cp "$project/app/Info.plist" "$app/Info.plist"
-if [[ -f "$project/ui/Ternary.icns" ]]; then cp "$project/ui/Ternary.icns" "$app/Resources/"; fi
+if [[ -f "$project/ui/Ternary.icns" ]]; then
+  cp "$project/ui/Ternary.icns" "$app/Resources/"
+else
+  "$project/tools/build-icon.sh" "$destination/icon-build"
+  cp "$destination/icon-build/Ternary.icns" "$app/Resources/"
+fi
 xcrun clang++ -std=c++17 -O2 -fobjc-arc -fvisibility=hidden \
   -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 \
   "$project/app/main.mm" "$project/app/TRIHost.mm" "$project/ui/TriEditor.mm" "$project/ui/WorkflowCanvas.mm" \
