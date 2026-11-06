@@ -4,6 +4,7 @@
 #include "WorkflowEditorAccess.hpp"
 #include <memory>
 #include <dlfcn.h>
+#include <CoreMIDI/CoreMIDI.h>
 #include <vector>
 #include <array>
 #include <cstdio>
@@ -28,6 +29,32 @@ static OSStatus source(void*,AudioUnitRenderActionFlags*,const AudioTimeStamp*,U
             static_cast<float*>(data->mBuffers[c].mData)[f] = c ? -.25f : .25f;
     return noErr;
 }
+// A host transport that can be stopped or seeked independently of sample time.
+struct CapturedMIDI {
+    unsigned ons=0,offs=0;
+    MIDITimeStamp start=0,end=0;
+};
+static OSStatus outputMIDI(void *context,const AudioTimeStamp *time,UInt32 port,const MIDIPacketList *list) {
+    auto &capture=*static_cast<CapturedMIDI *>(context);
+    if (port!=0 || !time || !list || list->numPackets!=1) return kAudio_ParamError;
+    const auto& packet=list->packet[0];
+    if (packet.length==3 && packet.data[1]==71) {
+        if ((packet.data[0]&0xf0)==0x90 && packet.data[2]) { ++capture.ons; capture.start=packet.timeStamp; }
+        if ((packet.data[0]&0xf0)==0x80) { ++capture.offs; capture.end=packet.timeStamp; }
+    }
+    return noErr;
+}
+struct Playhead { double beat=0; bool playing=false; };
+static OSStatus beatAndTempo(void *context,Float64 *beat,Float64 *bpm) {
+    if (beat) *beat=static_cast<Playhead*>(context)->beat;
+    if (bpm) *bpm=120;
+    return noErr;
+}
+static OSStatus transport(void *context,Boolean *playing,Boolean*,Float64*,Boolean*,Float64*,Float64*) {
+    if (playing) *playing=static_cast<Playhead*>(context)->playing;
+    return noErr;
+}
+
 int main(int argc,char** argv) {
     @autoreleasepool {
         check(argc>=2,"supply path to Ternary.component");
@@ -38,7 +65,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x10300,"system found installed 1.2");
+            check(version==0x10400,"system found installed Soundnet 1.4");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);
@@ -56,14 +83,14 @@ int main(int argc,char** argv) {
             if (!lib) { fprintf(stderr,"%s\n",dlerror()); return 1; }
             auto factory=reinterpret_cast<AudioComponentFactoryFunction>(dlsym(lib,"TernaryUnitFactory"));
             check(factory,"exported factory");
-            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x10300,factory);
+            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x10400,factory);
             check(comp,"component registration");
             requireOK(AudioComponentInstanceNew(comp,&unit),"AudioComponentInstanceNew");
         }
         auto global=kAudioUnitScope_Global;
         UInt32 bytes=0;
         requireOK(AudioUnitGetPropertyInfo(unit,kAudioUnitProperty_ParameterList,global,0,&bytes,nullptr),"parameter list");
-        check(bytes==sizeof(UInt32)*(tri::ParamCount-(tri::RouteVelocityClock-tri::RouteArpIn+1)),"complete parameter list");
+        check(bytes==sizeof(UInt32)*(tri::ParamCount-tri::defaultRouting.size()),"complete parameter list");
         for (int id=0;id<tri::RouteArpIn;++id) {
             AudioUnitParameterInfo info{};
             bytes=sizeof(info);
@@ -99,7 +126,18 @@ int main(int argc,char** argv) {
         auto newGraph=tri::defaultRouting;
         newGraph[tri::RouteOsc1In-tri::RouteArpIn]=tri::MidiNode;
         newGraph[tri::RouteOutputIn-tri::RouteArpIn]=tri::MixNode;
+        // Include both a new slot and a previously unsupported source in the AU
+        // editor command path (the out-of-process bridge uses ClassInfo).
+        newGraph[tri::routeIndex(tri::RouteModelIn)]=tri::DawMidiNode;
         requireOK(setRoutes(newGraph),"rewire ARP bypass and audio output");
+        const unsigned char smf[]={ 'M','T','h','d',0,0,0,6,0,0,0,1,0,96,
+            'M','T','r','k',0,0,0,12,0,0x90,69,110,96,0x80,69,0,0,0xff,0x2f,0 };
+        NSString *encoded=[[NSData dataWithBytes:smf length:sizeof(smf)] base64EncodedStringWithOptions:0];
+        NSDictionary *assets=@{@"clip":@{@"name":@"test.mid",@"smf":encoded}};
+        requireOK(workflow->setAssets(assets),"load embedded clip through editor");
+        check([workflow->readAssets() isEqual:assets],"clip available through editor");
+        check(workflow->setAssets(@{@"clip":@{@"name":@"bad",@"smf":@"!?"}})!=noErr &&
+              [workflow->readAssets() isEqual:assets],"bad clip cannot overwrite a working one");
         auto cycle=newGraph;
         cycle[tri::RouteEQIn-tri::RouteArpIn]=tri::DelayNode;
         check(setRoutes(cycle)!=noErr && routes()==newGraph,"cycle rejected without changing cables");
@@ -116,6 +154,7 @@ int main(int argc,char** argv) {
         bytes=sizeof(preset);
         requireOK(AudioUnitGetProperty(unit,kAudioUnitProperty_ClassInfo,global,0,&preset,&bytes),"save state");
         requireOK(setRoutes(tri::defaultRouting),"reset graph before recall");
+        requireOK(workflow->setAssets(@{}),"clear assets before recall");
         putCoordinate(tri::layout::x(tri::EQNode),42);
         putCoordinate(tri::layout::visibility,1023);
         set(tri::ArpRepeat,1);
@@ -133,6 +172,7 @@ int main(int argc,char** argv) {
         auto ui=workflow->state;
         check(ui.graph==newGraph && ui.layout[tri::layout::x(tri::EQNode)-tri::layout::first]==215.5f,
               "editor snapshot agrees with saved wiring and coordinates");
+        check([workflow->readAssets() isEqual:assets],"AU preset recalls embedded MIDI clip");
         CFRelease(preset);
         check(get(tri::Pattern)==2 && get(tri::ArpRepeat)==6 && get(tri::Osc1Attack)==.12f
               && get(tri::Osc2Sustain)==.38f && get(tri::Osc3Release)==2.75f,"1.1 patch round trip");
@@ -152,6 +192,7 @@ int main(int argc,char** argv) {
         CFPropertyListRef state11=(__bridge CFPropertyListRef)oneOne;
         requireOK(AudioUnitSetProperty(unit,kAudioUnitProperty_ClassInfo,global,0,&state11,sizeof(state11)),"restore exported 1.1 state");
         finishHostTurn();
+        check(workflow->readAssets().count==0,"old preset clears embedded assets");
         check(get(tri::ArpRepeat)==6 && get(tri::Osc3Release)==1.25f && routes()==tri::defaultRouting,
               "1.1 controls and original signal flow restored");
         check(coordinate(tri::layout::visibility)==1023 && coordinate(tri::layout::x(tri::EQNode))==-1,
@@ -209,6 +250,61 @@ int main(int argc,char** argv) {
         requireOK(setRoutes(muted),"disconnect output on running AU");
         render();
         check(std::all_of(l.begin()+128,l.end(),[](float x){return std::abs(x)<1e-6f;}),"disconnected cable changes rendered audio");
+        bool direct=std::strcmp(argv[1],"--installed-oop")!=0;
+        auto peak=[&]{ float v=0; for(float x:l) v=std::max(v,std::abs(x)); return v; };
+        tri::Routing daw{};
+        daw[tri::routeIndex(tri::RouteOsc1In)]=tri::DawMidiNode;
+        daw[tri::routeIndex(tri::RouteOutputIn)]=tri::Osc1Node;
+        requireOK(setRoutes(daw),"connect explicit DAW MIDI to oscillator");
+        requireOK(AudioUnitReset(unit,global,0),"clear held notes");
+        requireOK(workflow->sendLocalMIDI({0x90,69,110}),"onscreen key input");
+        render(); check(peak()<1e-5,"onscreen key isolated from DAW port");
+        requireOK(workflow->sendLocalMIDI({0x80,69,0}),"release onscreen key");
+        requireOK(MusicDeviceMIDIEvent(unit,0x90,69,110,0),"DAW track input");
+        render(); check(peak()>.001,"DAW track reaches explicit DAW node");
+        requireOK(MusicDeviceMIDIEvent(unit,0x80,69,0,0),"release DAW note");
+        CapturedMIDI captured; // callback storage lives until the host disposes the AU
+        if (direct) {
+            CFArrayRef outputs=nullptr;
+            bytes=sizeof(outputs);
+            requireOK(AudioUnitGetProperty(unit,kAudioUnitProperty_MIDIOutputCallbackInfo,global,0,&outputs,&bytes),"advertise MIDI port to host");
+            check(CFArrayGetCount(outputs)==1,"one MIDI output");
+            CFRelease(outputs);
+            AUMIDIOutputCallbackStruct delivery{outputMIDI,&captured};
+            requireOK(AudioUnitSetProperty(unit,kAudioUnitProperty_MIDIOutputCallback,global,0,&delivery,sizeof(delivery)),"register host MIDI delivery");
+            tri::Routing passthrough{};
+            passthrough[tri::routeIndex(tri::RouteMidiOutIn)]=tri::DawMidiNode;
+            requireOK(setRoutes(passthrough),"route DAW notes directly to MIDI out");
+            requireOK(MusicDeviceMIDIEvent(unit,0x92,71,100,127),"pass through note-on");
+            requireOK(MusicDeviceMIDIEvent(unit,0x82,71,0,322),"pass through note-off");
+            render();
+            check(captured.ons==1 && captured.offs==1 && captured.start==127 && captured.end==322,"host receives independent MIDI-only output with sample offsets");
+            check(peak()<1e-6,"MIDI-only graph has silent audio");
+            Playhead playhead;
+            HostCallbackInfo callbacks{};
+            callbacks.hostUserData=&playhead;
+            callbacks.beatAndTempoProc=beatAndTempo;
+            callbacks.transportStateProc=transport;
+            requireOK(AudioUnitSetProperty(unit,kAudioUnitProperty_HostCallbacks,global,0,&callbacks,sizeof(callbacks)),"publish DAW tempo and transport");
+            tri::Routing clip{};
+            clip[tri::routeIndex(tri::RouteOsc1In)]=tri::ClipNode;
+            clip[tri::routeIndex(tri::RouteOutputIn)]=tri::Osc1Node;
+            requireOK(setRoutes(clip),"connect clip to output");
+            requireOK(workflow->setAssets(assets),"load clip into playing AU");
+            requireOK(AudioUnitReset(unit,global,0),"clear tails");
+            set(tri::ClipRun,1); set(tri::ClipLoop,0);
+            render(); check(peak()<1e-5,"clip waits for stopped host");
+            playhead.playing=true;
+            render(); check(peak()>.001,"clip starts at host beat zero");
+            playhead.beat=8;
+            set(tri::Release,.005);
+            for(int i=0;i<3;++i) render();
+            check(peak()<1e-5,"seek beyond one-shot clip silences it");
+            playhead.beat=0;
+            render(); check(peak()>.001,"DAW seek back restarts clip");
+            HostCallbackInfo empty{};
+            requireOK(AudioUnitSetProperty(unit,kAudioUnitProperty_HostCallbacks,global,0,&empty,sizeof(empty)),"remove host callbacks");
+        }
         if (argc>2) {
             AudioUnitCocoaViewInfo view{};
             bytes=sizeof(view);
@@ -228,6 +324,6 @@ int main(int argc,char** argv) {
         requireOK(AudioUnitUninitialize(unit),"final uninitialize");
         workflow.reset();
         requireOK(AudioComponentInstanceDispose(unit),"dispose");
-        printf("PASS — Audio Unit, %d automated parameters, 1.0 and 1.1 migration, 1.2 routes/layout recall, live rewire, tail, MIDI offset and stereo sidechain.\n",tri::RouteArpIn);
+        printf("PASS — Audio Unit, %d automated parameters, 1.0 and 1.1 migration, 1.2 routes/layout recall, live rewire, tail, MIDI offset, stereo sidechain, source isolation, embedded clips, host transport, and MIDI-only output offsets.\n",int(tri::ParamCount-tri::defaultRouting.size()));
     }
 }

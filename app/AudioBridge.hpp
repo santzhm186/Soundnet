@@ -11,6 +11,7 @@ struct TRIMsg {
     uint64_t time = 0;
     uint64_t order = 0;
     uint8_t status = 0, a = 0, b = 0;
+    bool daw = false;
 };
 class TRIMidiQueue {
     static constexpr uint64_t capacity = 2048;
@@ -96,31 +97,79 @@ struct TRIRealtime {
     TRIInputFIFO input;
     std::atomic<bool> panicFlag{false};
     double framesPerTick = 0;
+    double sampleRate = 48000;
+    uint64_t outputStart = 0;
+    int outputOffset = 0;
+    // MIDI Clock uses 24 pulses per quarter. Only the virtual DAW destination
+    // drives transport; connecting a second keyboard cannot change it.
+    uint64_t previousPulse = 0;
+    int64_t songPulses = 0;
+    double pulseFrames = 0;
+    bool transportKnown = false, transportPlaying = false;
     std::array<TRIMsg, 2048> upcoming{};
     size_t count = 0;
 
-    void enqueue(uint8_t s, uint8_t a, uint8_t b, uint64_t t=0) {
-        if (!midi.push({t,0,s,a,b})) panicFlag.store(true);
+    void enqueue(uint8_t s, uint8_t a, uint8_t b, uint64_t t=0, bool daw=false) {
+        if (!midi.push({t,0,s,a,b,daw})) panicFlag.store(true);
     }
-    void clearEvents() {
+    void clearEvents(bool panic=false) {
         TRIMsg e;
         while (midi.pop(e)) {}
         count = 0;
-        dsp.reset();
+        if (panic) dsp.panic(); else dsp.reset();
+        dsp.setHostTempo(0);
+        dsp.clearHostTransport();
+        previousPulse=0;
+        songPulses=0;
+        pulseFrames=0;
+        transportKnown=false;
+        transportPlaying=false;
+    }
+    void clockMessage(const TRIMsg& message) {
+        switch (message.status) {
+        case 0xF8: {
+            if (message.time > previousPulse && previousPulse) {
+                const double interval=(message.time-previousPulse)*framesPerTick;
+                const double tempo=interval>0 ? sampleRate*60/(interval*24) : 0;
+                if (tempo>=10 && tempo<=1000) {
+                    // Ignore small timestamp jitter, but adopt a new tempo promptly.
+                    if (!pulseFrames || std::abs(interval-pulseFrames)>.15*pulseFrames)
+                        pulseFrames=interval;
+                    else pulseFrames += .15*(interval-pulseFrames);
+                    dsp.setHostTempo(sampleRate*60/(pulseFrames*24));
+                }
+            }
+            previousPulse=message.time;
+            if (transportKnown && transportPlaying) {
+                if (songPulses%24==0) dsp.setHostTransport(true,songPulses/24.);
+                ++songPulses;
+            }
+            return;
+        }
+        case 0xFA: songPulses=0; transportPlaying=true; break;
+        case 0xFB: transportPlaying=true; break;
+        case 0xFC: transportPlaying=false; break;
+        case 0xF2: songPulses=6*(message.a+(message.b<<7)); break;
+        default: return;
+        }
+        transportKnown=true;
+        dsp.setHostTransport(transportPlaying,songPulses/24.);
     }
     static bool later(const TRIMsg &a, const TRIMsg &b) {
         return a.time == b.time ? a.order > b.order : a.time > b.time;
     }
     void render(float *l, float *r, int n, bool enableInput, uint64_t start) {
-        if (panicFlag.exchange(false)) clearEvents();
+        outputStart=start; outputOffset=0;
+        if (panicFlag.exchange(false)) clearEvents(true);
         TRIMsg e;
         while (midi.pop(e)) {
-            if (count == upcoming.size()) { clearEvents(); break; }
+            if (count == upcoming.size()) { clearEvents(true); break; }
             upcoming[count++] = e;
             std::push_heap(upcoming.begin(), upcoming.begin()+count, later);
         }
         if (enableInput) input.pull(l,r,n);
         auto span = [&](int offset, int length) {
+            outputOffset=offset;
             dsp.render(enableInput ? l+offset : nullptr, enableInput ? r+offset : nullptr,
                        l+offset, r+offset, length);
         };
@@ -131,11 +180,15 @@ struct TRIRealtime {
             if (frame >= n) break;
             int position = std::max(offset, int(frame));
             if (offset < position) span(offset, position-offset);
-            dsp.midi(next.status,next.a,next.b);
+            outputOffset=position;
+            if (next.daw && next.status>=0xF0) clockMessage(next);
+            else if (next.daw) dsp.dawMidi(next.status,next.a,next.b);
+            else dsp.midi(next.status,next.a,next.b);
             std::pop_heap(upcoming.begin(),upcoming.begin()+count,later);
             --count;
             offset = position;
         }
         if (offset < n) span(offset,n-offset);
+        outputStart=0; outputOffset=0;
     }
 };

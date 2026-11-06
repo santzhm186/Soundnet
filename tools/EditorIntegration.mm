@@ -34,7 +34,7 @@ static void inspect(NSView *editor, int node) {
 static void inspectParameter(NSView *editor,int p) {
     if (p>=tri::Osc1Attack && p<=tri::Osc3Release) inspect(editor, tri::Osc1Node+(p-tri::Osc1Attack)/3);
     else if (p>=tri::Wave1 && p<=tri::Tune3) inspect(editor,tri::Osc1Node+(p-tri::Wave1)/3);
-    else if (p>=tri::Attack && p<=tri::Release) inspect(editor,15);
+    else if (p>=tri::Attack && p<=tri::Release) inspect(editor,tri::layout::nodeCount+1);
     else if (p==tri::ArpRepeat || p==tri::Pattern) inspect(editor,tri::ArpNode);
     else if (p>=tri::RouteArpIn && p<=tri::RouteOutputIn) inspect(editor,tri::routeTarget(p));
 }

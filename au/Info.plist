@@ -7,17 +7,17 @@
 <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 <key>CFBundleName</key><string>Soundnet</string>
 <key>CFBundlePackageType</key><string>BNDL</string>
-<key>CFBundleShortVersionString</key><string>1.3.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>1.4.0</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>AudioComponents</key><array><dict>
 <key>name</key><string>Soundnet: Soundnet</string>
-<key>description</key><string>Three-oscillator instrument with sidechain, delay, EQ and rhythm arpeggiator</string>
+<key>description</key><string>Modular MIDI, clip and audio workflow instrument</string>
 <key>factoryFunction</key><string>TernaryUnitFactory</string>
 <key>type</key><string>aumu</string>
 <key>subtype</key><string>Tern</string>
 <key>manufacturer</key><string>Trny</string>
-<key>version</key><integer>66304</integer>
+<key>version</key><integer>66560</integer>
 <key>sandboxSafe</key><true/>
 <key>tags</key><array><string>Synthesizer</string></array>
 </dict></array>

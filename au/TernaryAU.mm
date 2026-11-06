@@ -1,5 +1,6 @@
 #include <AudioUnitSDK/MusicDeviceBase.h>
 #include "WorkflowProperties.hpp"
+#include "../app/WorkflowAssetStore.hpp"
 #include <CoreFoundation/CoreFoundation.h>
 #include <algorithm>
 #include <array>
@@ -19,6 +20,7 @@ struct Event {
     UInt32 frame;
     uint64_t order;
     uint8_t status, a, b;
+    bool local = false;
 };
 
 // Host and onscreen keyboard may enqueue from separate threads.
@@ -162,6 +164,38 @@ CFURLRef copyEditorURL() {
 class TernaryUnit final : public ausdk::MusicDeviceBase {
     using Base = ausdk::MusicDeviceBase;
     tri::Engine engine;
+    tri::WorkflowAssetStore assetStore;
+    // The property thread publishes a matching function/context pair for the next
+    // render. Packet timestamps are sample offsets from the original host buffer.
+    tri::RealtimeAsset<AUMIDIOutputCallbackStruct> midiDelivery;
+    const AudioTimeStamp *renderStamp=nullptr;
+    UInt32 midiOffset=0;
+    UInt16 resetChannels=0;
+    static void emitEvent(void *context,int frame,UInt8 status,UInt8 a,UInt8 b) {
+        auto &unit=*static_cast<TernaryUnit *>(context);
+        if (!unit.renderStamp) {
+            // A host may reset the unit between render calls. MIDI outputs may
+            // only call back during rendering, so flush affected channels then.
+            unit.resetChannels |= UInt16(1u<<(status&15));
+            return;
+        }
+        const auto &delivery=unit.midiDelivery.current();
+        if (!delivery.midiOutputCallback) return;
+        MIDIPacketList list{};
+        list.numPackets=1;
+        auto &packet=list.packet[0];
+        packet.timeStamp=unit.midiOffset+frame;
+        packet.length=3;
+        packet.data[0]=status; packet.data[1]=a; packet.data[2]=b;
+        delivery.midiOutputCallback(delivery.userData,unit.renderStamp,0,&list);
+    }
+    OSStatus localEvent(ternaryAU::LocalMIDI event) {
+        if (event.status<0x80 || event.status>0xef || event.a>127 || event.b>127)
+            return kAudioUnitErr_InvalidPropertyValue;
+        if (!queue.push({0,0,event.status,event.a,event.b,true}))
+            overflow.store(true,std::memory_order_release);
+        return noErr;
+    }
     std::array<std::atomic<float>,tri::layout::count> layout{};
     void replaceLayout(const tri::layout::State& state) {
         for (size_t i=0;i<state.size();++i) layout[i].store(state[i],std::memory_order_relaxed);
@@ -180,6 +214,7 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
 public:
     explicit TernaryUnit(AudioComponentInstance instance) : Base(instance,1,1) {
         replaceLayout(tri::layout::defaults());
+        engine.setMidiOutput(this,emitEvent);
         CreateElements();
         Globals()->UseIndexedParameters(tri::ParamCount);
         for (int i=0; i<tri::ParamCount; ++i) SetParameterRT(i, tri::params[i].def);
@@ -229,6 +264,7 @@ public:
         if (result) return result;
         auto state=CFDictionaryCreateMutableCopy(nullptr,0,static_cast<CFDictionaryRef>(base));
         CFRelease(base);
+        CFDictionarySetValue(state,CFSTR("Soundnet.Assets.1"),(__bridge CFDictionaryRef)assetStore.current);
         saveArray(state,CFSTR("Ternary.Routes.1"),engine.routing());
         tri::layout::State positions{};
         for(size_t i=0;i<positions.size();++i) positions[i]=layout[i].load(std::memory_order_relaxed);
@@ -247,11 +283,22 @@ public:
                 int operation=-1;
                 if(CFGetTypeID(command)!=CFNumberGetTypeID() || !CFNumberGetValue(command,kCFNumberIntType,&operation))
                     return kAudioUnitErr_InvalidPropertyValue;
-                if(operation==tri::layout::commitRouting) {
+                if (operation==ternaryAU::playLocalMIDI) {
+                    ternaryAU::LocalMIDI event{};
+                    auto bytes=static_cast<CFDataRef>(CFDictionaryGetValue(packet,CFSTR("Soundnet.LocalMIDI")));
+                    if (!bytes || CFGetTypeID(bytes)!=CFDataGetTypeID() || CFDataGetLength(bytes)!=sizeof(event))
+                        return kAudioUnitErr_InvalidPropertyValue;
+                    std::memcpy(&event,CFDataGetBytePtr(bytes),sizeof(event));
+                    return localEvent(event);
+                }
+                if (operation==ternaryAU::editAssets) {
+                    NSDictionary *assets=(__bridge NSDictionary *)CFDictionaryGetValue(packet,CFSTR("Soundnet.Assets.1"));
+                    if (!assetStore.replace(assets,engine)) return kAudioUnitErr_InvalidPropertyValue;
+                } else if(operation==tri::layout::commitRouting) {
                     tri::Routing graph{};
                     if(!CFDictionaryContainsKey(packet,CFSTR("Ternary.Routes.1")) ||
                        !loadArray(packet,CFSTR("Ternary.Routes.1"),graph,[](size_t,double n) {
-                           return n>=0 && n<=9 && n==std::trunc(n);
+                           return n>=0 && n<=tri::layout::nodeCount && n==std::trunc(n);
                        }) || !engine.setRouting(graph)) return kAudioUnitErr_InvalidPropertyValue;
                 } else if (tri::layout::contains(operation)) {
                     auto pos=static_cast<CFNumberRef>(CFDictionaryGetValue(packet,CFSTR("Ternary.Coordinate")));
@@ -271,13 +318,17 @@ public:
         auto graph=tri::defaultRouting;
         auto positions=tri::layout::defaults();
         if (!loadArray(dict,CFSTR("Ternary.Routes.1"),graph,[](size_t,double n) {
-                return n>=0 && n<=static_cast<int>(tri::VelocityNode) && std::trunc(n)==n;
+                return n>=0 && n<=tri::layout::nodeCount && std::trunc(n)==n;
             }) || !tri::validRouting(graph)) return kAudioUnitErr_InvalidPropertyValue;
         if (!loadArray(dict,CFSTR("Ternary.Layout.1"),positions,[](size_t i,double n) {
                 return tri::layout::valid(tri::layout::first+static_cast<int>(i),static_cast<float>(n));
             })) return kAudioUnitErr_InvalidPropertyValue;
+        tri::PreparedAssets assets;
+        NSDictionary *savedAssets=(__bridge NSDictionary *)CFDictionaryGetValue(dict,CFSTR("Soundnet.Assets.1"));
+        if (!assets.load(savedAssets ?: @{})) return kAudioUnitErr_InvalidPropertyValue;
         const OSStatus result = Base::RestoreState(state);
         if (result) return result;
+        assetStore.apply(assets,engine);
         engine.setRouting(graph);
         replaceLayout(positions);
         // Older projects omit the oscillator envelopes and repeat count. Reset these
@@ -327,6 +378,10 @@ public:
     OSStatus GetPropertyInfo(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element,
                              UInt32& size,bool& writable) override {
         if (scope == global && element == 0) {
+            if (id==kAudioUnitProperty_MIDIOutputCallbackInfo) { size=sizeof(CFArrayRef); writable=false; return noErr; }
+            if (id==kAudioUnitProperty_MIDIOutputCallback) { size=sizeof(AUMIDIOutputCallbackStruct); writable=true; return noErr; }
+            if (id==ternaryAU::localMIDI) { size=sizeof(ternaryAU::LocalMIDI); writable=true; return noErr; }
+            if (id==ternaryAU::assets) { size=sizeof(CFDictionaryRef); writable=true; return noErr; }
             if(id==ternaryAU::display) { size=sizeof(ternaryAU::DisplayState); writable=false; return noErr; }
             if (id==ternaryAU::routes || ternaryAU::isLayoutProperty(id)) {
                 size = id==ternaryAU::routes ? sizeof(tri::Routing) : sizeof(float);
@@ -345,6 +400,17 @@ public:
         return Base::GetPropertyInfo(id,scope,element,size,writable);
     }
     OSStatus GetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element,void* data) override {
+        if (scope==global && element==0 && id==kAudioUnitProperty_MIDIOutputCallbackInfo) {
+            const void *names[]={CFSTR("Soundnet MIDI Out")};
+            auto streams=CFArrayCreate(nullptr,names,1,&kCFTypeArrayCallBacks);
+            std::memcpy(data,&streams,sizeof(streams));
+            return noErr;
+        }
+        if (scope==global && element==0 && id==ternaryAU::assets) {
+            auto dictionary=(__bridge_retained CFDictionaryRef)assetStore.current;
+            std::memcpy(data,&dictionary,sizeof(dictionary));
+            return noErr;
+        }
         if (scope==global && element==0 && id==ternaryAU::display) {
             ternaryAU::DisplayState view;
             view.graph=engine.routing();
@@ -392,8 +458,38 @@ public:
         return Base::GetProperty(id,scope,element,data);
     }
 
+    OSStatus RemovePropertyValue(AudioUnitPropertyID id,AudioUnitScope scope,AudioUnitElement element) override {
+        if (id==kAudioUnitProperty_MIDIOutputCallback && scope==global && element==0) {
+            midiDelivery.publish({});
+            return noErr;
+        }
+        return Base::RemovePropertyValue(id,scope,element);
+    }
+
     OSStatus SetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element,
                          const void* data, UInt32 size) override {
+        if (scope==global && element==0 && id==kAudioUnitProperty_MIDIOutputCallback) {
+            if (size!=sizeof(AUMIDIOutputCallbackStruct)) return kAudioUnitErr_InvalidPropertyValue;
+            AUMIDIOutputCallbackStruct callback{};
+            std::memcpy(&callback,data,sizeof(callback));
+            midiDelivery.publish(callback);
+            return noErr;
+        }
+        if (scope==global && element==0 && id==ternaryAU::localMIDI) {
+            if (size!=sizeof(ternaryAU::LocalMIDI)) return kAudioUnitErr_InvalidPropertyValue;
+            ternaryAU::LocalMIDI event{};
+            std::memcpy(&event,data,sizeof(event));
+            return localEvent(event);
+        }
+        if (scope==global && element==0 && id==ternaryAU::assets) {
+            if (size!=sizeof(CFDictionaryRef)) return kAudioUnitErr_InvalidPropertyValue;
+            CFDictionaryRef dictionary=nullptr;
+            std::memcpy(&dictionary,data,sizeof(dictionary));
+            if (!assetStore.replace((__bridge NSDictionary *)dictionary,engine))
+                return kAudioUnitErr_InvalidPropertyValue;
+            PropertyChanged(kAudioUnitProperty_ClassInfo,global,0);
+            return noErr;
+        }
         if (scope==global && element==0 && id==ternaryAU::routes) {
             tri::Routing graph{};
             if(size!=sizeof(graph)) return kAudioUnitErr_InvalidPropertyValue;
@@ -450,9 +546,23 @@ public:
         auto* right=static_cast<float*>(out.mBuffers[1].mData);
         for(int i=0;i<tri::ParamCount;++i) if(!tri::routeParam(i)) engine.set(i,GetParameterRT(i));
         Float64 beat=0, bpm=0;
-        engine.setHostTempo(CallHostBeatAndTempo(&beat,&bpm)==noErr ? bpm : 0);
+        const bool hasBeat=CallHostBeatAndTempo(&beat,&bpm)==noErr;
+        engine.setHostTempo(hasBeat ? bpm : 0);
+        Boolean playing=false;
+        auto &callbacks=GetHostCallbackInfo();
+        OSStatus transport=callbacks.transportStateProc2
+            ? callbacks.transportStateProc2(callbacks.hostUserData,&playing,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr)
+            : CallHostTransportState(&playing,nullptr,nullptr,nullptr,nullptr,nullptr);
+        if (hasBeat && std::isfinite(beat) && transport==noErr) engine.setHostTransport(playing,beat);
+        else engine.clearHostTransport();
+        midiDelivery.consume();
+        renderStamp=&ts;
+        midiOffset=0;
+        for (int ch=0;ch<16 && resetChannels;++ch)
+            if (resetChannels&(1u<<ch)) emitEvent(this,0,0xb0|ch,123,0);
+        resetChannels=0;
         if (overflow.exchange(false)) {
-            for (int ch=0; ch<16; ++ch) engine.midi(0xB0 | ch,120,0);
+            engine.panic();
             discardEvents();
         }
         while (count<pending.size() && queue.pop(pending[count])) ++count;
@@ -462,6 +572,7 @@ public:
 
         UInt32 cursor=0;
         auto renderTo=[&](UInt32 end) {
+            midiOffset=cursor;
             if(end>cursor) engine.render(inL ? inL+cursor : nullptr,inR ? inR+cursor : nullptr,
                                          left+cursor,right+cursor,static_cast<int>(end-cursor));
             cursor=end;
@@ -470,9 +581,12 @@ public:
         while(i<count && pending[i].frame<frames) {
             const Event& e=pending[i++];
             renderTo(e.frame);
-            engine.midi(e.status,e.a,e.b);
+            midiOffset=e.frame;
+            if (e.local) engine.midi(e.status,e.a,e.b);
+            else engine.dawMidi(e.status,e.a,e.b);
         }
         renderTo(frames);
+        renderStamp=nullptr;
         for(size_t j=i;j<count;++j) { pending[j-i]=pending[j]; pending[j-i].frame-=frames; }
         count-=i;
         flags &= ~kAudioUnitRenderAction_OutputIsSilence;

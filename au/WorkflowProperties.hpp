@@ -9,6 +9,10 @@ struct DisplayState {
     tri::Routing graph=tri::defaultRouting;
     tri::layout::State layout=tri::layout::defaults();
 };
+inline constexpr int editAssets = 2000, playLocalMIDI = 2001;
+struct LocalMIDI { UInt8 status, a, b; };
+inline constexpr AudioUnitPropertyID localMIDI = 0x534d4944; // SMID
+inline constexpr AudioUnitPropertyID assets = 0x53415354; // SAST
 inline constexpr AudioUnitPropertyID display=0x54445350; // TDSP
 inline constexpr AudioUnitPropertyID routes = 0x54524752; // TRGR
 inline constexpr AudioUnitPropertyID layoutBase = 0x544c5900; // TLY + offset

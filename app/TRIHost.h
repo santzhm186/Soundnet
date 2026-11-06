@@ -9,6 +9,8 @@
 - (void)sendStatus:(uint8_t)status data1:(uint8_t)a data2:(uint8_t)b;
 - (void)panic;
 - (void)savePatch;
+- (NSDictionary *)workflowAssets;
+- (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;
 @property(nonatomic, readonly) NSString *status;
 @property(nonatomic, getter=isInputEnabled) BOOL inputEnabled;
 + (int)runOfflineCheck;

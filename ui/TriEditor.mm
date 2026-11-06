@@ -1,4 +1,5 @@
 #import "TriEditor.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "WorkflowCanvas.h"
 #import "WorkflowFile.hpp"
 #include "../src/Engine.hpp"
@@ -64,11 +65,13 @@ NSString *numberText(double value) {
 }
 NSRect parameterRect(int x, int y, int width) { return NSMakeRect(x, y, width, 24); }
 constexpr int side = 877;
+constexpr int envelopeInspector = tri::layout::nodeCount+1;
+constexpr int bit(int node) { return 1 << (node-1); }
 NSArray<NSString*> *nodeTitles() {
-    return @[@"画布", @"MIDI 输入", @"ARP 琶音器", @"振荡器 1", @"振荡器 2", @"振荡器 3",
-             @"外部音频", @"混音器", @"三段均衡", @"立体声延迟", @"主输出", @"和弦输入", @"和声走向", @"节奏速度", @"力度自动化"];
+    return @[@"画布", @"本地 MIDI 输入", @"ARP 琶音器", @"振荡器 1", @"振荡器 2", @"振荡器 3",
+             @"外部音频", @"混音器", @"三段均衡", @"立体声延迟", @"主输出", @"和弦输入", @"和声走向", @"节奏速度", @"力度自动化", @"DAW MIDI 输入", @"MIDI Clip 输入", @"音符模型", @"MIDI 输出"];
 }
-NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 2", @"OSC 3", @"AUDIO IN", @"MIX", @"EQ", @"DELAY", @"OUT", @"CHORD", @"PROGRESSION", @"CLOCK", @"VELOCITY"]; }
+NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 2", @"OSC 3", @"AUDIO IN", @"MIX", @"EQ", @"DELAY", @"OUT", @"CHORD", @"PROGRESSION", @"CLOCK", @"VELOCITY", @"DAW MIDI", @"MIDI CLIP", @"NOTE MODEL", @"MIDI OUT"]; }
 }
 
 @interface TRNKeys : NSView
@@ -91,6 +94,8 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 
 @interface TRNEditor : NSView <NSTextFieldDelegate>
 @property(copy) TRIRead read;
+@property(copy) TRIAssetsRead assetsRead;
+@property(copy) TRIAssetsWrite assetsWrite;
 @property(copy) TRIWrite write;
 @property(copy) TRIMIDI send;
 @property(copy) TRIInputRead inputRead;
@@ -113,7 +118,12 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 @property(copy) NSString *workflowName;
 @property NSInteger inspected, visibility;
 @property(strong) NSTextField *symbols;
-@property(strong) NSButton *musicPlay,*syncClock;
+@property(strong) NSButton *musicPlay,*clipLoop;
+@property(strong) NSTextField *assetName;
+@property(strong) NSButton *importButton;
+@property(copy) NSString *loadingKind;
+@property NSUInteger importGeneration;
+@property double nextAssetRefresh;
 @property BOOL buildingInspector;
 @end
 
@@ -275,6 +285,8 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     [self refresh];
 }
 -(void)panic:(id)sender {
+    for (int param : {tri::ChordRun,tri::ProgressRun,tri::ClipRun})
+        if (_read(param)>.5f) _write(param,0);
     if (_send) for (int ch = 0; ch < 16; ch++) _send(0xb0 | ch, 120, 0);
     [_keys note:-1];
 }
@@ -289,8 +301,8 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 }
 -(void)finishEdit {
     if (!_editStart) return;
-    NSDictionary *end = ternaryfile::snapshot(_read);
-    if (![_editStart isEqual:end]) {
+    NSDictionary *end = ternaryfile::snapshot(_read,_assetsRead);
+    if (end && ![_editStart isEqual:end]) {
         [_undoStack addObject:@[_editStart, end]];
         if (_undoStack.count > 32) [_undoStack removeObjectAtIndex:0];
         [_redoStack removeAllObjects];
@@ -301,7 +313,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 }
 -(void)remember {
     if (_editStart) return;
-    _editStart = ternaryfile::snapshot(_read);
+    _editStart = ternaryfile::snapshot(_read,_assetsRead);
     __weak TRNEditor *weak = self;
     dispatch_async(dispatch_get_main_queue(), ^{ [weak finishEdit]; });
 }
@@ -310,12 +322,16 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     _write(pid,value);
     self.needsDisplay=YES;
 }
--(void)restore:(NSDictionary *)snapshot {
-    ternaryfile::restore(snapshot,_read,_write);
+-(BOOL)restore:(NSDictionary *)snapshot {
+    if (!ternaryfile::restore(snapshot,_read,_write,_assetsRead,_assetsWrite)) {
+        [self message:@"宿主未能载入工作流素材，请重新打开后重试。"]; return NO;
+    }
+    ++_importGeneration; _loadingKind=nil; _nextAssetRefresh=0;
     [_canvas refreshGraph];
     [self updateVisibleNodes];
     [self refresh];
     self.needsDisplay = YES;
+    return YES;
 }
 -(void)history:(BOOL)undo {
     [self finishEdit];
@@ -324,9 +340,10 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     NSArray *entry = source.lastObject;
     if (!entry) return;
     NSDictionary *was = entry[undo ? 1 : 0], *target = entry[undo ? 0 : 1];
-    NSMutableDictionary *result = [ternaryfile::snapshot(_read) mutableCopy];
+    NSMutableDictionary *result = [ternaryfile::snapshot(_read,_assetsRead) mutableCopy];
+    if (!result) { [self message:@"无法读取宿主素材，请重试。"]; return; }
     // Reverse only fields touched by the edit. Keep unrelated host automation.
-    for (NSString *group in @[@"parameters", @"connections", @"nodes"]) {
+    for (NSString *group in @[@"parameters", @"connections", @"nodes", @"assets"]) {
         NSMutableDictionary *merged = [result[group] mutableCopy];
         NSMutableSet *keys = [NSMutableSet setWithArray:[was[group] allKeys]];
         [keys addObjectsFromArray:[target[group] allKeys]];
@@ -341,7 +358,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     }
     NSString *error = nil;
     if (!ternaryfile::validate(result,&error)) { [self message:error]; return; }
-    [self restore:result];
+    if (![self restore:result]) return;
     [source removeLastObject];
     [destination addObject:entry];
     _undoButton.enabled = _undoStack.count > 0;
@@ -361,15 +378,15 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK) return;
         NSNumber *size = nil;
-        if (![panel.URL getResourceValue:&size forKey:NSURLFileSizeKey error:nil] || size.unsignedLongLongValue>1048576) {
-            [self message:@"请选择小于 1 MB 的 Soundnet 工作流 JSON。"]; return;
+        if (![panel.URL getResourceValue:&size forKey:NSURLFileSizeKey error:nil] || size.unsignedLongLongValue>32ULL*1024*1024) {
+            [self message:@"请选择不超过 32 MB 的 Soundnet 工作流 JSON。"]; return;
         }
         NSError *error = nil;
         NSData *data = [NSData dataWithContentsOfURL:panel.URL options:0 error:&error];
         id file = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:&error] : nil;
         NSString *why = nil;
         if (!file || !ternaryfile::validate(file,&why)) { [self message:why ?: error.localizedDescription]; return; }
-        [self remember]; [self panic:nil]; [self restore:file];
+        [self remember]; if (![self restore:file]) return; [self.keys note:-1];
         self.workflowName = panel.URL.lastPathComponent.stringByDeletingPathExtension;
         [self.patch selectItemAtIndex:0]; [self.canvas fitGraph];
     }];
@@ -382,7 +399,9 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK) return;
         NSError *error = nil;
-        NSData *data = [NSJSONSerialization dataWithJSONObject:ternaryfile::snapshot(self.read)
+        NSDictionary *snapshot=ternaryfile::snapshot(self.read,self.assetsRead);
+        if (!snapshot) { [self message:@"无法读取宿主素材，请重试。"]; return; }
+        NSData *data = [NSJSONSerialization dataWithJSONObject:snapshot
              options:NSJSONWritingPrettyPrinted|NSJSONWritingSortedKeys error:&error];
         if (!data || ![data writeToURL:panel.URL options:NSDataWritingAtomic error:&error]) {
             [self message:error.localizedDescription]; return;
@@ -392,8 +411,10 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     }];
 }
 -(void)templates:(NSMenuItem *)item {
+    ++_importGeneration; _loadingKind=nil; _nextAssetRefresh=0;
     [self remember]; [self panic:nil];
     tri::Routing routes = tri::defaultRouting;
+    int visible=tri::layout::kDefaultVisible, focus=0;
     if (item.tag == 2) { // Lower voice follows the keyboard, upper voices play the arp.
         routes[tri::RouteOsc1In-tri::RouteArpIn]=tri::MidiNode;
         _write(tri::ArpOn,1); _write(tri::Pattern,1); _write(tri::ArpRepeat,2);
@@ -410,14 +431,49 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
         routes[tri::RouteProgressClock-tri::RouteArpIn]=tri::ClockNode;
         routes[tri::RouteVelocityClock-tri::RouteArpIn]=tri::ClockNode;
         _write(tri::ArpOn,1);_write(tri::ProgressRun,0);
+        visible=(1<<tri::VelocityNode)-1;
+    } else if (item.tag==6 || item.tag==9) {
+        routes.fill(0);
+        routes[tri::routeIndex(tri::RouteModelIn)]=tri::ClipNode;
+        routes[tri::routeIndex(tri::RouteClipClock)]=tri::ClockNode;
+        visible=bit(tri::ClipNode)|bit(tri::ModelNode)|bit(tri::ClockNode);
+        if (item.tag==9) {
+            routes[tri::routeIndex(tri::RouteMidiOutIn)]=tri::ModelNode;
+            visible|=bit(tri::MidiOutNode);
+        } else {
+            routes[tri::routeIndex(tri::RouteOsc1In)]=tri::ModelNode;
+            routes[tri::routeIndex(tri::RouteOutputIn)]=tri::Osc1Node;
+            visible|=bit(tri::Osc1Node)|bit(tri::OutputNode);
+        }
+        focus=tri::ClipNode;
+        _write(tri::MidiLocalOnly,1); _write(tri::ClipRun,0); _write(tri::ClipLoop,1);
+        _write(tri::ClockSync,_inputRead?0:1);
+    } else if (item.tag==7) {
+        routes[tri::routeIndex(tri::RouteArpIn)]=tri::DawMidiNode;
+        visible=(visible & ~bit(tri::MidiNode))|bit(tri::DawMidiNode);
+        focus=tri::DawMidiNode;
+        _write(tri::MidiLocalOnly,1);
+    } else if (item.tag==8) {
+        routes.fill(0); visible=0;
+        _write(tri::MidiLocalOnly,1); _write(tri::ClipRun,0);
     }
-    _write(tri::layout::visibility,item.tag==5?16383:tri::layout::kDefaultVisible);
+    _write(tri::layout::visibility,visible);
     _write(tri::layout::beginRouting,0);
-    for(size_t i=0;i<routes.size();++i) _write(tri::RouteArpIn+(int)i,routes[i]);
+    for(size_t i=0;i<routes.size();++i) _write(tri::routeID(i),routes[i]);
     _write(tri::layout::commitRouting,0);
     _workflowName=item.title;
-    [_canvas resetLayout]; [_canvas refreshGraph]; [_canvas fitGraph];
-    [self updateVisibleNodes]; [self refresh]; self.needsDisplay=YES;
+    [_canvas resetLayout];
+    if(item.tag==6 || item.tag==9) {
+        const int nodes[]={tri::ClockNode,tri::ClipNode,tri::ModelNode,tri::Osc1Node,tri::OutputNode,tri::MidiOutNode};
+        const int x[]={20,160,323,478,645,495};
+        const int y[]={52,151,151,151,151,151};
+        for(int i=0;i<6;++i) if (visible & bit(nodes[i])) {
+            _write(tri::layout::x(nodes[i]),x[i]); _write(tri::layout::y(nodes[i]),y[i]);
+        }
+    }
+    [_canvas refreshGraph]; [_canvas fitGraph]; [self updateVisibleNodes];
+    if(focus) { [_canvas selectNode:focus]; [self inspect:focus]; }
+    [self refresh]; self.needsDisplay=YES;
 }
 -(NSPopUpButton *)actionMenu:(NSString *)title rect:(NSRect)rect {
     NSPopUpButton *menu = [[NSPopUpButton alloc] initWithFrame:rect pullsDown:YES];
@@ -433,20 +489,20 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 -(void)fit:(id)sender { [_canvas fitGraph]; }
 -(void)tidy:(id)sender { [self remember]; [_canvas resetLayout]; [_canvas fitGraph]; }
 -(void)chooseNode:(NSPopUpButton *)menu {
-    if (menu.selectedItem.tag == 15) [self selectPanel:nil];
+    if (menu.selectedItem.tag == envelopeInspector) [self selectPanel:nil];
     else { [_canvas selectNode:menu.selectedItem.tag]; [self inspect:menu.selectedItem.tag]; }
 }
 -(void)addModule:(NSMenuItem *)item { [_canvas addNode:item.tag]; [self inspect:item.tag]; [self updateVisibleNodes]; }
--(void)selectPanel:(id)sender { [_canvas selectNode:0]; [self inspect:15]; }
+-(void)selectPanel:(id)sender { [_canvas selectNode:0]; [self inspect:envelopeInspector]; }
 -(void)updateVisibleNodes {
     NSInteger mask = (NSInteger)_read(tri::layout::visibility);
     if (_visibility == mask) return;
     _visibility = mask;
     [_addMenu removeAllItems]; [_addMenu addItemWithTitle:@"节点库"];
     [_nodeMenu removeAllItems]; [_nodeMenu addItemWithTitle:@"画布"]; _nodeMenu.lastItem.tag=0;
-    for (int n=1; n<=14; ++n) {
+    for (int n=1; n<=tri::layout::nodeCount; ++n) {
         BOOL present = mask & (1<<(n-1));
-        NSString *name=nodeTitles()[n];
+        NSString *name=n==tri::OutputNode ? (_inputRead ? @"硬件输出" : @"DAW 输出") : nodeTitles()[n];
         if (present) {
             [_nodeMenu addItemWithTitle:name]; _nodeMenu.lastItem.tag=n;
         }
@@ -455,8 +511,8 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
                  action:@selector(nodeLibrary:) tag:n];
         _addMenu.lastItem.state = present ? NSControlStateValueOn : NSControlStateValueOff;
     }
-    [_nodeMenu addItemWithTitle:@"共享包络"]; _nodeMenu.lastItem.tag=15;
-    if (_inspected>0 && _inspected<15 && !(mask & (1<<(_inspected-1)))) [self inspect:0];
+    [_nodeMenu addItemWithTitle:@"共享包络"]; _nodeMenu.lastItem.tag=envelopeInspector;
+    if (_inspected>0 && _inspected<envelopeInspector && !(mask & (1<<(_inspected-1)))) [self inspect:0];
     [_nodeMenu selectItemWithTag:_inspected];
 }
 -(void)nodeLibrary:(NSMenuItem *)item {
@@ -491,19 +547,21 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     menu.tag=pid; menu.identifier=[NSString stringWithFormat:@"route.%d",pid]; menu.autoenablesItems=NO;
     [menu setAccessibilityLabel:name];
     // Items are kept stable while the user browses the native menu.
-    for(int n=0;n<=14;++n) {
+    for(int n=0;n<=tri::layout::nodeCount;++n) {
         if (!tri::compatibleSource(pid,n)) continue;
-        [menu addItemWithTitle:n?codes()[n]:@"未连接"]; menu.lastItem.tag=n;
+        NSString *label=n ? codes()[n] : @"未连接";
+        if (tri::clockPort(pid)) label=n ? @"节奏速度节点" : (_inputRead ? @"MIDI 时钟 / 备用" : @"DAW 速度");
+        [menu addItemWithTitle:label]; menu.lastItem.tag=n;
     }
 }
 -(void)inspect:(NSInteger)n {
-    if (n<0 || n>15) n=0;
+    if (n<0 || n>envelopeInspector) n=0;
     if (_inspected==n && _inspectorViews.count) return;
     if ([self.window.firstResponder isKindOfClass:NSTextView.class]) [self.window makeFirstResponder:self];
     _inspected=n;
     for(NSView *v in _inspectorViews) [v removeFromSuperview];
     [_inspectorViews removeAllObjects]; [_fields removeAllObjects]; [_steppers removeAllObjects]; [_menus removeAllObjects];
-    _arpButton=nil; _inputButton=nil; _symbols=nil; _musicPlay=nil; _syncClock=nil;
+    _arpButton=nil; _inputButton=nil; _symbols=nil; _musicPlay=nil; _clipLoop=nil; _assetName=nil; _importButton=nil;
     [_nodeMenu selectItemWithTag:n];
     _buildingInspector=YES;
     if (n>=tri::Osc1Node && n<=tri::Osc3Node) {
@@ -522,8 +580,9 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
         [self addSubview:_arpButton]; [_inspectorViews addObject:_arpButton];
         [self localMenu:@[@"Straight 8ths",@"Bossa Nova",@"Reggae",@"Disco",@"Pulse 16ths"] id:tri::Pattern name:@"节奏型" y:218];
         [self localMenu:@[@"1×",@"2×",@"3×",@"4×",@"5×",@"6×",@"7×",@"8×"] id:tri::ArpRepeat name:@"每音重复" y:255];
-        [self number:tri::Tempo name:_inputWrite?@"速度  BPM":@"备用速度  BPM" y:292];
+        [self route:tri::RouteArpClock name:@"速度来源" y:292];
         [self number:tri::Gate name:@"门长  %" y:329];
+        [self number:tri::Tempo name:@"备用速度  BPM" y:462];
         [self info:@"按住和弦。亮格触发一次音符，重复次数决定何时切换到下一音。" y:414];
 
     } else if(n==tri::ChordNode || n==tri::ProgressNode) {
@@ -548,9 +607,9 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
         [self info:sequence?@"走向循环输出完整和弦，可接入 ARP、力度节点或振荡器。":@"接入 MIDI 时按所弹根音生成和弦。勾选演奏可直接输出输入的和弦。" y:400];
     } else if(n==tri::ClockNode) {
         [self number:tri::ClockBPM name:@"速度  BPM" y:145];
-        _syncClock=[NSButton checkboxWithTitle:@"跟随宿主速度" target:self action:@selector(clockSync:)];
-        _syncClock.frame=NSMakeRect(side+14,191,221,25);[self addSubview:_syncClock];[_inspectorViews addObject:_syncClock];
-        [self info:@"连接到 ARP、和声走向或力度节点的速度端口，统一它们的节奏。" y:245];
+        [self localMenu:@[@"模块 BPM",_inputRead ? @"DAW MIDI 时钟" : @"DAW 工程速度"] id:tri::ClockSync name:@"时钟模式" y:192];
+        [self info:_inputRead ? @"向 Soundnet MIDI In 发送 MIDI Clock 可同步外部速度。未收到时钟时使用上方 BPM。" : @"选择 DAW 工程速度时跟随 Logic 的速度变化。选择模块 BPM 后，此节点按上方速度运行。" y:242];
+        [self info:@"将速度输出接到 MIDI Clip、ARP、和声走向或力度节点。" y:312];
     } else if(n==tri::VelocityNode) {
         [self route:tri::RouteVelocityIn name:@"音符来源" y:145];
         [self route:tri::RouteVelocityClock name:@"速度来源" y:183];
@@ -559,6 +618,24 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
         [self number:tri::VelocityRate name:@"周期  拍" y:297];
         [self localMenu:@[@"正弦起伏",@"渐强循环",@"强弱交替"] id:tri::VelocityShape name:@"变化方式" y:333];
         [self info:@"在音符经过时按周期改变 MIDI 力度，输出继续接 ARP 或振荡器。" y:390];
+    } else if(n==tri::ClipNode || n==tri::ModelNode) {
+        BOOL clip=n==tri::ClipNode;
+        [self route:clip?tri::RouteClipClock:tri::RouteModelIn name:clip?@"速度来源":@"音符来源" y:145];
+        _assetName=[NSTextField wrappingLabelWithString:@""];
+        _assetName.frame=NSMakeRect(side+15,194,222,46); _assetName.font=font(12);
+        _assetName.identifier=@"asset.name"; _assetName.lineBreakMode=NSLineBreakByTruncatingMiddle;
+        [self addSubview:_assetName]; [_inspectorViews addObject:_assetName];
+        _nextAssetRefresh=0;
+        _importButton=[self button:NSMakeRect(side+12,250,145,27) title:clip?@"载入 MIDI 文件…":@"载入音符模型…" action:@selector(importAsset:)];
+        _importButton.identifier=clip?@"clip.import":@"model.import";
+        if (clip) {
+            _musicPlay=[self check:@"启用播放" param:tri::ClipRun y:299];
+            _clipLoop=[self check:@"循环片段" param:tri::ClipLoop y:334];
+            [self info:_inputRead ? @"使用模块 BPM 时，勾选播放从片段开头起奏。同步 DAW 时，播放位置由外部 MIDI 时钟和传输消息控制。" : @"使用 DAW 速度时，勾选播放并启动 Logic 走带。使用模块 BPM 时，勾选播放从片段开头起奏。" y:389];
+        } else {
+            [self info:@"载入 Core ML 单音高模型或 JSON 音高映射。模型会把收到的 MIDI 音符转换成新的音高，再送往下游节点。" y:305];
+            [self info:@"未载入模型时，原音高直接通过。" y:398];
+        }
     } else if(n==tri::InputNode) {
         [self number:tri::InputGain name:@"输入电平  %" y:145];
         if(_inputWrite) _inputButton=[self button:NSMakeRect(side+13,191,130,27) title:@"开启输入" action:@selector(toggleInput:)];
@@ -571,14 +648,23 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
         [self route:eq?tri::RouteEQIn:tri::RouteDelayIn name:@"音频来源" y:145];
         NSArray *labels=eq?@[@"低频 180 Hz · dB",@"中频 1 kHz · dB",@"高频 5 kHz · dB"]:@[@"时间  ms",@"反馈  %",@"干湿混合  %"];
         for(int i=0;i<3;++i) [self number:(eq?tri::EQLow:tri::DelayTime)+i name:labels[i] y:195+38*i];
+    } else if(n==tri::MidiOutNode) {
+        [self route:tri::RouteMidiOutIn name:@"音符来源" y:145];
+        [self info:_inputRead ? @"此节点向虚拟端口 Soundnet MIDI Out 发送音符。在接收软件中选择这个 MIDI 输入端口，即可驱动其他乐器。" : @"音符通过 Audio Unit 的 MIDI 输出回调交给 DAW。宿主需要支持接收乐器插件生成的 MIDI。" y:205];
     } else if(n==tri::OutputNode) {
         [self route:tri::RouteOutputIn name:@"音频来源" y:145]; [self number:tri::Master name:@"总输出  %" y:195];
-    } else if(n==15) {
+        [self info:_inputRead ? @"立体声输出送往 macOS 当前的默认输出设备。可在系统声音设置中选择声卡或扬声器。" : @"立体声输出返回当前 DAW 乐器轨道。在 Logic 的通道条中选择后续效果、总线或硬件输出。" y:251];
+    } else if(n==envelopeInspector) {
         NSArray *labels=@[@"Attack  ms",@"Decay  ms",@"Sustain  %",@"Release  ms"];
         for(int i=0;i<4;++i) [self number:tri::Attack+i name:labels[i] y:145+38*i];
         [self info:@"三路振荡器共用 Decay。各路的 Attack、Sustain、Release 可在对应节点单独设置。" y:322];
     } else if(n==tri::MidiNode) {
-        [self info:_inputWrite?@"接收 CoreMIDI、电脑键盘和屏幕琴键的音符。把输出接到 ARP 或振荡器的音符端口。":@"接收宿主轨道的 MIDI 及屏幕琴键。把输出接到 ARP 或振荡器的音符端口。" y:148];
+        [self localMenu:@[@"兼容合并",@"仅本地输入"] id:tri::MidiLocalOnly name:@"接收方式" y:145];
+        [self info:_inputRead ? @"本地输入包括电脑键盘、下方琴键和 CoreMIDI 键盘。DAW 可通过 Soundnet MIDI In 单独接入。" : @"本地输入来自下方琴键。用 DAW MIDI 输入节点接收 Logic 轨道的音符。" y:196];
+        [self info:@"兼容合并会接收 DAW 音符。一旦 DAW MIDI 节点接出连线，两种来源会自动分开。" y:270];
+    } else if(n==tri::DawMidiNode) {
+        [self info:_inputRead ? @"在 DAW 的外部 MIDI 轨道中把目的地设为 Soundnet MIDI In。此节点会收到该端口的音符。" : @"接收当前 DAW 乐器轨道上的实时 MIDI 和区域音符。在 Logic 中将 Soundnet 载入软件乐器插槽。" y:148];
+        [self info:@"把音符输出接到和弦、ARP、模型或振荡器。屏幕琴键可通过本地 MIDI 节点另行接线。" y:226];
     } else [self info:@"点选节点查看参数，或从节点库添加模块。" y:145];
     _buildingInspector=NO; [self refresh]; self.needsDisplay=YES;
 }
@@ -621,7 +707,57 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     [self setHarmony:menu.tag==tri::ProgressNode?sequences[menu.indexOfSelectedItem]:menu.titleOfSelectedItem sequence:menu.tag==tri::ProgressNode];
 }
 -(void)playMusic:(NSButton*)button { [self editParam:(int)button.tag value:button.state==NSControlStateValueOn?1:0]; }
--(void)clockSync:(NSButton*)button { [self editParam:tri::ClockSync value:button.state==NSControlStateValueOn?1:0]; }
+-(NSButton *)check:(NSString *)title param:(int)pid y:(int)y {
+    NSButton *button=[NSButton checkboxWithTitle:title target:self action:@selector(playMusic:)];
+    button.tag=pid; button.frame=NSMakeRect(side+14,y,220,25);
+    button.identifier=[NSString stringWithFormat:@"param.%d.check",pid];
+    [self addSubview:button]; [_inspectorViews addObject:button]; return button;
+}
+-(void)importAsset:(id)sender {
+    if (!_assetsRead || !_assetsWrite || _loadingKind) return;
+    BOOL clip=_inspected==tri::ClipNode;
+    NSString *kind=clip ? @"clip" : @"model";
+    NSOpenPanel *panel=[NSOpenPanel openPanel];
+    panel.title=clip ? @"载入 MIDI Clip" : @"载入音符模型";
+    panel.allowsMultipleSelection=NO; panel.canChooseDirectories=!clip;
+    NSMutableArray<UTType *> *types=[NSMutableArray new];
+    for (NSString *ext in (clip ? @[@"mid",@"midi"] : @[@"mlmodel",@"mlmodelc",@"mlpackage",@"json"])) {
+        UTType *type=[UTType typeWithFilenameExtension:ext];
+        if (type) [types addObject:type];
+    }
+    panel.allowedContentTypes=types;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        if(response==NSModalResponseOK) [self loadAssetURL:panel.URL kind:kind];
+    }];
+}
+-(void)loadAssetURL:(NSURL *)url kind:(NSString *)kind {
+    if (!_assetsRead || !_assetsWrite) return;
+    NSUInteger generation=++_importGeneration;
+    NSDictionary *initial=_assetsRead();
+    if (!initial) { [self message:@"无法读取宿主素材，请重试。"]; return; }
+    NSDictionary *original=initial[kind];
+    _loadingKind=kind; _nextAssetRefresh=0; [self refresh];
+    __weak TRNEditor *weak=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
+        NSString *why=nil;
+        NSDictionary *asset=triassets::importAsset(kind,url,&why);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            TRNEditor *editor=weak;
+            if(!editor || generation!=editor.importGeneration) return;
+            editor.loadingKind=nil; editor.nextAssetRefresh=0;
+            if (!asset) { [editor refresh]; [editor message:why ?: @"无法读取素材。"]; return; }
+            // Importing Core ML can take time. Merge only this slot into the current host patch.
+            NSDictionary *current=editor.assetsRead();
+            if (!current || (current[kind]!=original && ![current[kind] isEqual:original])) {
+                [editor refresh]; [editor message:@"载入期间宿主更改了素材，请重新选择文件。"]; return;
+            }
+            NSMutableDictionary *next=[current mutableCopy]; next[kind]=asset;
+            [editor remember];
+            if(!editor.assetsWrite(next)) [editor message:@"宿主未能载入素材。"];
+            [editor refresh];
+        });
+    });
+}
 -(void)setup {
     self.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     _fields=[NSMutableDictionary new]; _steppers=[NSMutableDictionary new]; _menus=[NSMutableArray new];
@@ -631,8 +767,8 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     [self addAction:_workflowMenu title:@"打开工作流 JSON…" action:@selector(openWorkflow:) tag:0];
     [self addAction:_workflowMenu title:@"保存工作流 JSON…" action:@selector(saveWorkflow:) tag:0];
     [_workflowMenu.menu addItem:NSMenuItem.separatorItem];
-    NSArray *templates=@[@"标准合成线路", @"分层琶音", @"外部音频效果器", @"清空接线", @"和声编曲工作流"];
-    for(int i=0;i<5;++i) [self addAction:_workflowMenu title:templates[i] action:@selector(templates:) tag:i+1];
+    NSArray *templates=@[@"标准合成线路", @"分层琶音", @"外部音频效果器", @"清空接线", @"和声编曲工作流", @"MIDI Clip → 模型 → 音频", @"DAW MIDI 演奏", @"空白工作流", @"MIDI Clip → 模型 → MIDI 输出"];
+    for(int i=0;i<(int)templates.count;++i) [self addAction:_workflowMenu title:templates[i] action:@selector(templates:) tag:i+1];
     _patch=[self popup:NSMakeRect(328,13,155,25) items:@[@"当前设置",@"基础合成 / Init",@"玻璃琴键 / Glass",@"圆润贝斯 / Sub",@"缓起铺底 / Haze"]
                      id:-1 action:@selector(applyPatch:)];
     [_patch setAccessibilityLabel:@"音色"];
@@ -648,6 +784,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     _canvas=[[TRIWorkflowCanvas alloc] initWithFrame:NSMakeRect(12,78,853,463) read:_read
         write:^(int pid,float v){ [weak editParam:pid value:v]; }
         selected:^(int n){ [weak inspect:n]; }];
+    _canvas.hosted = !_inputRead;
     _canvas.identifier=@"workflow.canvas"; [self addSubview:_canvas];
     _nodeMenu=[self popup:NSMakeRect(side+12,98,225,28) items:@[] id:-1 action:@selector(chooseNode:)];
     _nodeMenu.identifier=@"workflow.inspector"; [_nodeMenu setAccessibilityLabel:@"选择节点参数"];
@@ -658,7 +795,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     int first=tri::Osc1Node;
     if (!(_visibility&(1<<(first-1)))) {
         first=0;
-        for(int n=1;n<=14 && !first;++n) if(_visibility&(1<<(n-1))) first=n;
+        for(int n=1;n<=tri::layout::nodeCount && !first;++n) if(_visibility&(1<<(n-1))) first=n;
     }
     [_canvas selectNode:first]; [self inspect:first]; [_canvas fitGraph];
     [self refresh];
@@ -675,12 +812,27 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     }
     if(_symbols && !_symbols.currentEditor) _symbols.stringValue=[self harmonyText:_inspected==tri::ProgressNode];
     if(_musicPlay) _musicPlay.state=_read((int)_musicPlay.tag)>.5?NSControlStateValueOn:NSControlStateValueOff;
-    if(_syncClock) _syncClock.state=_read(tri::ClockSync)>.5?NSControlStateValueOn:NSControlStateValueOff;
+    if(_clipLoop) _clipLoop.state=_read(tri::ClipLoop)>.5?NSControlStateValueOn:NSControlStateValueOff;
+    if(_assetName && NSProcessInfo.processInfo.systemUptime >= _nextAssetRefresh) {
+        _nextAssetRefresh=NSProcessInfo.processInfo.systemUptime+1.;
+        BOOL clip=_inspected==tri::ClipNode;
+        NSString *kind=clip?@"clip":@"model";
+        NSDictionary *assets=_assetsRead ? _assetsRead() : nil;
+        NSDictionary *asset=assets[kind];
+        NSString *name=asset[@"name"];
+        if ([_loadingKind isEqual:kind]) name=@"正在载入…";
+        else if (clip && name && asset[@"beats"] && asset[@"notes"])
+            name=[NSString stringWithFormat:@"%@\n%@ 个音符 · %@ 拍",name, asset[@"notes"],numberText([asset[@"beats"] doubleValue])];
+        _assetName.stringValue=name ?: (clip ? @"未载入 MIDI Clip" : @"未载入模型");
+        _assetName.toolTip=_assetName.stringValue;
+        _importButton.enabled=_assetsRead && _assetsWrite && !_loadingKind;
+        if (clip) _musicPlay.enabled=asset!=nil;
+    }
     _arpButton.state=_read(tri::ArpOn)>.5?NSControlStateValueOn:NSControlStateValueOff;
     if(_inputButton) _inputButton.title=_inputRead && _inputRead()?@"关闭输入":@"开启输入";
     [self updateVisibleNodes];
     tri::Routing routes{};
-    for(int p=tri::RouteArpIn;p<=tri::RouteVelocityClock;++p) routes[p-tri::RouteArpIn]=(int)std::lround(_read(p));
+    for(size_t i=0;i<routes.size();++i) routes[i]=(int)std::lround(_read(tri::routeID(i)));
     for(NSView *view in _inspectorViews) {
         if(![view.identifier hasPrefix:@"route."]) continue;
         NSPopUpButton *menu=(NSPopUpButton*)view;
@@ -689,7 +841,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
             int src=(int)option.tag;
             option.enabled=(!src || (_visibility&(1<<(src-1)))) && tri::canConnect(routes,p,src);
         }
-        [menu selectItemWithTag:routes[p-tri::RouteArpIn]];
+        [menu selectItemWithTag:routes[tri::routeIndex(p)]];
     }
     [_canvas refreshGraph];
     NSString *status=_status?_status():@"";
@@ -706,7 +858,7 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 -(void)drawRect:(NSRect)dirty {
     fill(self.bounds,background);
     text(@"Soundnet",NSMakeRect(15,6,130,34),24,foreground,true);
-    text(@"1.3",NSMakeRect(127,18,38,18),11,muted,false,true);
+    text(@"1.4",NSMakeRect(127,18,38,18),11,muted,false,true);
     text(@"音色",NSMakeRect(289,16,42,22),12,muted);
     text(_workflowName?:@"",NSMakeRect(509,16,370,19),12,muted);
     text(_statusText?:@"",NSMakeRect(912,17,216,18),11,muted,false,true);
@@ -716,16 +868,22 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
     fill(NSMakeRect(402,58,12,3),0xb2a5e0); text(@"速度",NSMakeRect(421,51,56,18),11,muted);
     box(NSMakeRect(side,48,255,493));
     heading(@"节点参数",side+13,61);
-    text(_inspected>0 && _inspected<15?codes()[_inspected]:@"",NSMakeRect(side+154,66,86,17),10,muted,true,true);
+    text(_inspected>0 && _inspected<envelopeInspector?codes()[_inspected]:@"",NSMakeRect(side+154,66,86,17),10,muted,true,true);
     fill(NSMakeRect(side+1,133,253,1),border);
     if (_inspected==tri::ArpNode) {
         int pattern=std::clamp((int)_read(tri::Pattern),0,4);
         for(int i=0;i<16;++i) fill(NSMakeRect(side+14+i*14,384,11,10),
             tri::patternMasks[pattern]&(1<<i)?active:0x434849);
     }
-    int source=std::clamp((int)_read(tri::RouteOutputIn),0,14);
-    NSString *monitor=source ? [NSString stringWithFormat:@"主输出来源   %@",codes()[source]] : @"主输出未连接";
-    text(monitor,NSMakeRect(14,545,775,18),11,source?muted:0xe7b87b);
+    int source=std::clamp((int)_read(tri::RouteOutputIn),0,tri::layout::nodeCount);
+    NSString *sink=_inputRead ? @"硬件输出" : @"DAW 输出";
+    NSString *monitor=source ? [NSString stringWithFormat:@"%@   →   %@",codes()[source],sink] : [sink stringByAppendingString:@"未连接"];
+    int midiSource=std::clamp((int)_read(tri::RouteMidiOutIn),0,tri::layout::nodeCount);
+    if (midiSource) {
+        NSString *midi=[NSString stringWithFormat:@"%@   →   MIDI 输出",codes()[midiSource]];
+        monitor=source ? [NSString stringWithFormat:@"%@     ·     %@",monitor,midi] : midi;
+    }
+    text(monitor,NSMakeRect(14,545,775,18),11,source||midiSource?muted:0xe7b87b);
     fill(NSMakeRect(12,566,1120,1),border);
     text(@"演奏键盘",NSMakeRect(18,576,112,19),13,foreground,true);
     text(@"C3 – B5",NSMakeRect(147,631,150,16),10,muted,false,true);
@@ -733,9 +891,11 @@ NSArray<NSString*> *codes() { return @[@"", @"MIDI IN", @"ARP", @"OSC 1", @"OSC 
 @end
 
 NSView *TRICreateEditor(TRIRead read, TRIWrite write, TRIMIDI midi,
-                        TRIInputRead inputRead, TRIInputWrite inputWrite, TRIStatus status) {
+                        TRIInputRead inputRead, TRIInputWrite inputWrite, TRIStatus status,
+                        TRIAssetsRead assetsRead, TRIAssetsWrite assetsWrite) {
     TRNEditor *editor=[[TRNEditor alloc] initWithFrame:NSMakeRect(0,0,width,height)];
     editor.read=read; editor.write=write; editor.send=midi;
+    editor.assetsRead=assetsRead; editor.assetsWrite=assetsWrite;
     editor.inputRead=inputRead; editor.inputWrite=inputWrite; editor.status=status;
     [editor setup]; return editor;
 }

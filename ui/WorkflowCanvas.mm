@@ -9,8 +9,7 @@ namespace {
 constexpr unsigned bg=0x141719, grid=0x22272a, majorGrid=0x2a3033, panel=0x252b2e, top=0x2f373a,
     edge=0x4a5559, textColor=0xe7eae7, soft=0xb4bdbd, dim=0x8b989b, selectedColor=0xece8d9,
     audioColor=0x82c3b2, midiColor=0xe7b87b, errorColor=0xe6aa92;
-constexpr int firstNode=tri::MidiNode,lastNode=tri::VelocityNode;
-constexpr int firstRoute=tri::RouteArpIn,lastRoute=tri::RouteVelocityClock;
+constexpr int firstNode=tri::MidiNode,lastNode=tri::layout::nodeCount;
 constexpr CGFloat worldW=855, worldH=402;
 
 NSColor *color(unsigned rgb, CGFloat alpha=1) {
@@ -30,24 +29,30 @@ void drawText(NSString *s,NSRect r,CGFloat size,unsigned ink,bool bold=false,NST
 void polyLine(NSPoint a,NSPoint b,unsigned ink,CGFloat width=1){
     NSBezierPath *p=[NSBezierPath new];[p moveToPoint:a];[p lineToPoint:b];[color(ink)setStroke];p.lineWidth=width;[p stroke];
 }
-NSString *nameOf(int node) {
+NSString *nameOf(int node, BOOL hosted) {
+    if(node==tri::OutputNode) return hosted ? @"DAW 输出" : @"硬件输出";
     static NSArray<NSString*> *names;
-    if(!names)names=@[@"",@"MIDI",@"ARP",@"OSC 1",@"OSC 2",@"OSC 3",@"音频输入",@"混音器",@"均衡器",@"Delay",@"输出",@"和弦输入",@"和声走向",@"节奏速度",@"力度自动化"];
+    if(!names)names=@[@"",@"本地 MIDI",@"ARP",@"OSC 1",@"OSC 2",@"OSC 3",@"音频输入",@"混音器",@"均衡器",@"Delay",@"输出",@"和弦输入",@"和声走向",@"节奏速度",@"力度自动化",@"DAW MIDI",@"MIDI Clip",@"音符模型",@"MIDI 输出"];
     return node>=firstNode && node<=lastNode ? names[node] : @"";
 }
 // The upper line is the node title, the lower rows are actual ports. Audio and
 // note paths have distinct colors and labels, including on the oscillator's two sides.
-const std::array<NSRect,15> positions={{
+const std::array<NSRect,lastNode+1> positions={{
     {},NSMakeRect(12,151,78,57),NSMakeRect(118,151,78,78),NSMakeRect(230,15,111,76),
     NSMakeRect(230,111,111,76),NSMakeRect(230,207,111,76),NSMakeRect(230,309,111,57),
     NSMakeRect(381,122,99,117),NSMakeRect(512,151,90,57),NSMakeRect(634,151,91,57),NSMakeRect(759,151,83,57),
-    NSMakeRect(20,430,128,76),NSMakeRect(180,430,128,76),NSMakeRect(340,430,128,57),NSMakeRect(500,430,138,96)
+    NSMakeRect(20,430,128,76),NSMakeRect(180,430,128,76),NSMakeRect(340,430,128,57),NSMakeRect(500,430,138,96),
+    NSMakeRect(12,50,103,57),NSMakeRect(12,280,103,57),NSMakeRect(125,279,97,57), NSMakeRect(742,319,100,57)
 }};
 bool validNode(int n){return n>=firstNode && n<=lastNode;}
+bool sink(int n) { return n==tri::OutputNode || n==tri::MidiOutNode; }
 bool osc(int n){return n>=tri::Osc1Node && n<=tri::Osc3Node;}
 unsigned outColor(int n){return n==tri::ClockNode?0xb2a5e0:tri::noteSource(n)?midiColor:audioColor;}
-unsigned inColor(int p){return tri::clockPort(p)?0xb2a5e0:(p<=tri::RouteOsc3In||p==tri::RouteChordIn||p==tri::RouteVelocityIn)?midiColor:audioColor;}
+unsigned inColor(int p){return tri::clockPort(p)?0xb2a5e0:(p<=tri::RouteOsc3In||p==tri::RouteChordIn||p==tri::RouteVelocityIn||p==tri::RouteModelIn||p==tri::RouteMidiOutIn)?midiColor:audioColor;}
 int input0(int n) {
+    if(n==tri::MidiOutNode)return tri::RouteMidiOutIn;
+    if(n==tri::ClipNode)return tri::RouteClipClock;
+    if(n==tri::ModelNode)return tri::RouteModelIn;
     if(n==tri::ChordNode)return tri::RouteChordIn;
     if(n==tri::ProgressNode)return tri::RouteProgressClock;
     if(n==tri::VelocityNode)return tri::RouteVelocityIn;
@@ -105,8 +110,8 @@ struct Curve {
     TRIWrite _write;
     TRINodeSelection _notify;
     tri::Routing _routes;
-    std::array<NSRect,15> _nodes;
-    std::array<int,15> _zOrder;
+    std::array<NSRect,lastNode+1> _nodes;
+    std::array<int,lastNode+1> _zOrder;
     std::array<int,3> _shapes;
     NSInteger _visibleNodeMask, _selectedNode;
     CGFloat _scale;
@@ -123,13 +128,13 @@ struct Curve {
     if((self=[super initWithFrame:r])) {
         _read=[read copy];_write=[write copy];_notify=[notify copy];
         _nodes=positions;_routes=tri::defaultRouting;
-        for(int n=1;n<=14;n++)_zOrder[n]=n;
+        for(int n=1;n<=lastNode;n++)_zOrder[n]=n;
         _selectedNode=tri::Osc1Node;_selectedCable=-1;_scale=1;
         _visibleNodeMask=1023;
         self.toolTip=@"拖动端口连线；拖动节点标题移动；拖动空白处平移，双指捏合缩放。";
         [self setAccessibilityElement:YES];
         [self setAccessibilityRole:NSAccessibilityGroupRole];
-        [self setAccessibilityLabel:@"合成器工作流画布"];
+        [self setAccessibilityLabel:@"Soundnet 工作流画布"];
         [self refreshGraph];[self fitGraph];
     }
     return self;
@@ -153,7 +158,7 @@ struct Curve {
 -(void)refreshGraph {
     if(!_read)return;
     BOOL changed=NO;
-    int mask=std::clamp((int)std::lround(_read(tri::layout::visibility)),0,16383);
+    int mask=std::clamp((int)std::lround(_read(tri::layout::visibility)),0,(1<<lastNode)-1);
     if(mask!=_visibleNodeMask){_visibleNodeMask=mask;changed=YES;}
     for(int n=firstNode;n<=lastNode;++n){
         // Never pull a stale just-saved coordinate over a node being dragged.
@@ -166,9 +171,10 @@ struct Curve {
         int shape=std::lround(_read(tri::Wave1+3*lane));
         if(_shapes[lane]!=shape){_shapes[lane]=shape;changed=YES;}
     }
-    for(int p=firstRoute;p<=lastRoute;++p){
+    for(size_t i=0;i<_routes.size();++i){
+        int p=tri::routeID(i);
         int src=static_cast<int>(std::round(_read(p)));
-        if(_routes[p-firstRoute]!=src){_routes[p-firstRoute]=src;changed=YES;}
+        if(_routes[i]!=src){_routes[i]=src;changed=YES;}
     }
     if(_selectedNode && ![self visible:(int)_selectedNode]){
         int fallback=0;
@@ -210,7 +216,7 @@ struct Curve {
 -(Port)portAt:(NSPoint)p {
     CGFloat hit=std::clamp(9./_scale,6.,16.);
     for(int z=lastNode;z>=firstNode;--z){int n=_zOrder[z];if(![self visible:n])continue;
-        if(n!=tri::OutputNode){Port out{n,-1,true};if(dist(p,[self jack:out])<=hit)return out;}
+        if(!sink(n)){Port out{n,-1,true};if(dist(p,[self jack:out])<=hit)return out;}
         for(int j=0;j<inputs(n);j++){Port in{n,inputParam(n,j),false};if(dist(p,[self jack:in])<=hit)return in;}
         if(NSPointInRect(p,_nodes[n]))break;
     }
@@ -222,7 +228,8 @@ struct Curve {
 }
 -(int)cableAt:(NSPoint)p{
     CGFloat best=6./_scale;int found=-1;
-    for(int id=firstRoute;id<=lastRoute;++id){int n=_routes[id-firstRoute],target=tri::routeTarget(id);
+    for(size_t i=0;i<_routes.size();++i){
+        int id=tri::routeID(i), n=_routes[i], target=tri::routeTarget(id);
         if(![self visible:n]||![self visible:target])continue;
         Curve curve([self jack:Port{n,-1,true}],[self jack:Port{target,id,false}]);
         CGFloat d=curve.distance(p);if(d<best){best=d;found=id;}
@@ -243,27 +250,29 @@ struct Curve {
         *param=_startPort.output?drop.param:_startPort.param;
         *source=_startPort.output?_startPort.node:drop.node;
     }else if(!drop.output && drop.param!=_startPort.param){
-        *source=_routes[_startPort.param-firstRoute];
+        *source=_routes[tri::routeIndex(_startPort.param)];
         if(![self visible:*source])return NO;
         *param=drop.param;*old=_startPort.param;
     }else return NO;
     tri::Routing candidate=_routes;
-    if(*old>=0)candidate[*old-firstRoute]=tri::NoNode;
+    if(*old>=0)candidate[tri::routeIndex(*old)]=tri::NoNode;
     return tri::canConnect(candidate,*param,*source);
 }
 -(void)writeRoute:(int)p source:(int)n{
-    if(_routes[p-firstRoute]==n)return;
-    _write(p,n);_routes[p-firstRoute]=n;
+    if(_routes[tri::routeIndex(p)]==n)return;
+    _write(p,n);_routes[tri::routeIndex(p)]=n;
 }
 -(void)disconnect:(int)p{
-    if(p<firstRoute||p>lastRoute)return;
+    if(!tri::routeParam(p))return;
     [self writeRoute:p source:tri::NoNode];_selectedCable=-1;[self refreshGraph];self.needsDisplay=YES;
 }
 -(void)removeNode:(NSInteger)n{
     if(![self visible:(int)n])return;
     _write(tri::layout::beginRouting,0);
-    for(int p=firstRoute;p<=lastRoute;++p) if(tri::routeTarget(p)==n||_routes[p-firstRoute]==n)
-        [self writeRoute:p source:tri::NoNode];
+    for(size_t i=0;i<_routes.size();++i) {
+        int p=tri::routeID(i);
+        if(tri::routeTarget(p)==n || _routes[i]==n) [self writeRoute:p source:tri::NoNode];
+    }
     _write(tri::layout::commitRouting,0);
     _write(tri::layout::visibility,_visibleNodeMask & ~(1<<(n-1)));
     [self refreshGraph];self.needsDisplay=YES;
@@ -289,14 +298,14 @@ struct Curve {
     [NSGraphicsContext saveGraphicsState];
     [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r,1,1) xRadius:5 yRadius:5]addClip];
     [color(top)setFill];NSRectFill(title);[NSGraphicsContext restoreGraphicsState];
-    drawText(nameOf(n),NSMakeRect(NSMinX(r)+10,NSMinY(r)+4,NSWidth(r)-16,19),12.1,textColor,true);
+    drawText(nameOf(n,_hosted),NSMakeRect(NSMinX(r)+10,NSMinY(r)+4,NSWidth(r)-16,19),12.1,textColor,true);
     for(int j=0;j<inputs(n);++j){
         int param=inputParam(n,j); Port port{n,param,false}; NSPoint pt=[self jack:port];
-        [self drawSocket:port connected:_routes[param-firstRoute]!=0];
-        NSString *s=tri::clockPort(param)?@"速度":n==tri::MixNode?[NSString stringWithFormat:@"IN %d",j+1]:tri::noteSource(n)?@"音符":@"音频";
+        [self drawSocket:port connected:_routes[tri::routeIndex(param)]!=0];
+        NSString *s=tri::clockPort(param)?@"速度":n==tri::MixNode?[NSString stringWithFormat:@"IN %d",j+1]:inColor(param)==midiColor?@"音符":@"音频";
         drawText(s,NSMakeRect(pt.x+9,pt.y-6.6,45,16),10,soft);
     }
-    if(n!=tri::OutputNode){
+    if(!sink(n)){
         Port out{n,-1,true}; NSPoint pt=[self jack:out];
         BOOL used=std::find(_routes.begin(),_routes.end(),n)!=_routes.end();
         [self drawSocket:out connected:used];
@@ -331,7 +340,8 @@ struct Curve {
     for(CGFloat y=std::fmod(_origin.y,step);y<NSHeight(self.bounds);y+=step)polyLine(NSMakePoint(0,y),NSMakePoint(NSWidth(self.bounds),y),majorGrid,.55);
     [NSGraphicsContext saveGraphicsState];
     NSAffineTransform *matrix=[NSAffineTransform transform];[matrix translateXBy:_origin.x yBy:_origin.y];[matrix scaleBy:_scale];[matrix concat];
-    for(int p=firstRoute;p<=lastRoute;++p){int src=_routes[p-firstRoute],target=tri::routeTarget(p);
+    for(size_t i=0;i<_routes.size();++i){
+        int p=tri::routeID(i), src=_routes[i], target=tri::routeTarget(p);
         if(![self visible:src]||![self visible:target])continue;
         Curve curve([self jack:Port{src,-1,true}],[self jack:Port{target,p,false}]);
         bool muted=_gesture==Gesture::cable && !_startPort.output && p==_startPort.param;
@@ -411,9 +421,9 @@ struct Curve {
             [self writeRoute:param source:src];
             if(old>=0)_write(tri::layout::commitRouting,0);
             _selectedCable=param;
-        }else if(!drop && !_startPort.output && _routes[_startPort.param-firstRoute]!=0 && ![self nodeAt:p]){
+        }else if(!drop && !_startPort.output && _routes[tri::routeIndex(_startPort.param)]!=0 && ![self nodeAt:p]){
             [self disconnect:_startPort.param];[self message:@"已断开输入连接"];
-        }else if(drop){[self message:@"无法连接：请匹配音符或音频端口，并避免形成回路"];}
+        }else if(drop){[self message:@"请连接相同类型的端口，并避免形成回路"];}
     }
     _gesture=Gesture::none;_movingNode=0;_startPort={};[self refreshGraph];
     [self mouseMoved:e];self.needsDisplay=YES;
@@ -437,7 +447,7 @@ struct Curve {
         _gesture=Gesture::none;_hover={};_startPort={};self.needsDisplay=YES;return;
     }
     if(e.keyCode==51 || e.keyCode==117){
-        if(_selectedCable>=firstRoute)[self disconnect:_selectedCable];else if(_selectedNode)[self removeNode:_selectedNode];
+        if(tri::routeParam(_selectedCable))[self disconnect:_selectedCable];else if(_selectedNode)[self removeNode:_selectedNode];
         return;
     }
     [super keyDown:e];
@@ -450,16 +460,16 @@ struct Curve {
     Port p=[self portAt:_menuPoint];_contextNode=p?p.node:[self nodeAt:_menuPoint];
     _contextParam=p && !p.output?p.param:(_contextNode? -1:[self cableAt:_menuPoint]);
     NSMenu *menu=[NSMenu new];
-    if(_contextParam>=firstRoute && _routes[_contextParam-firstRoute]!=tri::NoNode){
+    if(tri::routeParam(_contextParam) && _routes[tri::routeIndex(_contextParam)]!=tri::NoNode){
         [self entry:menu title:@"断开这条连接" action:@selector(menuDisconnect:)];
     }
     if(_contextNode) {
         [self selectNode:_contextNode];
-        [self entry:menu title:[@"移除 " stringByAppendingString:nameOf(_contextNode)] action:@selector(menuRemove:)];
+        [self entry:menu title:[@"移除 " stringByAppendingString:nameOf(_contextNode,_hosted)] action:@selector(menuRemove:)];
     }else{
         NSMenu *add=[NSMenu new];
         for(int n=firstNode;n<=lastNode;++n)if(![self visible:n])
-            [self entry:add title:nameOf(n) action:@selector(menuAdd:)].tag=n;
+            [self entry:add title:nameOf(n,_hosted) action:@selector(menuAdd:)].tag=n;
         if(add.numberOfItems){NSMenuItem *item=[menu addItemWithTitle:@"添加节点" action:nil keyEquivalent:@""];item.submenu=add;}
         if(menu.numberOfItems)[menu addItem:NSMenuItem.separatorItem];
         [self entry:menu title:@"适配画布" action:@selector(menuFit:)];

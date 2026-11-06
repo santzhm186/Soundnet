@@ -20,7 +20,7 @@
         }
         if (tri::routeParam(id)) {
             cache->refresh();
-            return cache->state.graph[id-tri::RouteArpIn];
+            return cache->state.graph[tri::routeIndex(id)];
         }
         if(id<0 || id>=tri::ParamCount) return 0;
         AudioUnitParameterValue value = tri::params[id].def;
@@ -43,10 +43,11 @@
         event.mEventType = kAudioUnitEvent_EndParameterChangeGesture;
         AUEventListenerNotify(nullptr,nullptr,&event);
     }, ^(unsigned char status,unsigned char a,unsigned char b) {
-        MusicDeviceMIDIEvent(unit,status,a,b,0);
+        cache->sendLocalMIDI({status,a,b});
     }, nil,nil, ^NSString *{
         OSStatus err=cache->writeError ? cache->writeError : cache->readError;
         return err ? [NSString stringWithFormat:@"工作流访问失败 (%d)",(int)err] : @"Audio Unit · Host sync";
-    });
+    }, ^NSDictionary *{ return cache->readAssets(); },
+       ^BOOL(NSDictionary *assets){ return cache->setAssets(assets)==noErr; });
 }
 @end

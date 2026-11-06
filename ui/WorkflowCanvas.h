@@ -1,9 +1,10 @@
 #import "TriEditor.h"
 
-// Node identities follow tri::Node in Engine.hpp (1..10, 0 = no selection).
+// Node identities follow tri::Node in Engine.hpp (0 = no selection).
 typedef void (^TRINodeSelection)(int node);
 @interface TRIWorkflowCanvas : NSView
 - (instancetype)initWithFrame:(NSRect)frame read:(TRIRead)read write:(TRIWrite)write selected:(TRINodeSelection)selected;
+@property(nonatomic) BOOL hosted;
 @property(nonatomic,readonly) NSInteger selectedNode;
 @property(nonatomic,readonly) NSInteger visibleNodeMask;
 @property(nonatomic,readonly) CGFloat graphZoom;

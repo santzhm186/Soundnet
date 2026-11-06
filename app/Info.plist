@@ -10,11 +10,11 @@
   <key>CFBundleName</key><string>Soundnet</string>
   <key>CFBundleIconFile</key><string>Ternary</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.3.0</string>
-  <key>CFBundleVersion</key><string>4</string>
+  <key>CFBundleShortVersionString</key><string>1.4.0</string>
+  <key>CFBundleVersion</key><string>5</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>在你打开音频输入时，Ternary 需要读取麦克风或声卡的信号，以混合或处理声音。</string>
+  <key>NSMicrophoneUsageDescription</key><string>在你打开音频输入时，Soundnet 需要读取麦克风或声卡的信号，以混合或处理声音。</string>
 </dict>
 </plist>

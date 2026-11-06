@@ -10,10 +10,12 @@ namespace ternaryAU {
 class EditorAccess {
     AudioUnit unit;
     bool remote=false;
-    std::atomic<bool> dirty{true};
+    std::atomic<bool> dirty{true}, assetsDirty{true};
+    NSDictionary *cachedAssets = @{};
+    std::chrono::steady_clock::time_point assetsExpire{};
     std::chrono::steady_clock::time_point expires{};
     static void notify(void* context,AudioUnit,AudioUnitPropertyID,AudioUnitScope,AudioUnitElement) {
-        static_cast<EditorAccess*>(context)->dirty.store(true,std::memory_order_relaxed);
+        static_cast<EditorAccess*>(context)->invalidate();
     }
     OSStatus readStandard() {
         CFPropertyListRef obj=nullptr;
@@ -34,6 +36,9 @@ class EditorAccess {
             if(!tri::layout::valid(tri::layout::first+static_cast<int>(i),next.layout[i]))
                 return kAudioUnitErr_InvalidPropertyValue;
         }
+        NSDictionary *savedAssets=dict[@"Soundnet.Assets.1"] ?: @{};
+        if (![savedAssets isKindOfClass:NSDictionary.class]) return kAudioUnitErr_InvalidPropertyValue;
+        cachedAssets=savedAssets;
         state=next;
         return noErr;
     }
@@ -60,7 +65,49 @@ public:
         AudioUnitRemovePropertyListenerWithUserData(unit,kAudioUnitProperty_ClassInfo,notify,this);
         AudioUnitRemovePropertyListenerWithUserData(unit,kAudioUnitProperty_PresentPreset,notify,this);
     }
-    void invalidate() { dirty.store(true,std::memory_order_relaxed); }
+    void invalidate() {
+        dirty.store(true,std::memory_order_relaxed);
+        assetsDirty.store(true,std::memory_order_relaxed);
+    }
+    NSDictionary *readAssets() {
+        if (remote) {
+            if (refresh()) return nil;
+        } else {
+            const auto now=std::chrono::steady_clock::now();
+            const bool changed=assetsDirty.exchange(false,std::memory_order_relaxed);
+            if (changed || now>=assetsExpire) {
+                CFDictionaryRef value=nullptr;
+                UInt32 size=sizeof(value);
+                readError=AudioUnitGetProperty(unit,assets,kAudioUnitScope_Global,0,&value,&size);
+                if (readError) {
+                    remote=true;
+                    if (refresh(true)) return nil;
+                } else cachedAssets=CFBridgingRelease(value);
+                assetsExpire=now+std::chrono::seconds(2);
+            }
+        }
+        return cachedAssets;
+    }
+    OSStatus setAssets(NSDictionary *value) {
+        if (![value isKindOfClass:NSDictionary.class]) return writeError=kAudioUnitErr_InvalidPropertyValue;
+        if (!remote) {
+            CFDictionaryRef data=(__bridge CFDictionaryRef)value;
+            writeError=AudioUnitSetProperty(unit,assets,kAudioUnitScope_Global,0,&data,sizeof(data));
+            if (writeError==kAudioUnitErr_InvalidProperty) remote=true;
+        }
+        if (remote) writeError=writeStandard(@{@"Ternary.EditorCommand":@(editAssets),@"Soundnet.Assets.1":value});
+        invalidate();
+        return writeError;
+    }
+    OSStatus sendLocalMIDI(LocalMIDI event) {
+        if (!remote) {
+            writeError=AudioUnitSetProperty(unit,localMIDI,kAudioUnitScope_Global,0,&event,sizeof(event));
+            if (writeError==kAudioUnitErr_InvalidProperty) remote=true;
+        }
+        if (remote) writeError=writeStandard(@{@"Ternary.EditorCommand":@(playLocalMIDI),
+            @"Soundnet.LocalMIDI":[NSData dataWithBytes:&event length:sizeof(event)]});
+        return writeError;
+    }
     OSStatus refresh(bool force=false) {
         const auto now=std::chrono::steady_clock::now();
         const bool changed=dirty.exchange(false,std::memory_order_relaxed);

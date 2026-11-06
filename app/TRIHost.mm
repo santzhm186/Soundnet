@@ -1,13 +1,53 @@
 #import "TRIHost.h"
 #import "AudioBridge.hpp"
 #include "PatchRouting.hpp"
+#include "WorkflowAssetStore.hpp"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMIDI/CoreMIDI.h>
 #import <mach/mach_time.h>
 #include <set>
 #include <memory>
 
+struct MIDIInputContext {
+    TRIRealtime *realtime = nullptr;
+    bool daw = false;
+};
+struct MIDIOutputContext {
+    TRIRealtime *realtime = nullptr;
+    MIDIEndpointRef endpoint = 0;
+};
+static void sendUMP(void *context,int frame,uint8_t status,uint8_t a,uint8_t b) {
+    const auto &output=*static_cast<MIDIOutputContext *>(context);
+    const auto &rt=*output.realtime;
+    if (!output.endpoint) return;
+    MIDIEventList list{};
+    list.protocol=kMIDIProtocol_1_0;
+    list.numPackets=1;
+    auto &packet=list.packet[0];
+    if (rt.outputStart && rt.framesPerTick>0)
+        packet.timeStamp=rt.outputStart+uint64_t((rt.outputOffset+frame)/rt.framesPerTick);
+    packet.wordCount=1;
+    packet.words[0]=(UInt32(kMIDIMessageTypeChannelVoice1)<<28) | (UInt32(status)<<16) | (UInt32(a)<<8) | b;
+    MIDIReceivedEventList(output.endpoint,&list);
+}
 static void receiveUMP(void *context, MIDITimeStamp time, MIDIUniversalMessage message) {
+    auto &input = *static_cast<MIDIInputContext *>(context);
+    // CoreMIDI can pass realtime system messages as raw UMPs in the
+    // visitor's unknown variant, even on a MIDI 1.0 endpoint.
+    const bool rawSystem = message.type==kMIDIMessageTypeInvalid &&
+                           (message.unknown.words[0]>>28)==kMIDIMessageTypeSystem;
+    if (input.daw && (message.type==kMIDIMessageTypeSystem || rawSystem)) {
+        UInt32 word=rawSystem ? message.unknown.words[0] : 0;
+        uint8_t status = rawSystem ? uint8_t(word>>16) : uint8_t(message.system.status);
+        if (status==kMIDIStatusTimingClock || status==kMIDIStatusStart ||
+            status==kMIDIStatusContinue || status==kMIDIStatusStop || status==kMIDIStatusSongPosPointer) {
+            UInt16 pos = 0;
+            if (status==kMIDIStatusSongPosPointer)
+                pos=rawSystem ? ((word>>8)&127) | ((word&127)<<7) : message.system.songPositionPointer;
+            input.realtime->enqueue(status,pos & 127,(pos>>7)&127,time ? time : mach_absolute_time(),true);
+        }
+        return;
+    }
     if (message.type != kMIDIMessageTypeChannelVoice1) return;
     auto &v = message.channelVoice1;
     const auto status = uint8_t((v.status << 4) | v.channel);
@@ -19,7 +59,7 @@ static void receiveUMP(void *context, MIDITimeStamp time, MIDIUniversalMessage m
         case kMIDICVStatusPitchBend: a=v.pitchBend & 127; b=(v.pitchBend >> 7) & 127; break;
         default: return;
     }
-    static_cast<TRIRealtime *>(context)->enqueue(status,a,b,time);
+    input.realtime->enqueue(status,a,b,time,input.daw);
 }
 
 static NSError *audioError(NSString *description) {
@@ -49,6 +89,9 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     std::unique_ptr<TRIRealtime> _rt;
     tri::layout::State _patchLayout;
     tri::RouteEdit _routeEdit;
+    tri::WorkflowAssetStore _assets;
+    MIDIInputContext _physicalInput, _dawInput;
+    MIDIOutputContext _midiOutput;
     AVAudioEngine *_graph;
     MIDIClientRef _client;
     MIDIPortRef _port;
@@ -65,23 +108,25 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         _rt = std::make_unique<TRIRealtime>();
         NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
         NSArray *saved=[defaults arrayForKey:@"Ternary.Patch.1"];
-        // Older versions stored only the original controls; they use the default patch cables.
-        NSUInteger controls=MIN(saved.count,static_cast<NSUInteger>(tri::RouteArpIn));
-        for (NSUInteger i=0; i<controls; ++i)
-            if ([saved[i] isKindOfClass:NSNumber.class]) _rt->dsp.set(static_cast<int>(i),[saved[i] floatValue]);
-        for(NSUInteger i=tri::ChordRoot;i<MIN(saved.count,static_cast<NSUInteger>(tri::ParamCount));++i)
-            if([saved[i] isKindOfClass:NSNumber.class])_rt->dsp.set((int)i,[saved[i] floatValue]);
-        if (saved.count>tri::RouteOutputIn) {
-            auto graph=tri::defaultRouting;
-            bool complete=true;
-            for (int id=tri::RouteArpIn; id<=tri::RouteVelocityClock && id<(int)saved.count; ++id) {
-                if (![saved[id] isKindOfClass:NSNumber.class]) { complete=false; break; }
-                double source=[saved[id] doubleValue];
-                if (!std::isfinite(source) || source<0 || source>14 || source!=std::trunc(source)) { complete=false; break; }
-                graph[id-tri::RouteArpIn]=static_cast<int>(source);
+        // Restore routes as one graph. Earlier patch arrays end before the new
+        // ports; those ports keep their default disconnected source.
+        auto graph = tri::defaultRouting;
+        bool validGraph = true;
+        for (NSUInteger i=0; i<MIN(saved.count,static_cast<NSUInteger>(tri::ParamCount)); ++i) {
+            id value = saved[i];
+            if (tri::routeParam((int)i)) {
+                if (![value isKindOfClass:NSNumber.class]) { validGraph=false; continue; }
+                const double source = [value doubleValue];
+                if (!std::isfinite(source) || source!=std::trunc(source) ||
+                    source<0 || source>tri::layout::nodeCount) { validGraph=false; continue; }
+                graph[tri::routeIndex((int)i)] = (int)source;
+            } else if ([value isKindOfClass:NSNumber.class]) {
+                _rt->dsp.set((int)i,[value floatValue]);
             }
-            if (complete && tri::validRouting(graph)) _rt->dsp.setRouting(graph);
         }
+        if (validGraph && tri::validRouting(graph)) _rt->dsp.setRouting(graph);
+        NSDictionary *assets = [defaults dictionaryForKey:@"Soundnet.WorkflowAssets.1"];
+        if (assets) _assets.replace(assets,_rt->dsp);
         _patchLayout=tri::layout::defaults();
         NSArray *layout=[defaults arrayForKey:@"Ternary.NodeLayout.1"];
         for (NSUInteger i=0; i<MIN(layout.count,_patchLayout.size()); ++i) {
@@ -105,13 +150,19 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
             dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf refreshSources]; });
     });
     if (err) return;
-    TRIRealtime *rt = _rt.get();
+    _midiOutput.realtime=_rt.get();
+    if (!MIDISourceCreateWithProtocol(_client,CFSTR("Soundnet MIDI Out"),kMIDIProtocol_1_0,&_midiOutput.endpoint))
+        _rt->dsp.setMidiOutput(&_midiOutput,sendUMP);
+    _physicalInput = {_rt.get(),false};
+    _dawInput = {_rt.get(),true};
+    MIDIInputContext *physical = &_physicalInput, *daw = &_dawInput;
     MIDIReceiveBlock receive = ^(const MIDIEventList *list, void *) {
-        MIDIEventListForEachEvent(list, receiveUMP, rt);
+        MIDIEventListForEachEvent(list, receiveUMP, physical);
     };
     _midiReady = !MIDIInputPortCreateWithProtocol(_client,CFSTR("Soundnet Input"),
                                                    kMIDIProtocol_1_0,&_port,receive);
-    MIDIDestinationCreateWithProtocol(_client,CFSTR("Soundnet MIDI In"),kMIDIProtocol_1_0,&_destination,receive);
+    MIDIDestinationCreateWithProtocol(_client,CFSTR("Soundnet MIDI In"),kMIDIProtocol_1_0,&_destination,
+        ^(const MIDIEventList *list,void *) { MIDIEventListForEachEvent(list,receiveUMP,daw); });
     [self refreshSources];
 }
 - (void)refreshSources {
@@ -119,7 +170,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     std::set<MIDIEndpointRef> live;
     for (ItemCount i=0; i<MIDIGetNumberOfSources(); ++i) {
         MIDIEndpointRef src = MIDIGetSource(i);
-        if (!src) continue;
+        if (!src || src==_midiOutput.endpoint) continue;
         if (_sources.count(src) || MIDIPortConnectSource(_port,src,nullptr) == noErr) live.insert(src);
     }
     // CoreMIDI removes connections to retired endpoints automatically.
@@ -144,6 +195,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         _sampleRate = device.sampleRate;
         mach_timebase_info_data_t base;
         mach_timebase_info(&base);
+        _rt->sampleRate = _sampleRate;
         _rt->framesPerTick = _sampleRate * base.numer / base.denom * 1.e-9;
         double inputRate = _sampleRate;
         if (input) {
@@ -254,19 +306,24 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (void)sendStatus:(uint8_t)status data1:(uint8_t)a data2:(uint8_t)b { _rt->enqueue(status,a,b); }
 - (void)panic { _rt->panicFlag.store(true); }
+- (NSDictionary *)workflowAssets { return _assets.current; }
+- (BOOL)replaceWorkflowAssets:(NSDictionary *)assets { return _assets.replace(assets,_rt->dsp); }
 - (void)savePatch {
     NSMutableArray *values = [NSMutableArray array];
     for (int i=0; i<tri::ParamCount; ++i) [values addObject:@(_rt->dsp.get(i))];
     NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
     [defaults setObject:values forKey:@"Ternary.Patch.1"];
+    [defaults setObject:_assets.current forKey:@"Soundnet.WorkflowAssets.1"];
     NSMutableArray *layout=[NSMutableArray arrayWithCapacity:_patchLayout.size()];
     for (float v:_patchLayout) [layout addObject:@(v)];
     [defaults setObject:layout forKey:@"Ternary.NodeLayout.1"];
 }
 - (void)stop {
     _closed = YES;
-    if (_client) { MIDIClientDispose(_client); _client = 0; _port = 0; }
+    // Stop rendering and release downstream notes while the virtual source is live.
     [self tearDownGraph];
+    _rt->dsp.setMidiOutput(nullptr,nullptr);
+    if (_client) { MIDIClientDispose(_client); _client = 0; _port = 0; }
 }
 + (int)runOfflineCheck {
     // Feed a real MIDI event list and an input impulse through the same graph callback the app uses.
@@ -300,7 +357,8 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     auto *packet = MIDIEventListInit(&list,kMIDIProtocol_1_0);
     UInt32 word = MIDI1UPNoteOn(0,0,69,110);
     if (!MIDIEventListAdd(&list,sizeof(list),packet,0,1,&word)) return 2;
-    MIDIEventListForEachEvent(&list,receiveUMP,rt.get());
+    MIDIInputContext physical{rt.get(),false};
+    MIDIEventListForEachEvent(&list,receiveUMP,&physical);
     float notePeak = peak();
     int result = externalPeak>.001f && notePeak>.001f ? 0 : 3;
     fprintf(stderr,"Offline app graph: input peak %.5f; MIDI peak %.5f; %s\n",externalPeak,notePeak,result?"FAIL":"PASS");

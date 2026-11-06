@@ -22,7 +22,9 @@
         ^(unsigned char s,unsigned char a,unsigned char b){ [host sendStatus:s data1:a data2:b]; },
         ^BOOL{ return host.isInputEnabled; },
         ^(BOOL v){ host.inputEnabled=v; },
-        ^NSString *{ return host.status; });
+        ^NSString *{ return host.status; },
+        ^NSDictionary *{ return host.workflowAssets; },
+        ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable)
             backing:NSBackingStoreBuffered defer:NO];
@@ -75,7 +77,7 @@
 - (void)help:(id)sender {
     NSAlert *alert = [NSAlert new];
     alert.messageText = @"演奏 Soundnet";
-    alert.informativeText = @"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\nMIDI 键盘自动连接，也可从其他软件发送到「Soundnet MIDI In」。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。";
+    alert.informativeText = @"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\n外接键盘接入本地 MIDI 节点。DAW 可把音轨和 MIDI 时钟发送至「Soundnet MIDI In」，接入 DAW MIDI 节点。独立版输出到系统所选声卡；在 Logic 的软件乐器轨道中加载 Soundnet AU，可将音频送回该轨道。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。";
     [alert beginSheetModalForWindow:_window completionHandler:nil];
 }
 - (NSEvent *)handle:(NSEvent *)e {

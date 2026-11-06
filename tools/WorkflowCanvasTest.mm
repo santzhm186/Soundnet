@@ -40,7 +40,7 @@ int main(int argc,const char **argv) {@autoreleasepool{
                 need(tri::layout::valid(p,v),"invalid layout value");(*positions)[p-tri::layout::first]=v;
             }else if(p==tri::layout::beginRouting){batch=YES;pending=state->routing();}
             else if(p==tri::layout::commitRouting){need(batch && state->setRouting(pending),"invalid route transaction");batch=NO;}
-            else if(batch){pending[p-tri::RouteArpIn]=(int)v;}else{state->set(p,v);}
+            else if(batch){pending[tri::routeIndex(p)]=(int)v;}else{state->set(p,v);}
         } selected:^(int n){selected=n;}];
     NSWindow *window=[[NSWindow alloc]initWithContentRect:canvas.frame styleMask:NSWindowStyleMaskBorderless
                                                   backing:NSBackingStoreBuffered defer:NO];
@@ -76,6 +76,16 @@ int main(int argc,const char **argv) {@autoreleasepool{
     need(!(canvas.visibleNodeMask & (1<<(tri::InputNode-1))) && engine.get(tri::RouteMix4)==tri::NoNode,"removal left visible node or cable");
     [canvas addNode:tri::InputNode];
     need((canvas.visibleNodeMask & (1<<(tri::InputNode-1))) && selected==tri::InputNode,"restore/select failed");
+    // The added note-processing nodes have real hit-testable input/output jacks.
+    for (int node : {tri::ClipNode,tri::ModelNode,tri::MidiOutNode}) [canvas addNode:node];
+    [canvas resetLayout];
+    drag(canvas,viewPoint(115,320),viewPoint(125,319));
+    need(engine.get(tri::RouteModelIn)==tri::ClipNode,"Clip to model drag failed");
+    drag(canvas,viewPoint(222,319),viewPoint(742,359));
+    need(engine.get(tri::RouteMidiOutIn)==tri::ModelNode,"model to MIDI output drag failed");
+    [canvas removeNode:tri::ModelNode];
+    need(engine.get(tri::RouteModelIn)==tri::NoNode && engine.get(tri::RouteMidiOutIn)==tri::NoNode,
+         "removing the model left a stale note cable");
     puts("PASS: AppKit canvas drag changed DSP output; MIDI/audio typing and cycle protection; input reassignment, disconnect, fan-out, selection, drag persistence, zoom, reset, remove and restore.");
     return 0;
 }}

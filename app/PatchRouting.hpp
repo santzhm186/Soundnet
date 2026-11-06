@@ -20,13 +20,13 @@ public:
             draft.reset();
             return true;
         }
-        if (id<RouteArpIn || id>RouteVelocityClock) return false;
-        if (!std::isfinite(value) || value!=std::trunc(value) || value<0 || value>14) return true;
+        if (!routeParam(id)) return false;
+        if (!std::isfinite(value) || value!=std::trunc(value) || value<0 || value>layout::nodeCount) return true;
         if (draft) {
-            (*draft)[id-RouteArpIn]=static_cast<int>(value);
+            (*draft)[routeIndex(id)]=static_cast<int>(value);
         } else {
             auto next=read();
-            next[id-RouteArpIn]=static_cast<int>(value);
+            next[routeIndex(id)]=static_cast<int>(value);
             if(validRouting(next)) write(next);
         }
         return true;
