@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.0**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.1**。
 
 **输入 → 节点处理 → 输出**
 
@@ -15,7 +15,7 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 | 分类 | 可插入的节点 |
 | --- | --- |
 | 输入 | 本地 MIDI、DAW MIDI、MIDI Clip、硬件音频输入、DAW 音频输入、和弦输入、和声走向、节奏速度、DAW 时钟 |
-| 处理 | 振荡器、ARP、力度自动化、音符模型、混音器、EQ、Delay |
+| 处理 | 三声部编排器、振荡器、ARP、力度自动化、音符模型、混音器、EQ、Delay |
 | 逻辑 | 开始触发器、停止触发器、等待、次数条件 |
 | 输出 | 硬件音频输出、DAW 音频输出、MIDI 输出 |
 
@@ -74,6 +74,20 @@ flowchart LR
 | 条件控制 | Clip 循环完成 → 次数条件 → 停止触发器 → Clip |
 
 ## 音乐与逻辑处理
+
+**三声部编排器**
+
+右键画布，在「处理」中插入「三声部编排器」。把 MIDI Clip、和声走向或键盘的音符输出接到输入端。右侧的高、中、低三个 MIDI 出口可以分别接振荡器、ARP 或其他音符处理节点。
+
+| 声部 | 默认音域（含首尾，中央 C = MIDI 60） | 默认织体 | 同时输入 C4、E4、G4 时 |
+| --- | --- | --- | --- |
+| 高 | 72–95（C5–B6） | 最高音 | G5（79） |
+| 中 | 55–71（G3–B4） | 中间音 | E4（64） |
+| 低 | 36–54（C2–F♯3） | 最低音 | C3（48） |
+
+每一路都能修改上下限，从最高音、中间音、最低音和柱式和弦中选一种织体。编排器按原始音高选音，并尽量少移八度，使输出落在设定音域。窄音域容不下的音名会跳过。中间音在偶数个候选音中取偏低的一个；柱式和弦保留所有可用音，同一通道折叠到同一音高时合并。松开当前旋律音，仍按住的其他音会按同一规则接替。
+
+打开[三声部编排示例](examples/three-voice-arrangement.json)，即可听到 C、Am、F、G 以 96 BPM 循环，三个声部各驱动一个振荡器。试着把中声部改成柱式和弦，或在中声部出口与振荡器之间加入启用的 ARP。示例同时接好硬件与 DAW 音频输出，独立 App 和 Logic 插件均可使用。
 
 **振荡器与效果**
 
@@ -138,6 +152,8 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 mkdir -p build/tests
 xcrun clang++ -std=c++17 -O2 tests/InstanceGraphTests.cpp -o build/tests/instance-tests
 build/tests/instance-tests
+xcrun clang++ -std=c++17 -O2 tests/ArrangerTests.cpp -o build/tests/arranger-tests
+build/tests/arranger-tests
 auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
 ```

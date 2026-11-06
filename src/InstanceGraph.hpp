@@ -1,5 +1,5 @@
 #pragma once
-#include "GraphSpec.hpp"
+#include "VoiceArranger.hpp"
 #include <memory>
 
 namespace tri {
@@ -10,15 +10,44 @@ class InstanceGraph {
     struct Pending { uint64_t due; bool start; };
     struct Note { uint8_t velocity=0; uint64_t token=0; };
     using Notes=std::array<Note,2048>;
-    struct Runtime {
-        int type;
-        std::unique_ptr<LegacyEngine> engine;
-        std::array<float,quantum> left{},right{},inputL{},inputR{};
+    struct NotePort {
         std::array<Event,eventCapacity> events{};
         int eventCount=0;
         bool overflow=false;
-        uint64_t serial=0;
-        Notes before{},after{},incoming{};
+        uint64_t serial=0,beforeSerial=0;
+        Notes before{},after{};
+        void begin() {
+            bool lostEvents=overflow;
+            before=after;beforeSerial=serial;eventCount=0;overflow=false;
+            // A full queue can drop releases, including those from engine panic.
+            // Clear exactly the notes downstream received before resuming.
+            if(lostEvents)for(int k=0;k<2048;++k)if(after[k].velocity)
+                emit({0,uint8_t(0x80|k%16),uint8_t(k/16),0});
+        }
+        void clear() {
+            before={};after={};serial=beforeSerial=0;eventCount=0;overflow=false;
+        }
+        void emit(Event e) {
+            if(eventCount==eventCapacity) {overflow=true;return;}
+            events[eventCount++]=e;
+            int type=e.status&0xf0,k=e.a*16+(e.status&15);
+            if(type==0x90 && e.b) after[k]={e.b,++serial};
+            else if(type==0x80 || type==0x90) after[k]={};
+        }
+    };
+    struct ArrangerState {
+        std::array<NotePort,2> otherVoices;
+        uint64_t previousToken=0,sourceGeneration=0;
+        int sourcePort=0;
+        bool retry=false;
+    };
+    struct Runtime : NotePort {
+        int type;
+        uint64_t generation;
+        std::unique_ptr<LegacyEngine> engine;
+        std::unique_ptr<ArrangerState> arranger;
+        std::array<float,quantum> left{},right{},inputL{},inputR{};
+        Notes incoming{};
         GraphNode saved;
         bool configured=false;
         int seenPulse=0,count=0,renderOffset=0;
@@ -32,7 +61,14 @@ class InstanceGraph {
             event.frame+=renderOffset;
             if(triggerDispatch)triggerDispatch(triggerContext,this,event);
         }
-        explicit Runtime(const GraphNode& node,double rate):type(node.type) {
+        NotePort& notePort(int index) {
+            return index==0 ? static_cast<NotePort&>(*this) : arranger->otherVoices[index-1];
+        }
+        Runtime(const GraphNode& node,double rate,uint64_t gen):type(node.type),generation(gen) {
+            if(type==ArrangerNode) {
+                arranger=std::make_unique<ArrangerState>();
+                return;
+            }
             auto pulse=node.parameters.find(TriggerPulse);
             if(pulse!=node.parameters.end())seenPulse=int(pulse->second);
             if(type==MixNode || type==ClockNode || type==DawClockNode ||
@@ -68,13 +104,6 @@ class InstanceGraph {
             });
             engine->setRouting(route);
         }
-        void emit(Event e) {
-            if(eventCount==eventCapacity) {overflow=true;return;}
-            events[eventCount++]=e;
-            int type=e.status&0xf0,k=e.a*16+(e.status&15);
-            if(type==0x90 && e.b) after[k]={e.b,++serial};
-            else if(type==0x80 || type==0x90) after[k]={};
-        }
         void configure(const GraphNode& node) {
             if(engine) {
                 for(int p=0;p<ParamCount;++p) {
@@ -98,6 +127,8 @@ class InstanceGraph {
     struct Entry {
         std::shared_ptr<Runtime> state;
         std::array<int,4> inputs{{-1,-1,-1,-1}};
+        int noteSourcePort=0;
+        std::array<ArrangerVoice,3> voices;
         float gain=1,bpm=112,wait=1;
         int pulse=0,count=4;
         bool hostClock=false;
@@ -107,6 +138,7 @@ class InstanceGraph {
     struct Plan { std::vector<Entry> entries; std::vector<std::shared_ptr<Runtime>> retired; };
     RealtimeAsset<Plan> plans;
     std::map<InstanceID,std::shared_ptr<Runtime>> controlNodes;
+    uint64_t nextGeneration=1;
     std::mutex edits;
     double rate=48000,bpm=0,beat=0;
     bool transport=false,playing=false,hosted=false;
@@ -142,9 +174,38 @@ class InstanceGraph {
             }
         }
     }
-    static float value(const GraphNode& n,int p) {
-        auto it=n.parameters.find(p);
-        return it==n.parameters.end()?params[p].def:it->second;
+    static void renderArranger(const Entry& entry,Runtime* source,NotePort* input,bool planChanged) {
+        auto& node=*entry.state;
+        auto& state=*node.arranger;
+        uint64_t generation=source ? source->generation : 0;
+        bool reconnected=state.sourceGeneration!=generation || state.sourcePort!=entry.noteSourcePort;
+        state.sourceGeneration=generation;state.sourcePort=entry.noteSourcePort;
+        if(reconnected)state.previousToken=0;
+        uint64_t token=input ? input->beforeSerial : 0;
+        bool sync=planChanged || state.retry || reconnected;
+        if(sync)node.incoming=input ? input->before : Notes{};
+        auto revoice=[&](int frame) {
+            for(int v=0;v<3;++v) {
+                auto& port=node.notePort(v);
+                entry.voices[v].voice(node.incoming,port.after,state.previousToken,[&](uint8_t s,uint8_t k,uint8_t vel) {
+                    port.emit({frame,s,k,vel});
+                });
+            }
+            state.previousToken=token;
+        };
+        if(sync && (!input || !input->eventCount || input->events[0].frame>0))revoice(0);
+        int cursor=0;
+        while(input && cursor<input->eventCount) {
+            int frame=input->events[cursor].frame;
+            do {
+                auto event=input->events[cursor++];
+                int kind=event.status&0xf0,key=event.a*16+(event.status&15);
+                if(kind==0x90 && event.b)node.incoming[key]={event.b,++token};
+                else if(kind==0x80 || kind==0x90)node.incoming[key]={};
+            } while(cursor<input->eventCount && input->events[cursor].frame==frame);
+            revoice(frame);
+        }
+        state.retry=node.overflow || state.otherVoices[0].overflow || state.otherVoices[1].overflow;
     }
 public:
     bool enabled() const {return active.load(std::memory_order_acquire);}
@@ -159,13 +220,18 @@ public:
         for(size_t i:order) {
             const auto& n=spec.nodes[i];
             auto old=controlNodes.find(n.id);
-            auto runtime=old!=controlNodes.end() && old->second->type==n.type ? old->second : std::make_shared<Runtime>(n,rate);
+            auto runtime=old!=controlNodes.end() && old->second->type==n.type ? old->second : std::make_shared<Runtime>(n,rate,nextGeneration++);
             runtime->configure(n);
             Entry entry;
             entry.state=runtime;
-            entry.gain=value(n,Master);
-            entry.bpm=value(n,ClockBPM);
-            entry.wait=value(n,WaitSeconds);entry.count=int(value(n,TriggerCount));entry.pulse=int(value(n,TriggerPulse));
+            entry.gain=graphParamValue(n,Master);
+            entry.bpm=graphParamValue(n,ClockBPM);
+            entry.wait=graphParamValue(n,WaitSeconds);entry.count=int(graphParamValue(n,TriggerCount));entry.pulse=int(graphParamValue(n,TriggerPulse));
+            if(n.type==ArrangerNode)for(int v=0;v<3;++v) {
+                int p=ArrHighMin+3*v;
+                entry.voices[v]={int(graphParamValue(n,p)),int(graphParamValue(n,p+1)),
+                                 ArrangerTexture(int(graphParamValue(n,p+2)))};
+            }
             entry.hostClock=n.type==DawClockNode;
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
@@ -177,7 +243,10 @@ public:
         for(auto edge:spec.edges) {
             auto& entry=plan.entries[indices.at(edge.target)];
             if(entry.triggerPorts[edge.port])entry.triggerInputs.push_back(indices.at(edge.source));
-            else entry.inputs[edge.port]=indices.at(edge.source);
+            else {
+                entry.inputs[edge.port]=indices.at(edge.source);
+                if(edge.port==0)entry.noteSourcePort=edge.sourcePort;
+            }
         }
         for(auto& old:controlNodes) if(!replacement.count(old.first) && old.second->type==MidiOutNode) plan.retired.push_back(old.second);
         plans.publish(plan);
@@ -207,7 +276,11 @@ public:
             if(n.type==MidiOutNode && output)for(int k=0;k<2048;++k)
                 if(n.incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
             if(n.engine)n.engine->reset();
-            n.before={};n.after={};n.incoming={};n.eventCount=0;n.overflow=false;
+            n.clear();n.incoming={};
+            if(n.arranger) {
+                for(auto& port:n.arranger->otherVoices)port.clear();
+                n.arranger->previousToken=0;n.arranger->retry=false;
+            }
             n.waitingSize=0;n.controlSize=0;n.count=0;
         }
         localCount=dawCount=0;
@@ -215,7 +288,8 @@ public:
     void panic() {panicRequested.store(true,std::memory_order_release);reset();}
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) {
         if(frames<=0 || !outL || !outR)return;
-        if(plans.consume()) {
+        bool planChanged=plans.consume();
+        if(planChanged) {
             if(output)for(auto& node:plans.current().retired)for(int k=0;k<2048;++k)
                 if(node->incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
         }
@@ -238,11 +312,17 @@ public:
             }
             for(const auto& entry:entries) {
                 auto& node=*entry.state;
-                node.before=node.after;node.eventCount=0;node.overflow=false;
+                node.begin();
+                if(node.arranger)for(auto& port:node.arranger->otherVoices)port.begin();
                 node.left.fill(0);node.right.fill(0);
                 int type=node.type;
                 int noteSource=entry.inputs[0];
                 auto* source=noteSource>=0?entries[noteSource].state.get():nullptr;
+                auto* noteInput=source ? &source->notePort(entry.noteSourcePort) : nullptr;
+                if(type==ArrangerNode) {
+                    renderArranger(entry,source,noteInput,planChanged && offset==0);
+                    continue;
+                }
                 if(type==StartNode || type==StopNode) {
                     if(node.seenPulse!=entry.pulse) {
                         node.seenPulse=entry.pulse;node.trigger({0,type==StartNode});
@@ -328,22 +408,22 @@ public:
                     int controlCursor=0;triggeredSpan(0,n,controlCursor);
                 } else {
                     for(int k=0;k<2048;++k) {
-                        Note desired=source?source->before[k]:Note{};
+                        Note desired=noteInput?noteInput->before[k]:Note{};
                         auto old=node.incoming[k];
                         if(old.token==desired.token && old.velocity==desired.velocity)continue;
                         if(old.velocity)deliver({0,uint8_t(0x80|(k%16)),uint8_t(k/16),0});
                         if(desired.velocity)deliver({0,uint8_t(0x90|(k%16)),uint8_t(k/16),desired.velocity});
                     }
                     int cursor=0,controlCursor=0;
-                    if(source)for(int j=0;j<source->eventCount;++j) {
-                        auto event=source->events[j];
+                    if(noteInput)for(int j=0;j<noteInput->eventCount;++j) {
+                        auto event=noteInput->events[j];
                         triggeredSpan(cursor,event.frame,controlCursor);cursor=event.frame;
                         int previous=node.eventCount;
                         deliver(event);
                         for(int k=previous;k<node.eventCount;++k)node.events[k].frame=event.frame;
                     }
                     triggeredSpan(cursor,n,controlCursor);
-                    node.incoming=source?source->after:Notes{};
+                    node.incoming=noteInput?noteInput->after:Notes{};
                 }
                 node.controlSize=0;
                 if(node.overflow && node.engine)node.engine->panic();

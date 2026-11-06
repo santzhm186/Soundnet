@@ -17,9 +17,40 @@ struct GraphNode {
 };
 struct GraphEdge { InstanceID source=0,target=0; int port=0,sourcePort=0; };
 struct GraphSpec { std::vector<GraphNode> nodes; std::vector<GraphEdge> edges; };
-inline constexpr int StartNode=23, StopNode=24, WaitNode=25, CountNode=26;
+inline constexpr int StartNode=23, StopNode=24, WaitNode=25, CountNode=26, ArrangerNode=27;
+// These IDs are stored on graph instances, outside the AU's global parameter list.
+enum ArrangerParam {
+    ArrHighMin=1024, ArrHighMax, ArrHighTexture,
+    ArrMidMin, ArrMidMax, ArrMidTexture,
+    ArrLowMin, ArrLowMax, ArrLowTexture
+};
+static_assert(int(ParamCount) <= int(ArrHighMin));
+enum class ArrangerTexture { Highest, Middle, Lowest, Chord };
+inline constexpr bool arrangerParam(int p) { return p>=ArrHighMin && p<=ArrLowTexture; }
+inline constexpr bool validGraphParam(int type,int p) {
+    if(type==ArrangerNode) return arrangerParam(p);
+    return p>=0 && p<ParamCount && !routeParam(p);
+}
+inline const ParamInfo& graphParamInfo(int p) {
+    static constexpr ParamInfo voiceParams[] = {
+        {"High Minimum",0,127,72,"MIDI"}, {"High Maximum",0,127,95,"MIDI"}, {"High Texture",0,3,0,""},
+        {"Middle Minimum",0,127,55,"MIDI"}, {"Middle Maximum",0,127,71,"MIDI"}, {"Middle Texture",0,3,1,""},
+        {"Low Minimum",0,127,36,"MIDI"}, {"Low Maximum",0,127,54,"MIDI"}, {"Low Texture",0,3,2,""}
+    };
+    return arrangerParam(p) ? voiceParams[p-ArrHighMin] : params[p];
+}
+inline float graphParamValue(const GraphNode& node,int p) {
+    auto it=node.parameters.find(p);
+    return it==node.parameters.end() ? graphParamInfo(p).def : it->second;
+}
+inline bool validArrangerRanges(const GraphNode& node) {
+    for(int low : {ArrHighMin,ArrMidMin,ArrLowMin})
+        if(graphParamValue(node,low)>graphParamValue(node,low+1)) return false;
+    return true;
+}
 enum class Signal { None, Notes, Audio, Clock, Trigger };
 inline Signal outputType(int type,int port=0) {
+    if(type==ArrangerNode && port>=0 && port<3)return Signal::Notes;
     if(port==1 && type==ClipNode)return Signal::Trigger;
     if(port)return Signal::None;
     if(type>=StartNode && type<=CountNode)return Signal::Trigger;
@@ -28,12 +59,17 @@ inline Signal outputType(int type,int port=0) {
     if(type==Osc1Node || type==InputNode || type==DawAudioNode || type==MixNode || type==EQNode || type==DelayNode) return Signal::Audio;
     return Signal::None;
 }
+inline int outputCount(int type) {
+    if(type==ArrangerNode) return 3;
+    if(type==ClipNode) return 2;
+    return outputType(type)==Signal::None ? 0 : 1;
+}
 inline std::vector<Signal> inputTypes(int type) {
     if(type==ArpNode) return {Signal::Notes,Signal::Clock,Signal::Trigger};
     if(type==VelocityNode)return {Signal::Notes,Signal::Clock};
     if(type==ClipNode || type==ProgressNode) return {Signal::Clock,Signal::Trigger};
     if(type>=StartNode && type<=CountNode)return {Signal::Trigger};
-    if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node) return {Signal::Notes};
+    if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node || type==ArrangerNode) return {Signal::Notes};
     if(type==MixNode) return {Signal::Audio,Signal::Audio,Signal::Audio,Signal::Audio};
     if(type==EQNode || type==DelayNode || type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};
     return {};
@@ -42,8 +78,13 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order) {
     std::map<InstanceID,size_t> index;
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
-        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>26 || n.type==Osc2Node || n.type==Osc3Node) return false;
-        for(auto [p,v]:n.parameters) if(p<0 || p>=ParamCount || routeParam(p) || !std::isfinite(v) || v<params[p].min || v>params[p].max) return false;
+        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>ArrangerNode || n.type==Osc2Node || n.type==Osc3Node) return false;
+        for(auto [p,v]:n.parameters) {
+            if(!validGraphParam(n.type,p)) return false;
+            const auto& info=graphParamInfo(p);
+            if(!std::isfinite(v) || v<info.min || v>info.max || (arrangerParam(p) && std::trunc(v)!=v)) return false;
+        }
+        if(n.type==ArrangerNode && !validArrangerRanges(n)) return false;
     }
     std::vector<std::vector<size_t>> next(graph.nodes.size());
     std::vector<size_t> pending(graph.nodes.size());

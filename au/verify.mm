@@ -65,7 +65,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x20000,"system found installed Soundnet 2.0");
+            check(version==0x20100,"system found installed Soundnet 2.1");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);
@@ -83,7 +83,7 @@ int main(int argc,char** argv) {
             if (!lib) { fprintf(stderr,"%s\n",dlerror()); return 1; }
             auto factory=reinterpret_cast<AudioComponentFactoryFunction>(dlsym(lib,"TernaryUnitFactory"));
             check(factory,"exported factory");
-            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x20000,factory);
+            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x20100,factory);
             check(comp,"component registration");
             requireOK(AudioComponentInstanceNew(comp,&unit),"AudioComponentInstanceNew");
         }
@@ -308,15 +308,17 @@ int main(int argc,char** argv) {
         NSDictionary *instanceGraph=@{@"version":@3,
             @"nodes":@[
               @{@"id":@101,@"type":@(tri::DawMidiNode),@"x":@0,@"y":@0,@"parameters":@{}},
-              @{@"id":@102,@"type":@(tri::Osc1Node),@"x":@200,@"y":@0,@"parameters":@{}},
-              @{@"id":@103,@"type":@(tri::DawOutputNode),@"x":@400,@"y":@0,@"parameters":@{}}],
-            @"edges":@[@{@"source":@101,@"target":@102,@"port":@0},
+              @{@"id":@104,@"type":@(tri::ArrangerNode),@"x":@200,@"y":@0,@"parameters":@{}},
+              @{@"id":@102,@"type":@(tri::Osc1Node),@"x":@400,@"y":@0,@"parameters":@{}},
+              @{@"id":@103,@"type":@(tri::DawOutputNode),@"x":@600,@"y":@0,@"parameters":@{}}],
+            @"edges":@[@{@"source":@101,@"target":@104,@"port":@0},
+                         @{@"source":@104,@"sourcePort":@2,@"target":@102,@"port":@0},
                          @{@"source":@102,@"target":@103,@"port":@0}]};
         requireOK(workflow->setAssets(@{@"graph":instanceGraph}),"publish independent instance graph");
         finishHostTurn();
         check([workflow->readAssets()[@"graph"] isEqual:instanceGraph],"instance graph crosses AU boundary");
         requireOK(MusicDeviceMIDIEvent(unit,0x90,69,100,0),"play independent graph");
-        render();check(peak()>.001,"instance oscillator reaches DAW audio output");
+        render();check(peak()>.001,"arranged low voice reaches the oscillator and DAW audio output");
         requireOK(MusicDeviceMIDIEvent(unit,0x80,69,0,0),"release independent graph");
         if (argc>2) {
             AudioUnitCocoaViewInfo view{};

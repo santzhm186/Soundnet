@@ -10,7 +10,7 @@ NSArray *catalog() {
         @[@6,@"硬件音频输入",@"输入"],@[@22,@"DAW 音频输入",@"输入"],
         @[@11,@"和弦输入",@"输入"],@[@12,@"和声走向",@"输入"],
         @[@13,@"节奏速度",@"输入"],@[@21,@"DAW 时钟",@"输入"],
-        @[@3,@"振荡器",@"处理"],@[@2,@"ARP",@"处理"],@[@14,@"力度自动化",@"处理"],
+        @[@3,@"振荡器",@"处理"],@[@2,@"ARP",@"处理"],@[@(tri::ArrangerNode),@"三声部编排器",@"处理"],@[@14,@"力度自动化",@"处理"],
         @[@17,@"音符模型",@"处理"],@[@7,@"混音器",@"处理"],@[@8,@"EQ",@"处理"],@[@9,@"Delay",@"处理"],
         @[@23,@"开始触发器",@"逻辑"],@[@24,@"停止触发器",@"逻辑"],@[@25,@"等待",@"逻辑"],@[@26,@"次数条件",@"逻辑"],
         @[@19,@"硬件音频输出",@"输出"],@[@20,@"DAW 音频输出",@"输出"],@[@18,@"MIDI 输出",@"输出"]];
@@ -19,6 +19,25 @@ NSString *title(int type) {
     if(type==10)return @"音频输出";
     for(NSArray *row in catalog())if([row[0] intValue]==type)return row[1];
     return @"节点";
+}
+NSArray<NSString *> *voiceNames() { return @[@"高声部", @"中声部", @"低声部"]; }
+struct VoiceControls { int lower,upper,texture; };
+constexpr VoiceControls voiceControls[]={
+    {tri::ArrHighMin,tri::ArrHighMax,tri::ArrHighTexture},
+    {tri::ArrMidMin,tri::ArrMidMax,tri::ArrMidTexture},
+    {tri::ArrLowMin,tri::ArrLowMax,tri::ArrLowTexture}
+};
+NSNumber *voiceValue(NSDictionary *node,int pid) {
+    return node[@"parameters"][[@(pid) stringValue]] ?: @(tri::graphParamInfo(pid).def);
+}
+NSString *pitchName(int note) {
+    static NSString *const names[]={@"C",@"C♯",@"D",@"E♭",@"E",@"F",@"F♯",@"G",@"A♭",@"A",@"B♭",@"B"};
+    return [NSString stringWithFormat:@"%@%d",names[note%12],note/12-1];
+}
+NSString *outputName(int type,int port) {
+    if(type==tri::ArrangerNode)return voiceNames()[port];
+    if(type==tri::ClipNode && port==1)return @"循环完成";
+    return @"输出";
 }
 NSColor *signalColor(tri::Signal signal) {
     if(signal==tri::Signal::Notes)return [NSColor colorWithCalibratedRed:.9 green:.7 blue:.4 alpha:1];
@@ -46,6 +65,7 @@ std::vector<int> controls(int type) {
         case OutputNode:case HardwareOutputNode:case DawOutputNode:return {Master};
         case WaitNode:return {WaitSeconds};
         case CountNode:return {TriggerCount};
+        case ArrangerNode:return {ArrHighMin,ArrHighMax,ArrHighTexture,ArrMidMin,ArrMidMax,ArrMidTexture,ArrLowMin,ArrLowMax,ArrLowTexture};
         default:return {};
     }
 }
@@ -129,7 +149,7 @@ NSString *parameterName(int p) {
     for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
     int type=(int)sender.tag;
     NSMutableDictionary *parameters=[NSMutableDictionary new];
-    for(int p:controls(type))parameters[[@(p) stringValue]]=@(tri::params[p].def);
+    for(int p:controls(type))parameters[[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
     if(type==tri::Osc1Node)parameters[[@(tri::Level1) stringValue]]=@.66;
     NSMutableDictionary *node=[@{@"id":@(next),@"type":@(type),@"x":@(_menuPoint.x),@"y":@(_menuPoint.y),@"parameters":parameters} mutableCopy];
     [_document[@"nodes"] addObject:node];_selected=next;
@@ -240,6 +260,67 @@ NSString *parameterName(int p) {
     label.frame=NSMakeRect(12,y,235,42);label.textColor=NSColor.labelColor;
     [_inspector addSubview:label];
 }
+-(void)rangeChanged:(NSTextField *)field {
+    NSMutableDictionary *node=[self node:_selected];
+    if([node[@"type"] intValue]!=tri::ArrangerNode)return;
+    int pid=(int)field.tag;
+    for(auto voice:voiceControls) {
+        if(pid!=voice.lower && pid!=voice.upper)continue;
+        NSInteger value=0;
+        NSScanner *scanner=[NSScanner scannerWithString:field.stringValue];
+        bool valid=[scanner scanInteger:&value] && scanner.isAtEnd && value>=0 && value<=127;
+        NSInteger lower=pid==voice.lower?value:voiceValue(node,voice.lower).integerValue;
+        NSInteger upper=pid==voice.upper?value:voiceValue(node,voice.upper).integerValue;
+        if(!valid || lower>upper) {
+            field.integerValue=voiceValue(node,pid).integerValue;
+            [self message:@"音域需为 0–127 的整数，最低音不能高于最高音。"];
+            return;
+        }
+        NSDictionary *previous=copyJSON(_document);
+        node[@"parameters"][[@(pid) stringValue]]=@(value);
+        [self commit:previous];[self inspect];return;
+    }
+}
+-(void)textureChanged:(NSPopUpButton *)popup {
+    NSMutableDictionary *node=[self node:_selected];
+    if([node[@"type"] intValue]!=tri::ArrangerNode)return;
+    NSDictionary *previous=copyJSON(_document);
+    node[@"parameters"][[@(popup.tag) stringValue]]=@(popup.indexOfSelectedItem);
+    [self commit:previous];[self inspect];
+}
+-(double)arrangerInspector:(NSDictionary *)node y:(double)y {
+    [self label:@"音域用 MIDI 音号表示（60 = C4）。选出的音按八度移入各声部音域。" y:y];
+    y+=46;
+    for(int i=0;i<3;++i) {
+        auto voice=voiceControls[i];
+        NSString *name=voiceNames()[i];
+        int lower=voiceValue(node,voice.lower).intValue,upper=voiceValue(node,voice.upper).intValue;
+        NSTextField *heading=[NSTextField labelWithString:[NSString stringWithFormat:@"%@   %@ – %@",name,pitchName(lower),pitchName(upper)]];
+        heading.font=[NSFont boldSystemFontOfSize:13];heading.frame=NSMakeRect(12,y,225,22);
+        [_inspector addSubview:heading];y+=23;
+        for(int bound=0;bound<2;++bound) {
+            NSString *caption=bound?@"最高音":@"最低音";
+            double x=bound?128:12;
+            NSTextField *label=[NSTextField labelWithString:caption];
+            label.frame=NSMakeRect(x,y+2,49,21);[_inspector addSubview:label];
+            NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(x+50,y,48,24)];
+            field.integerValue=bound?upper:lower;field.tag=bound?voice.upper:voice.lower;
+            field.target=self;field.action=@selector(rangeChanged:);
+            [field setAccessibilityLabel:[name stringByAppendingString:caption]];
+            [_inspector addSubview:field];
+        }
+        y+=30;
+        NSTextField *label=[NSTextField labelWithString:@"织体"];
+        label.frame=NSMakeRect(12,y+3,48,20);[_inspector addSubview:label];
+        NSPopUpButton *popup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(60,y,175,26) pullsDown:NO];
+        [popup addItemsWithTitles:@[@"最高音",@"中间音",@"最低音",@"柱式和弦（全部音）"]];
+        [popup selectItemAtIndex:voiceValue(node,voice.texture).integerValue];
+        popup.tag=voice.texture;popup.target=self;popup.action=@selector(textureChanged:);
+        [popup setAccessibilityLabel:[name stringByAppendingString:@"织体"]];
+        [_inspector addSubview:popup];y+=38;
+    }
+    return y;
+}
 -(void)inspect {
     for(NSView *view in _inspector.subviews.copy)[view removeFromSuperview];
     NSMutableDictionary *node=[self node:_selected];
@@ -249,7 +330,8 @@ NSString *parameterName(int p) {
     [self button:@"复制节点" frame:NSMakeRect(12,54,105,28) action:@selector(duplicate:) parent:_inspector];
     [self button:@"删除节点" frame:NSMakeRect(132,54,105,28) action:@selector(remove:) parent:_inspector];
     double y=96;
-    for(int p:controls(type)) {
+    if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
+    else for(int p:controls(type)) {
         [self label:parameterName(p) y:y];
         NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(142,y,96,25)];
         id val=node[@"parameters"][[@(p) stringValue]] ?: @(tri::params[p].def);
@@ -380,7 +462,8 @@ NSString *parameterName(int p) {
 
 namespace {
 NSRect nodeRect(NSDictionary *node) {
-    int count=(int)tri::inputTypes([node[@"type"] intValue]).size();
+    int type=[node[@"type"] intValue];
+    int count=std::max((int)tri::inputTypes(type).size(),tri::outputCount(type));
     return NSMakeRect([node[@"x"] doubleValue],[node[@"y"] doubleValue],172,std::max(88,48+count*24));
 }
 NSPoint jack(NSDictionary *node,bool out,int port) {
@@ -423,11 +506,11 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
             NSString *label=inputs[p]==tri::Signal::Audio?@"音频":inputs[p]==tri::Signal::Notes?@"音符":inputs[p]==tri::Signal::Trigger?@"触发":@"时钟";
             drawText(label,NSMakeRect(at.x+9,at.y-8,55,20),NSColor.lightGrayColor);
         }
-        int outputs=type==tri::ClipNode?2:tri::outputType(type)!=tri::Signal::None?1:0;
+        int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
             NSPoint at=jack(node,true,p);[signalColor(tri::outputType(type,p))setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
-            drawText(p==1?@"循环完成":@"输出",NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
+            drawText(outputName(type,p),NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
         }
     }
     [NSGraphicsContext restoreGraphicsState];
@@ -457,7 +540,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     editor.lastPoint=view;editor.dragStart=copyJSON(editor.document);
     for(NSDictionary *node in [editor.document[@"nodes"] reverseObjectEnumerator]) {
         int type=[node[@"type"] intValue];
-        int outputs=type==tri::ClipNode?2:tri::outputType(type)!=tri::Signal::None?1:0;
+        int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
             NSPoint pos=jack(node,true,p);
             if(std::hypot(pos.x-point.x,pos.y-point.y)<12/editor.zoom) {
@@ -551,7 +634,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor button:@"适配" frame:NSMakeRect(292,10,65,28) action:@selector(fit:) parent:editor];
     [editor button:@"清空" frame:NSMakeRect(362,10,65,28) action:@selector(blank:) parent:editor];
     [editor button:@"停音" frame:NSMakeRect(432,10,65,28) action:@selector(panic:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.0    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.1    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(520,15,600,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

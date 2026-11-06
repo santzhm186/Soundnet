@@ -1,6 +1,7 @@
 #import "WorkflowAssets.h"
 #import <CoreML/CoreML.h>
 #include "StandardMidiFile.hpp"
+#include <climits>
 #include <cmath>
 
 namespace triassets {
@@ -144,7 +145,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     tri::GraphSpec next;
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,26) ||
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::ArrangerNode) ||
            !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
            !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
             return fail(why,@"节点的实例 ID、类型或坐标无效。");
@@ -154,10 +155,17 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
         for(id key in obj[@"parameters"]) {
             if(![key isKindOfClass:NSString.class])return fail(why,@"参数标识无效。");
             NSScanner *scan=[NSScanner scannerWithString:key];int pid=0;
-            if(![scan scanInt:&pid] || !scan.isAtEnd || pid<0 || pid>=tri::ParamCount ||
-                tri::routeParam(pid) || !numeric(obj[@"parameters"][key]))return fail(why,@"参数标识或值无效。");
-            node.parameters[pid]=[obj[@"parameters"][key] floatValue];
+            id value=obj[@"parameters"][key];
+            if(![scan scanInt:&pid] || !scan.isAtEnd || !tri::validGraphParam(node.type,pid) ||
+                !numeric(value))return fail(why,@"参数标识或值无效。");
+            if(tri::arrangerParam(pid)) {
+                const auto& spec=tri::graphParamInfo(pid);
+                if(!integer(value,spec.min,spec.max))return fail(why,@"声部音域和织体须使用有效范围内的整数。");
+            }
+            node.parameters[pid]=[value floatValue];
         }
+        if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
+            return fail(why,@"同一声部的最低音不能高于最高音。");
         if(obj[@"asset"]) {
             NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":nil;
             if(!kind || !decode(@{kind:obj[@"asset"]},node.clip,node.model,why))return fail(why,@"节点素材无效。");
@@ -167,7 +175,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     for(id edge in document[@"edges"]) {
         if(![edge isKindOfClass:NSDictionary.class] || !integer(edge[@"source"],1,9007199254740991.) ||
             !integer(edge[@"target"],1,9007199254740991.) || !integer(edge[@"port"],0,3))return fail(why,@"连线格式无效。");
-        if(edge[@"sourcePort"] && !integer(edge[@"sourcePort"],0,1))return fail(why,@"输出端口无效。");
+        if(edge[@"sourcePort"] && !integer(edge[@"sourcePort"],0,INT_MAX))return fail(why,@"输出端口无效。");
         next.edges.push_back({[edge[@"source"] unsignedLongLongValue],[edge[@"target"] unsignedLongLongValue],[edge[@"port"] intValue],[edge[@"sourcePort"] intValue]});
     }
     std::vector<size_t> order;
