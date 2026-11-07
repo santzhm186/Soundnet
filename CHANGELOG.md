@@ -2,6 +2,7 @@
 
 ## 2.43
 - 新增注释节点，可在画布上记录说明文字。
+- 新增 `scripts/install-au.sh` 与 `scripts/package-release.sh`，便于安装和分发。
 
 ## 2.42
 - 画布显示 20 单位网格；增加 Cmd+D 复制、Cmd+F 查找、Cmd+G 吸附快捷键。
