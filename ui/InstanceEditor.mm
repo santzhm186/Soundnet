@@ -369,7 +369,8 @@ std::vector<ParamPreset> presetsFor(int type) {
             {"带通 1.2 kHz",{{tri::FilterType,2},{tri::FilterCutoff,1200},{tri::FilterResonance,1.2f},{tri::FilterDrive,0}}} };
         case tri::ReverbNode: return {
             {"房间",{{tri::ReverbMix,.25f},{tri::ReverbSize,.55f},{tri::ReverbDamping,.5f},{tri::ReverbWidth,.8f}}},
-            {"大厅",{{tri::ReverbMix,.45f},{tri::ReverbSize,.9f},{tri::ReverbDamping,.3f},{tri::ReverbWidth,1}}} };
+            {"大厅",{{tri::ReverbMix,.45f},{tri::ReverbSize,.9f},{tri::ReverbDamping,.3f},{tri::ReverbWidth,1}}},
+            {"近场预延迟",{{tri::ReverbMix,.3f},{tri::ReverbSize,.4f},{tri::ReverbDamping,.5f},{tri::ReverbWidth,.9f},{tri::ReverbPreDelay,15}}} };
         case tri::DelayNode: return {
             {"短延迟",{{tri::DelayTime,140},{tri::DelayFeedback,.2f},{tri::DelayMix,.15f}}},
             {"长回声",{{tri::DelayTime,420},{tri::DelayFeedback,.45f},{tri::DelayMix,.25f}}} };
@@ -382,16 +383,23 @@ std::vector<ParamPreset> presetsFor(int type) {
             {"砖墙",{{tri::LimiterThreshold,-3},{tri::LimiterRelease,.05f},{tri::LimiterCeiling,-.1f},{tri::LimiterGain,1}}} };
         case tri::ChorusNode: return {
             {"轻微",{{tri::ChorusRate,.8f},{tri::ChorusDepth,.35f},{tri::ChorusMix,.3f},{tri::ChorusDelay,12}}},
-            {"宽阔",{{tri::ChorusRate,2.5f},{tri::ChorusDepth,.6f},{tri::ChorusMix,.45f},{tri::ChorusDelay,20}}} };
+            {"宽阔",{{tri::ChorusRate,2.5f},{tri::ChorusDepth,.6f},{tri::ChorusMix,.45f},{tri::ChorusDelay,20},{tri::ChorusFeedback,.2f}}},
+            {"反馈空间",{{tri::ChorusRate,.9f},{tri::ChorusDepth,.5f},{tri::ChorusMix,.5f},{tri::ChorusDelay,18},{tri::ChorusFeedback,.55f}}} };
         case tri::TremoloNode: return {
             {"慢速",{{tri::TremoloRate,2},{tri::TremoloDepth,.4f},{tri::TremoloMix,.8f},{tri::TremoloStereo,0}}},
-            {"快速",{{tri::TremoloRate,8},{tri::TremoloDepth,.6f},{tri::TremoloMix,1},{tri::TremoloStereo,1}}} };
+            {"快速",{{tri::TremoloRate,8},{tri::TremoloDepth,.6f},{tri::TremoloMix,1},{tri::TremoloStereo,1}}},
+            {"同步 1/8",{{tri::TremoloSync,1},{tri::TremoloDivision,1},{tri::TremoloDepth,.6f},{tri::TremoloMix,1}}} };
         case tri::BitcrusherNode: return {
             {"8-bit",{{tri::CrushBits,8},{tri::CrushRate,12000},{tri::CrushMix,.8f}}},
             {"破碎",{{tri::CrushBits,4},{tri::CrushRate,4000},{tri::CrushMix,1}}} };
         case tri::PhaserNode: return {
             {"慢速扫频",{{tri::PhaserRate,.3f},{tri::PhaserDepth,.8f},{tri::PhaserFeedback,.35f},{tri::PhaserMix,.5f}}},
             {"喷气",{{tri::PhaserRate,1.5f},{tri::PhaserDepth,.6f},{tri::PhaserFeedback,.6f},{tri::PhaserMix,.6f}}} };
+        case tri::AudioClipNode: return {
+            {"平滑循环",{{tri::AudioClipLoop,1},{tri::AudioClipXfade,20},{tri::AudioClipFade,.005f}}},
+            {"反向片段",{{tri::AudioClipLoop,1},{tri::AudioClipReverse,1},{tri::AudioClipXfade,20}}} };
+        case tri::SamplerNode: return {
+            {"平滑循环",{{tri::SamplerLoop,1},{tri::SamplerXfade,20},{tri::SamplerAttack,.005f},{tri::SamplerRelease,.12f}}} };
         case tri::QuantizeNode: return {
             {"C 大调",{{tri::QuantizeRoot,0},{tri::QuantizeScale,0},{tri::QuantizeMode,0}}},
             {"A 小调",{{tri::QuantizeRoot,9},{tri::QuantizeScale,1},{tri::QuantizeMode,0}}},
@@ -1790,7 +1798,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.52    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.53    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
