@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.46
+- 合唱节点新增 Feedback 参数。
+
 ## 2.45
 - 颤音新增 Sync/Division，可跟随工程 BPM 同步。
 

@@ -276,7 +276,7 @@ public:
 };
 
 class ChorusProcessor final : public AudioProcessor {
-    std::atomic<float> rate_{.6f},depth_{.35f},mix_{.35f},delay_{12};
+    std::atomic<float> rate_{.6f},depth_{.35f},mix_{.35f},delay_{12},feedback_{0};
     double sampleRate_=48000,phase_=0;
     std::vector<float> bufferL_,bufferR_;
     size_t write_=0;
@@ -307,6 +307,7 @@ public:
         else if(param==ChorusDepth)depth_.store(clamp(value,0,1));
         else if(param==ChorusMix)mix_.store(clamp(value,0,1));
         else if(param==ChorusDelay)delay_.store(clamp(value,1,30));
+        else if(param==ChorusFeedback)feedback_.store(clamp(value,0,.85f));
     }
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) override {
         if(bufferL_.empty()||bufferL_.size()!=bufferR_.size()) {
@@ -315,6 +316,7 @@ public:
         const double base=double(delay_.load())*sampleRate_/1000.0;
         const double modulation=double(depth_.load())*0.008*sampleRate_;
         const double mix=double(mix_.load());
+        const double feedback=double(feedback_.load());
         const double increment=2.0*3.14159265358979323846*double(rate_.load())/sampleRate_;
         const double limit=double(bufferL_.size())-2.0;
         for(int i=0;i<frames;++i) {
@@ -322,7 +324,8 @@ public:
             const double leftDelay=std::min(limit,base+modulation*(0.5+0.5*std::sin(phase_)));
             const double rightDelay=std::min(limit,base+modulation*(0.5+0.5*std::sin(phase_+1.57079632679489661923)));
             const float wetL=read(bufferL_,leftDelay),wetR=read(bufferR_,rightDelay);
-            bufferL_[write_]=l;bufferR_[write_]=r;
+            bufferL_[write_]=clamp(l+wetL*float(feedback),-4,4);
+            bufferR_[write_]=clamp(r+wetR*float(feedback),-4,4);
             write_=(write_+1)%bufferL_.size();
             outL[i]=float(l*(1.0-mix)+wetL*mix);
             outR[i]=float(r*(1.0-mix)+wetR*mix);

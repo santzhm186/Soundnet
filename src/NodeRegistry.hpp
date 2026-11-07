@@ -40,7 +40,8 @@ inline constexpr int AudioClipPitch=1145, AudioClipReverse=1146;
 inline constexpr int CompThreshold=1150, CompRatio=1151, CompAttack=1152;
 inline constexpr int CompRelease=1153, CompMakeup=1154, CompMix=1155;
 inline constexpr int LimiterThreshold=1160, LimiterRelease=1161, LimiterCeiling=1162, LimiterGain=1163;
-inline constexpr int ChorusRate=1170, ChorusDepth=1171, ChorusMix=1172, ChorusDelay=1173;
+inline constexpr int ChorusRate=1170, ChorusDepth=1171, ChorusMix=1172, ChorusDelay=1173,
+    ChorusFeedback=1174;
 inline constexpr int QuantizeRoot=1180, QuantizeScale=1181, QuantizeMode=1182;
 inline constexpr int TremoloRate=1190, TremoloDepth=1191, TremoloMix=1192, TremoloStereo=1193,
     TremoloSync=1194, TremoloDivision=1195;
@@ -104,6 +105,7 @@ inline constexpr ParamInfo chorusRateInfo  {"Rate",.05f,8,.6f,"Hz"};
 inline constexpr ParamInfo chorusDepthInfo {"Depth",0,1,.35f,""};
 inline constexpr ParamInfo chorusMixInfo   {"Mix",0,1,.35f,""};
 inline constexpr ParamInfo chorusDelayInfo {"Delay",1,30,12,"ms"};
+inline constexpr ParamInfo chorusFeedbackInfo {"Feedback",0,.85f,0,""};
 inline constexpr ParamInfo quantizeRootInfo {"Root",0,11,0,""};
 inline constexpr ParamInfo quantizeScaleInfo{"Scale",0,4,0,""};
 inline constexpr ParamInfo quantizeModeInfo {"Mode",0,2,0,""};
@@ -261,6 +263,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case ChorusDepth:return &chorusDepthInfo;
         case ChorusMix:return &chorusMixInfo;
         case ChorusDelay:return &chorusDelayInfo;
+        case ChorusFeedback:return &chorusFeedbackInfo;
         case QuantizeRoot:return &quantizeRootInfo;
         case QuantizeScale:return &quantizeScaleInfo;
         case QuantizeMode:return &quantizeModeInfo;
@@ -308,7 +311,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==AudioClipNode) return p>=AudioClipGain && p<=AudioClipReverse;
     if(type==CompressorNode) return p>=CompThreshold && p<=CompMix;
     if(type==LimiterNode) return p>=LimiterThreshold && p<=LimiterGain;
-    if(type==ChorusNode) return p>=ChorusRate && p<=ChorusDelay;
+    if(type==ChorusNode) return p>=ChorusRate && p<=ChorusFeedback;
     if(type==QuantizeNode) return p>=QuantizeRoot && p<=QuantizeMode;
     if(type==TremoloNode) return p>=TremoloRate && p<=TremoloDivision;
     if(type==BitcrusherNode) return p>=CrushBits && p<=CrushMix;
@@ -349,7 +352,7 @@ inline std::vector<int> nodeParamList(int type) {
         case AudioClipNode:return {AudioClipGain,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipFade,AudioClipPitch,AudioClipReverse};
         case CompressorNode:return {CompThreshold,CompRatio,CompAttack,CompRelease,CompMakeup,CompMix};
         case LimiterNode:return {LimiterThreshold,LimiterRelease,LimiterCeiling,LimiterGain};
-        case ChorusNode:return {ChorusRate,ChorusDepth,ChorusMix,ChorusDelay};
+        case ChorusNode:return {ChorusRate,ChorusDepth,ChorusMix,ChorusDelay,ChorusFeedback};
         case QuantizeNode:return {QuantizeRoot,QuantizeScale,QuantizeMode};
         case TremoloNode:return {TremoloRate,TremoloDepth,TremoloMix,TremoloStereo,TremoloSync,TremoloDivision};
         case BitcrusherNode:return {CrushBits,CrushRate,CrushMix};

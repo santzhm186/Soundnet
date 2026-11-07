@@ -357,6 +357,10 @@ int main() {
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,4800,20000)>.005);
+        graph.nodes[2].parameters[ChorusFeedback]=.7f;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,4800,20000)>.005);
         graph.nodes[2].parameters[ChorusMix]=0;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
