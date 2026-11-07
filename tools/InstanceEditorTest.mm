@@ -1,6 +1,9 @@
 #import "../ui/TriEditor.h"
 #import "../src/WorkflowAssets.h"
 #include "../src/Engine.hpp"
+#include "../src/WavFile.hpp"
+#include <cstdio>
+#include <cmath>
 #include <memory>
 #include <cassert>
 
@@ -16,6 +19,7 @@
 - (void)paste:(id)sender;
 - (void)remove:(id)sender;
 - (NSArray *)activeIDs;
+- (BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 @end
 
 int main() {
@@ -68,6 +72,22 @@ int main() {
         NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
             [NSPredicate predicateWithFormat:@"type == %d", tri::SamplerNode]] firstObject];
         assert(samplerNode && [samplerNode[@"parameters"] count]==7);
+        std::vector<float> wave(4800), waveR(4800);
+        for (size_t i=0; i<wave.size(); ++i) wave[i]=waveR[i]=0.2f*std::sin(2*M_PI*440*i/48000.0);
+        std::string why;
+        const std::string dropPath = "/tmp/soundnet-drop-test.wav";
+        assert(tri::wav::write(dropPath, wave, waveR, 48000, why));
+        NSURL *dropURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:dropPath.c_str()]];
+        assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(100, 100) clipMode:NO]);
+        assert([assets[@"graph"][@"nodes"] count]==28);
+        NSDictionary *samplerDrop = [assets[@"graph"][@"nodes"] lastObject];
+        assert(samplerDrop && [samplerDrop[@"type"] intValue]==tri::SamplerNode && samplerDrop[@"asset"][@"name"]);
+        assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(140, 140) clipMode:YES]);
+        assert([assets[@"graph"][@"nodes"] count]==29);
+        NSDictionary *clipDrop = [assets[@"graph"][@"nodes"] lastObject];
+        assert(clipDrop && [clipDrop[@"type"] intValue]==tri::AudioClipNode && clipDrop[@"asset"][@"name"]);
+        std::remove(dropPath.c_str());
+
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
         assert(triassets::validate([NSJSONSerialization JSONObjectWithData:serialized options:0 error:nil],nullptr));
 
@@ -91,6 +111,6 @@ int main() {
         [[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
             writeToFile:@"build/qa/instances.png" atomically:YES];
         [window close];
-        puts("PASS: 25 native oscillator instances, sampler insertion, independent trigger, undo/redo, JSON roundtrip and trigger example.");
+        puts("PASS: 25 native oscillator instances, sampler insertion, drag-drop audio, independent trigger, undo/redo, JSON roundtrip and trigger example.");
     }
 }

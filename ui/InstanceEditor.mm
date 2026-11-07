@@ -162,6 +162,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 -(void)inspect;
 -(void)commit:(NSDictionary *)previous;
 -(void)insert:(NSMenuItem *)sender;
+-(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 -(NSPoint)world:(NSPoint)point;
 @end
 
@@ -223,18 +224,70 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 -(NSButton *)button:(NSString *)text frame:(NSRect)frame action:(SEL)action parent:(NSView *)parent {
     NSButton *b=[NSButton buttonWithTitle:text target:self action:action];b.frame=frame;[parent addSubview:b];return b;
 }
+-(NSMutableDictionary *)makeNode:(int)type at:(NSPoint)point id:(uint64_t)uid {
+    NSMutableDictionary *parameters=[NSMutableDictionary new];
+    for(int p:controls(type))parameters[[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
+    if(type==tri::Osc1Node)parameters[[@(tri::Level1) stringValue]]=@.66;
+    NSMutableDictionary *node=[@{@"id":@(uid),@"type":@(type),@"x":@(point.x),@"y":@(point.y),@"parameters":parameters} mutableCopy];
+    [_document[@"nodes"] addObject:node];
+    return node;
+}
 -(void)insert:(NSMenuItem *)sender {
     NSDictionary *previous=copyJSON(_document);
     uint64_t next=1;
     for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
-    int type=(int)sender.tag;
-    NSMutableDictionary *parameters=[NSMutableDictionary new];
-    for(int p:controls(type))parameters[[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
-    if(type==tri::Osc1Node)parameters[[@(tri::Level1) stringValue]]=@.66;
-    NSMutableDictionary *node=[@{@"id":@(next),@"type":@(type),@"x":@(_menuPoint.x),@"y":@(_menuPoint.y),@"parameters":parameters} mutableCopy];
-    [_document[@"nodes"] addObject:node];_selected=next;
+    [self makeNode:(int)sender.tag at:_menuPoint id:next];
+    _selected=next;
     [_selection removeAllObjects];[_selection addObject:@(next)];
     [self commit:previous];[self inspect];
+}
+-(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode {
+    if(!urls.count) return NO;
+    NSDictionary *previous=copyJSON(_document);
+    uint64_t next=1;
+    for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
+    BOOL added=NO; uint64_t last=0; NSUInteger offset=0; NSMutableArray<NSString *> *errors=[NSMutableArray new];
+    for(NSURL *url in urls) {
+        NSString *extension=url.pathExtension.lowercaseString;
+        NSString *kind=nil; int type=0;
+        if([extension isEqualToString:@"mid"]||[extension isEqualToString:@"midi"]) {kind=@"clip";type=tri::ClipNode;}
+        else if([extension isEqualToString:@"wav"]||[extension isEqualToString:@"aif"]||[extension isEqualToString:@"aiff"]||[extension isEqualToString:@"aifc"]) {
+            kind=@"audio";type=clipMode?tri::AudioClipNode:tri::SamplerNode;
+        } else if([extension isEqualToString:@"mlmodel"]||[extension isEqualToString:@"mlpackage"]||[extension isEqualToString:@"mlmodelc"]) {
+            kind=@"model";type=tri::ModelNode;
+        } else {
+            [errors addObject:[NSString stringWithFormat:@"%@：不支持的格式",url.lastPathComponent]];
+            continue;
+        }
+        NSString *why=nil;
+        NSDictionary *asset=triassets::importAsset(kind,url,&why);
+        if(!asset) {
+            [errors addObject:[NSString stringWithFormat:@"%@：%@",url.lastPathComponent,why?:@"无法读取"]];
+            continue;
+        }
+        const uint64_t uid=next++;
+        NSMutableDictionary *node=[self makeNode:type at:NSMakePoint(point.x+offset*30,point.y+offset*30) id:uid];
+        node[@"asset"]=asset;
+        if(type==tri::ClipNode) {
+            NSMutableDictionary *params=node[@"parameters"];
+            params[[@(tri::ClipRun) stringValue]]=@1;
+            params[[@(tri::ClipLoop) stringValue]]=@1;
+        } else if(type==tri::AudioClipNode) {
+            node[@"parameters"][[@(tri::AudioClipLoop) stringValue]]=@1;
+        }
+        last=uid; added=YES; ++offset;
+    }
+    if(!added) {
+        if(errors.count) [self message:errors.firstObject];
+        NSBeep();
+        return NO;
+    }
+    _selected=last;
+    [_selection removeAllObjects];[_selection addObject:@(last)];
+    [self commit:previous];[self inspect];
+    if(errors.count) [self message:[NSString stringWithFormat:@"已添加 %lu 个节点；%@",(unsigned long)offset,errors.firstObject]];
+    else [self message:[NSString stringWithFormat:@"已拖入 %lu 个文件",(unsigned long)offset]];
+    return YES;
 }
 -(NSArray<NSNumber *> *)activeIDs {
     if(_selection.count)return [self selectedIDs];
@@ -815,7 +868,26 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 }
 }
 @implementation SNInstanceCanvas
+-(instancetype)initWithFrame:(NSRect)frame {
+    if((self=[super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    return self;
+}
 -(BOOL)isFlipped{return YES;}
+-(NSArray<NSURL *> *)draggedURLs:(id<NSDraggingInfo>)sender {
+    return [sender.draggingPasteboard readObjectsForClasses:@[NSURL.class]
+        options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+}
+-(NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    return [self draggedURLs:sender].count?NSDragOperationCopy:NSDragOperationNone;
+}
+-(NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender { return [self draggingEntered:sender]; }
+-(BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray<NSURL *> *urls=[self draggedURLs:sender];
+    if(!urls.count)return NO;
+    NSPoint view=[self convertPoint:sender.draggingLocation fromView:nil];
+    BOOL clipMode=([NSEvent modifierFlags]&NSEventModifierFlagOption)!=0;
+    return [_editor dropFileURLs:urls atPoint:[_editor world:view] clipMode:clipMode];
+}
 -(BOOL)acceptsFirstResponder{return YES;}
 -(void)drawRect:(NSRect)dirty {
     [[NSColor colorWithWhite:.09 alpha:1]setFill];NSRectFill(self.bounds);
@@ -1068,7 +1140,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.8    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.9    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
@@ -1076,7 +1148,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     scroll.hasVerticalScroller=YES;editor.inspectorScroll=scroll;
     editor.inspector=[[SNFlippedView alloc]initWithFrame:NSMakeRect(0,0,260,520)];
     scroll.documentView=editor.inspector;[editor addSubview:scroll];
-    editor.status=[NSTextField labelWithString:@"右键插入节点 · Shift 点选/框选 · Delete 删除 · Cmd+C/V 复制粘贴"];
+    editor.status=[NSTextField labelWithString:@"右键插入节点 · 拖入 MIDI/WAV/AIFF/MLMODEL · Shift 框选 · Cmd+C/V"];
     editor.status.frame=NSMakeRect(12,558,1120,22);[editor addSubview:editor.status];
     SNPiano *piano=[[SNPiano alloc]initWithFrame:NSMakeRect(12,590,1120,55)];piano.send=midi;[editor addSubview:piano];
     NSDictionary *assets=assetsRead?assetsRead():nil;
