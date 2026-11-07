@@ -9,7 +9,7 @@ mkdir -p "$build"
 cd "$root"
 
 cxx=(xcrun clang++ -std=c++17 -O2 -mmacosx-version-min=13.0)
-tests=(ArrangerTests AudioFileTests AudioNodesTests EngineTests InstanceGraphTests MusicNodesTests OfflineRenderTests RecorderTests WorkflowSourcesTests)
+tests=(ArrangerTests AudioFileTests AudioNodesTests EngineTests InstanceGraphTests MusicNodesTests OfflineRenderTests RecorderTests SoakTests WorkflowSourcesTests)
 for name in "${tests[@]}"; do
   echo "== compile $name"
   "${cxx[@]}" "tests/$name.cpp" -o "$build/$name"
