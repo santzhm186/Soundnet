@@ -58,5 +58,45 @@ int main() { @autoreleasepool {
     tri::GraphSpec exampleGraph;
     assert(triassets::decodeGraph(example,exampleGraph,&graphWhy));
     assert(exampleGraph.nodes.size()==7 && exampleGraph.edges.size()==6);
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph and real Core ML pitch predictions.");
+    NSDictionary *samplerExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/sampler-pluck.json"] options:0 error:nil];
+    tri::GraphSpec samplerExampleGraph;
+    assert(triassets::decodeGraph(samplerExample,samplerExampleGraph,&graphWhy));
+    assert(samplerExampleGraph.nodes.size()==5 && samplerExampleGraph.edges.size()==4);
+    assert(samplerExampleGraph.nodes[1].sample && samplerExampleGraph.nodes[1].sample->frames()>1000);
+    tri::GraphSpec samplerGraph;
+    float pcm[4]={.5f,0,-.5f,0};
+    NSData *pcmData=[NSData dataWithBytes:pcm length:sizeof(pcm)];
+    NSDictionary *samplerDocument=@{@"version":@3,@"nodes":@[
+        @{@"id":@1,@"type":@(tri::SamplerNode),@"x":@0,@"y":@0,@"parameters":@{@"1130":@60},
+          @"asset":@{@"name":@"pluck.wav",@"rate":@48000,@"channels":@1,
+                      @"pcm":[pcmData base64EncodedStringWithOptions:0]}}],@"edges":@[]};
+    assert(triassets::decodeGraph(samplerDocument,samplerGraph,&graphWhy));
+    assert(samplerGraph.nodes.size()==1 && samplerGraph.nodes[0].sample &&
+           samplerGraph.nodes[0].sample->frames()==4 && samplerGraph.nodes[0].sample->channels==1);
+    NSMutableDictionary *badChannels=[samplerDocument mutableCopy];
+    NSMutableDictionary *badNode=[samplerDocument[@"nodes"][0] mutableCopy];
+    NSMutableDictionary *badAsset=[badNode[@"asset"] mutableCopy];
+    badAsset[@"channels"]=@3;badNode[@"asset"]=badAsset;badChannels[@"nodes"]=@[badNode];
+    assert(!triassets::decodeGraph(badChannels,samplerGraph,&graphWhy));
+    puts("sampler audio JSON decodes and validates");
+    {
+        NSMutableData *wav=[NSMutableData data];
+        auto u16=[&](uint16_t v){uint8_t b[2]={uint8_t(v),uint8_t(v>>8)};[wav appendBytes:b length:2];};
+        auto u32=[&](uint32_t v){uint8_t b[4]={uint8_t(v),uint8_t(v>>8),uint8_t(v>>16),uint8_t(v>>24)};[wav appendBytes:b length:4];};
+        [wav appendBytes:"RIFF" length:4];u32(44);
+        [wav appendBytes:"WAVEfmt " length:8];u32(16);u16(1);u16(1);u32(48000);u32(96000);u16(2);u16(16);
+        [wav appendBytes:"data" length:4];u32(8);u16(16384);u16(0);u16(uint16_t(int16_t(-16384)));u16(0);
+        NSString *path=[NSTemporaryDirectory() stringByAppendingPathComponent:@"soundnet-import-test.wav"];
+        assert([wav writeToFile:path atomically:YES]);
+        NSDictionary *imported=triassets::importAsset(@"audio",[NSURL fileURLWithPath:path],&why);
+        assert(imported && [imported[@"rate"] doubleValue]==48000 && [imported[@"channels"] intValue]==1);
+        tri::GraphSpec importedGraph;
+        assert(triassets::decodeGraph(@{@"version":@3,@"nodes":@[@{@"id":@1,@"type":@(tri::SamplerNode),
+            @"x":@0,@"y":@0,@"parameters":@{},@"asset":imported}],@"edges":@[]},importedGraph,&graphWhy));
+        assert(importedGraph.nodes[0].sample && importedGraph.nodes[0].sample->frames()==4);
+        [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        puts("audio file import round-trips through a graph asset");
+    }
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler asset and real Core ML pitch predictions.");
 } }

@@ -13,9 +13,14 @@ inline constexpr int StartNode=23, StopNode=24, WaitNode=25, CountNode=26, Arran
 // Audio processors added in 2.2. Their IDs live above the legacy Node enum and
 // their parameters live above the legacy Param range.
 inline constexpr int FilterNode=28, ReverbNode=29, NoiseNode=30;
+// Audio-file sampler added in 2.3.
+inline constexpr int SamplerNode=31;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
+inline constexpr int SamplerRoot=1130, SamplerGain=1131, SamplerLoop=1132;
+inline constexpr int SamplerAttack=1133, SamplerRelease=1134;
+inline constexpr int SamplerStart=1135, SamplerEnd=1136;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -33,6 +38,13 @@ inline constexpr ParamInfo reverbDampingInfo{"Damping",0,1,.4f,""};
 inline constexpr ParamInfo reverbWidthInfo  {"Width",0,1,.9f,""};
 inline constexpr ParamInfo noiseLevelInfo   {"Level",0,1,.2f,""};
 inline constexpr ParamInfo noiseTypeInfo    {"Type",0,1,0,""};
+inline constexpr ParamInfo samplerRootInfo   {"Root",0,127,60,"MIDI"};
+inline constexpr ParamInfo samplerGainInfo   {"Gain",0,1,.8f,""};
+inline constexpr ParamInfo samplerLoopInfo   {"Loop",0,1,0,""};
+inline constexpr ParamInfo samplerAttackInfo {"Attack",.001f,5,.005f,"s"};
+inline constexpr ParamInfo samplerReleaseInfo{"Release",.001f,5,.12f,"s"};
+inline constexpr ParamInfo samplerStartInfo  {"Start",0,1,0,""};
+inline constexpr ParamInfo samplerEndInfo    {"End",0,1,1,""};
 
 struct NodeMeta {
     int type;
@@ -64,6 +76,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {FilterNode,"滤波器","处理",true,true},
         {ReverbNode,"混响","处理",true,true},
         {NoiseNode,"噪声","处理",true,true},
+        {SamplerNode,"采样器","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -90,7 +103,7 @@ inline const char* nodeCategory(int type) {
 inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
-        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,
+        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,
         StartNode,StopNode,WaitNode,CountNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
@@ -109,6 +122,13 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case ReverbWidth:return &reverbWidthInfo;
         case NoiseLevel:return &noiseLevelInfo;
         case NoiseType:return &noiseTypeInfo;
+        case SamplerRoot:return &samplerRootInfo;
+        case SamplerGain:return &samplerGainInfo;
+        case SamplerLoop:return &samplerLoopInfo;
+        case SamplerAttack:return &samplerAttackInfo;
+        case SamplerRelease:return &samplerReleaseInfo;
+        case SamplerStart:return &samplerStartInfo;
+        case SamplerEnd:return &samplerEndInfo;
         default:return nullptr;
     }
 }
@@ -117,6 +137,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==FilterNode) return p>=FilterType && p<=FilterDrive;
     if(type==ReverbNode) return p>=ReverbMix && p<=ReverbWidth;
     if(type==NoiseNode) return p==NoiseLevel || p==NoiseType;
+    if(type==SamplerNode) return p>=SamplerRoot && p<=SamplerEnd;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -139,6 +160,7 @@ inline std::vector<int> nodeParamList(int type) {
         case FilterNode:return {FilterType,FilterCutoff,FilterResonance,FilterDrive};
         case ReverbNode:return {ReverbMix,ReverbSize,ReverbDamping,ReverbWidth};
         case NoiseNode:return {NoiseLevel,NoiseType};
+        case SamplerNode:return {SamplerRoot,SamplerGain,SamplerLoop,SamplerAttack,SamplerRelease,SamplerStart,SamplerEnd};
         default:return {};
     }
 }

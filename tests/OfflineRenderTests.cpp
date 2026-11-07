@@ -1,0 +1,67 @@
+#include "../src/OfflineRender.hpp"
+#include "../src/WavFile.hpp"
+#include "../src/AudioFile.hpp"
+#include <cassert>
+#include <cstdio>
+#include <string>
+
+using namespace tri;
+
+static void edge(GraphSpec& graph,uint64_t source,uint64_t target,int port=0,int sourcePort=0) {
+    graph.edges.push_back({source,target,port,sourcePort});
+}
+
+int main() {
+    GraphSpec graph;
+    GraphNode start;start.id=1;start.type=StartNode;start.x=0;start.y=0;graph.nodes.push_back(start);
+    GraphNode clip;clip.id=2;clip.type=ClipNode;clip.x=120;clip.y=0;
+    clip.clip.lengthBeats=2;
+    clip.clip.events={{0,0x90,60,100},{1,0x80,60,0}};
+    graph.nodes.push_back(clip);
+    GraphNode osc;osc.id=3;osc.type=Osc1Node;osc.x=240;osc.y=0;osc.parameters[Level1]=.6f;graph.nodes.push_back(osc);
+    GraphNode out;out.id=4;out.type=OutputNode;out.x=360;out.y=0;out.parameters[Master]=1;graph.nodes.push_back(out);
+    edge(graph,1,2,1);edge(graph,2,3);edge(graph,3,4);
+    std::vector<size_t> order;assert(graphOrder(graph,order));
+
+    offline::Result result;std::string why;
+    assert(offline::render(graph,1,48000,result,why));
+    assert(result.left.size()==48000 && result.right.size()==48000);
+    double peak=0;for(float value:result.left)peak=std::max(peak,double(std::fabs(value)));
+    assert(peak>.01);
+    assert(result.peak>.01);
+    puts("start-triggered graph renders offline");
+
+    std::string path="build/tests-offline/export.wav";
+    assert(wav::write(path,result.left,result.right,result.rate,why));
+    std::string bytes;
+    {
+        FILE *file=std::fopen(path.c_str(),"rb");assert(file);
+        std::fseek(file,0,SEEK_END);long size=std::ftell(file);std::fseek(file,0,SEEK_SET);
+        assert(size>44+48000);
+        bytes.resize(size_t(size));assert(std::fread(bytes.data(),1,bytes.size(),file)==bytes.size());
+        std::fclose(file);
+    }
+    assert(bytes.rfind("RIFF",0)==0 && bytes.compare(8,4,"WAVE")==0);
+    AudioSample decoded;
+    assert(audiofile::parse(reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size(),decoded,why));
+    assert(decoded.frames()==48000 && decoded.channels==2 && std::abs(decoded.rate-48000)<.1);
+    puts("offline render writes a stereo WAV");
+
+    GraphSpec daw;
+    GraphNode dawStart;dawStart.id=1;dawStart.type=StartNode;daw.nodes.push_back(dawStart);
+    GraphNode dawClip;dawClip.id=2;dawClip.type=ClipNode;dawClip.clip.lengthBeats=2;
+    dawClip.clip.events={{0,0x90,64,100},{1,0x80,64,0}};daw.nodes.push_back(dawClip);
+    GraphNode dawOsc;dawOsc.id=3;dawOsc.type=Osc1Node;daw.nodes.push_back(dawOsc);
+    GraphNode dawOut;dawOut.id=4;dawOut.type=DawOutputNode;dawOut.parameters[Master]=1;daw.nodes.push_back(dawOut);
+    edge(daw,1,2,1);edge(daw,2,3);edge(daw,3,4);
+    offline::Result redirected;
+    assert(offline::render(daw,1,48000,redirected,why));
+    double redirectedPeak=0;for(float value:redirected.left)redirectedPeak=std::max(redirectedPeak,double(std::fabs(value)));
+    assert(redirectedPeak>.01);
+    puts("DAW-only graphs export through the hardware path");
+
+    assert(!offline::render(graph,0,48000,result,why));
+    assert(!offline::render(graph,200,48000,result,why));
+    puts("invalid export durations are rejected");
+    puts("PASS: offline rendering, WAV output and output redirection.");
+}

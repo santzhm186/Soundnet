@@ -1,8 +1,11 @@
 #import "WorkflowAssets.h"
 #import <CoreML/CoreML.h>
 #include "StandardMidiFile.hpp"
+#include "AudioFile.hpp"
 #include <climits>
 #include <cmath>
+#include <cstring>
+#include <memory>
 
 namespace triassets {
 namespace {
@@ -37,6 +40,40 @@ bool parsePitches(id list, tri::NoteModel& model, NSString **why) {
             return fail(why,@"映射中的音高应为 0–127 的整数。");
         model.pitches[i]=static_cast<uint8_t>(v);
     }
+    return true;
+}
+bool parseAudioAsset(NSDictionary *asset,std::shared_ptr<tri::AudioSample>& out,NSString **why) {
+    if (!named(asset)) return fail(why,@"采样器缺少音频名称。");
+    for (id key in asset)
+        if (![@[@"name",@"rate",@"channels",@"pcm"] containsObject:key])
+            return fail(why,@"音频素材含有未知字段。");
+    id rate=asset[@"rate"],channels=asset[@"channels"],encoded=asset[@"pcm"];
+    if (!numeric(rate) || !std::isfinite([rate doubleValue]) ||
+        [rate doubleValue]<1000 || [rate doubleValue]>384000)
+        return fail(why,@"音频采样率无效。");
+    if (!numeric(channels) || [channels doubleValue]!=std::trunc([channels doubleValue]) ||
+        ([channels intValue]!=1 && [channels intValue]!=2))
+        return fail(why,@"音频声道数无效。");
+    const size_t maxBytes=tri::audiofile::maxSamples*sizeof(float);
+    if (![encoded isKindOfClass:NSString.class] || [encoded length]>4*((maxBytes+2)/3)+4)
+        return fail(why,@"音频数据缺失或过大。");
+    NSData *pcm=[[NSData alloc] initWithBase64EncodedString:encoded options:0];
+    if (!pcm || !pcm.length || pcm.length%sizeof(float) || pcm.length>maxBytes)
+        return fail(why,@"音频数据编码无效。");
+    const int channelCount=[channels intValue];
+    const size_t sampleCount=pcm.length/sizeof(float);
+    if (sampleCount%size_t(channelCount))
+        return fail(why,@"音频采样数与声道数不符。");
+    auto sample=std::make_shared<tri::AudioSample>();
+    sample->name=[asset[@"name"] UTF8String] ?: "";
+    sample->rate=[rate doubleValue];
+    sample->channels=channelCount;
+    sample->samples.resize(sampleCount);
+    std::memcpy(sample->samples.data(),pcm.bytes,sample->samples.size()*sizeof(float));
+    for (float value : sample->samples)
+        if (!std::isfinite(value)) return fail(why,@"音频包含无效采样值。");
+    if (!sample->valid()) return fail(why,@"音频参数无效。");
+    out=std::move(sample);
     return true;
 }
 NSData *readLimited(NSURL *url, NSUInteger limit, NSString **why) {
@@ -145,7 +182,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     tri::GraphSpec next;
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::NoiseNode) ||
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::SamplerNode) ||
            !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
            !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
             return fail(why,@"节点的实例 ID、类型或坐标无效。");
@@ -171,8 +208,16 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
         if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
             return fail(why,@"同一声部的最低音不能高于最高音。");
         if(obj[@"asset"]) {
-            NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":nil;
-            if(!kind || !decode(@{kind:obj[@"asset"]},node.clip,node.model,why))return fail(why,@"节点素材无效。");
+            NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":
+                node.type==tri::SamplerNode?@"audio":nil;
+            if(!kind)return fail(why,@"该节点类型不能包含素材。");
+            if(node.type==tri::SamplerNode) {
+                std::shared_ptr<tri::AudioSample> audio;
+                if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
+                node.sample=std::move(audio);
+            } else if(!decode(@{kind:obj[@"asset"]},node.clip,node.model,why)) {
+                return fail(why,@"节点素材无效。");
+            }
         }
         next.nodes.push_back(std::move(node));
     }
@@ -205,6 +250,21 @@ NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
             if (!data || !parseClip(data,clip,why)) return nil;
             size_t count=std::count_if(clip.events.begin(),clip.events.end(),[](auto& e){return (e.status&0xf0)==0x90;});
             return @{@"name":name,@"smf":[data base64EncodedStringWithOptions:0],@"beats":@(clip.lengthBeats),@"notes":@(count)};
+        }
+        if ([kind isEqual:@"audio"]) {
+            NSData *data=readLimited(url,tri::audiofile::maxFileBytes,why);
+            if (!data) return nil;
+            tri::AudioSample sample;
+            std::string error;
+            if (!tri::audiofile::parse(static_cast<const uint8_t *>(data.bytes),data.length,sample,error)) {
+                fail(why,[NSString stringWithUTF8String:error.c_str()]);
+                return nil;
+            }
+            sample.name=[name UTF8String] ?: "";
+            NSData *pcm=[NSData dataWithBytes:sample.samples.data()
+                                        length:sample.samples.size()*sizeof(float)];
+            return @{@"name":name,@"rate":@(sample.rate),@"channels":@(sample.channels),
+                     @"pcm":[pcm base64EncodedStringWithOptions:0]};
         }
         if (![kind isEqual:@"model"]) { fail(why,@"未知的素材类型。"); return nil; }
         NSArray *pitches=nil;

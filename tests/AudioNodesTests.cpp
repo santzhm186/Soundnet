@@ -103,5 +103,70 @@ int main() {
         assert(rms(left,0,left.size())==0);
         puts("output bypass is silent");
     }
-    puts("PASS: filter, reverb, noise, bypass and type-scoped validation.");
+    // A sampler plays an embedded sample, loops it, and responds to note-off.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->name="test";sample->rate=48000;sample->channels=1;
+        sample->samples.resize(2400); // 50 ms
+        for(size_t i=0;i<sample->samples.size();++i)
+            sample->samples[i]=float(std::sin(2*3.14159265358979323846*440.0*double(i)/48000.0))*.4f;
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        size_t sampler=add(graph,1,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,1},{SamplerAttack,.001f},{SamplerRelease,.02f},{SamplerStart,0},{SamplerEnd,1}});
+        graph.nodes[sampler].sample=sample;
+        add(graph,2,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);
+        std::vector<size_t> order;assert(graphOrder(graph,order));
+        assert(!validGraphParam(SamplerNode,NoiseLevel));
+        assert(validGraphParam(SamplerNode,SamplerRoot));
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,100);
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,24000)>.02);
+        assert(rms(left,36000,48000)>.02); // loop survives past the 50 ms sample
+        for(float value:left)assert(std::isfinite(value));
+        engine.midi(0x80,60,0);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,24000,48000)<.005);
+        puts("sampler plays, loops and releases a note");
+    }
+
+    // A bypassed sampler is silent.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.assign(2400,.5f);
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1}});
+        graph.nodes[sampler].sample=sample;graph.nodes[sampler].bypass=true;
+        add(graph,2,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,100);
+        std::vector<float> left(4096),right(4096);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,left.size())==0);
+        puts("sampler bypass is silent");
+    }
+    // Stereo samples keep their left and right channels.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=2;sample->samples.resize(4096*2);
+        for(size_t i=0;i<sample->samples.size();i+=2){sample->samples[i]=.5f;sample->samples[i+1]=-.5f;}
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1},{SamplerLoop,1}});
+        graph.nodes[sampler].sample=sample;
+        add(graph,2,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,100);
+        std::vector<float> left(4096),right(4096);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double l=0,r=0;for(size_t i=0;i<left.size();++i){l+=left[i];r+=right[i];}
+        assert(l/double(left.size())>.05 && r/double(right.size())<-.05);
+        puts("sampler preserves stereo channels");
+    }
+    puts("PASS: filter, reverb, noise, sampler, bypass and type-scoped validation.");
 }

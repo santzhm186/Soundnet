@@ -61,6 +61,13 @@ int main() {
         assert([assets[@"graph"][@"nodes"] count]==52);
         [editor redo:nil];
         assert([assets[@"graph"][@"nodes"] count]==26);
+        NSMenuItem *sampler = [NSMenuItem new];
+        sampler.tag = tri::SamplerNode;
+        [editor insert:sampler];
+        assert([assets[@"graph"][@"nodes"] count]==27);
+        NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
+            [NSPredicate predicateWithFormat:@"type == %d", tri::SamplerNode]] firstObject];
+        assert(samplerNode && [samplerNode[@"parameters"] count]==7);
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
         assert(triassets::validate([NSJSONSerialization JSONObjectWithData:serialized options:0 error:nil],nullptr));
 
@@ -84,6 +91,6 @@ int main() {
         [[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
             writeToFile:@"build/qa/instances.png" atomically:YES];
         [window close];
-        puts("PASS: 25 native oscillator instances, independent trigger, undo/redo, JSON roundtrip and trigger example.");
+        puts("PASS: 25 native oscillator instances, sampler insertion, independent trigger, undo/redo, JSON roundtrip and trigger example.");
     }
 }

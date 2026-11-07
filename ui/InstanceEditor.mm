@@ -1,7 +1,10 @@
 #import "TriEditor.h"
 #import "WorkflowFile.hpp"
 #import "../src/WorkflowAssets.h"
+#import "../src/OfflineRender.hpp"
+#import "../src/WavFile.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <cmath>
 
 namespace {
 NSArray *catalog() {
@@ -388,10 +391,14 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 }
 -(void)import:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
-    uint64_t uid=_selected;BOOL clip=[node[@"type"] intValue]==tri::ClipNode;
-    NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=!clip;
+    uint64_t uid=_selected;
+    int nodeType=[node[@"type"] intValue];
+    BOOL clip=nodeType==tri::ClipNode,audio=nodeType==tri::SamplerNode;
+    NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=!clip && !audio;
+    NSArray *extensions=clip?@[@"mid",@"midi"]:audio?@[@"wav",@"aif",@"aiff",@"aifc"]:
+        @[@"mlmodel",@"mlmodelc",@"mlpackage",@"json"];
     NSMutableArray *types=[NSMutableArray new];
-    for(NSString *ext in clip?@[@"mid",@"midi"]:@[@"mlmodel",@"mlmodelc",@"mlpackage",@"json"]) {
+    for(NSString *ext in extensions) {
         UTType *type=[UTType typeWithFilenameExtension:ext];if(type)[types addObject:type];
     }
     panel.allowedContentTypes=types;
@@ -399,7 +406,8 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         if(result!=NSModalResponseOK)return;
         [self message:@"正在载入素材…"];
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-            NSString *why=nil;NSDictionary *asset=triassets::importAsset(clip?@"clip":@"model",panel.URL,&why);
+            NSString *kind=clip?@"clip":audio?@"audio":@"model";
+            NSString *why=nil;NSDictionary *asset=triassets::importAsset(kind,panel.URL,&why);
             dispatch_async(dispatch_get_main_queue(),^{
                 NSMutableDictionary *current=[self node:uid];
                 if(!asset){[self message:why];return;}if(!current)return;
@@ -516,6 +524,18 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
         [self label:node[@"asset"][@"name"] ?: @"未载入素材" y:y];y+=46;
     }
+    if(type==tri::SamplerNode) {
+        [self button:@"载入音频（WAV / AIFF）…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
+        NSDictionary *asset=node[@"asset"];
+        if(asset[@"name"]) {
+            [self label:asset[@"name"] y:y];y+=24;
+            double rate=[asset[@"rate"] doubleValue];int channels=[asset[@"channels"] intValue];
+            NSData *pcm=[[NSData alloc]initWithBase64EncodedString:asset[@"pcm"] ?: @"" options:0];
+            double seconds=rate>0 ? double(pcm.length)/4.0/double(std::max(1,channels))/rate : 0;
+            [self label:[NSString stringWithFormat:@"%.2f 秒 · %@ · %.0f Hz",seconds,channels==1?@"单声道":@"立体声",rate] y:y];y+=26;
+        } else [self label:@"未载入音频素材" y:y],y+=28;
+        [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音。" y:y];y+=62;
+    }
     if(type==tri::ChordNode || type==tri::ProgressNode) {
         [self label:@"和弦 / 走向，可手动输入" y:y];y+=28;
         NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(12,y,225,28)];
@@ -541,6 +561,43 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 -(void)preset:(id)sender {
     NSTextField *field=[NSTextField new];field.stringValue=[[self node:_selected][@"type"] intValue]==tri::ChordNode?@"Cmaj7":@"Dm7 | G7 | Cmaj7";
     [self harmony:field];
+}
+-(void)exportWav:(id)sender {
+    NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.wav";
+    panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"wav"]];
+    NSView *accessory=[[NSView alloc]initWithFrame:NSMakeRect(0,0,280,52)];
+    NSTextField *label=[NSTextField labelWithString:@"导出时长（秒，1–120）"];
+    label.frame=NSMakeRect(12,28,170,20);[accessory addSubview:label];
+    NSTextField *secondsField=[[NSTextField alloc]initWithFrame:NSMakeRect(190,24,70,26)];
+    secondsField.stringValue=@"8";[accessory addSubview:secondsField];
+    panel.accessoryView=accessory;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
+        if(result!=NSModalResponseOK)return;
+        double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
+        NSURL *url=panel.URL;NSDictionary *document=copyJSON(self.document);
+        [self message:[NSString stringWithFormat:@"正在导出 %.1f 秒音频…",seconds]];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            tri::GraphSpec graph;NSString *why=nil;
+            if(!triassets::decodeGraph(document,graph,&why)) {
+                dispatch_async(dispatch_get_main_queue(),^{[self message:why ?: @"工作流无效，无法导出。"];});
+                return;
+            }
+            tri::offline::Result rendered;std::string error;
+            if(!tri::offline::render(graph,seconds,48000,rendered,error)) {
+                NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                return;
+            }
+            if(!tri::wav::write(url.path.UTF8String,rendered.left,rendered.right,rendered.rate,error)) {
+                NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                return;
+            }
+            double db=rendered.peak>0 ? 20*std::log10(rendered.peak) : -120;
+            NSString *text=[NSString stringWithFormat:@"已导出 %.1f 秒 WAV · 峰值 %.1f dBFS",seconds,db];
+            dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+        });
+    }];
 }
 -(void)save:(id)sender {
     NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.json";
@@ -918,8 +975,9 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor button:@"查找" frame:NSMakeRect(642,10,65,28) action:@selector(search:) parent:editor];
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.2    输入 → 处理 → 输出"];
-    heading.frame=NSMakeRect(790,15,340,25);[editor addSubview:heading];
+    [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.3    输入 → 处理 → 输出"];
+    heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
     NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(878,48,260,505)];
