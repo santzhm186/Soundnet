@@ -22,6 +22,10 @@ int main() { @autoreleasepool {
     assert(store.replace(@{@"graph":graph},engine));
     assert(store.lastGraph.nodes[1].sample.get()==sample.get());
 
+    graph[@"nodes"][1][@"asset"][@"name"]=@"pluck-renamed.wav";
+    assert(store.replace(@{@"graph":graph},engine));
+    assert(store.lastGraph.nodes[1].sample && store.lastGraph.nodes[1].sample.get()!=sample.get());
+
     engine.midi(0x90,60,100);
     float left[128]={0},right[128]={0},outL[128],outR[128],peak=0;
     for(int block=0;block<40;++block) {
