@@ -125,7 +125,7 @@ class InstanceGraph {
         Notes incoming{};
         GraphNode saved;
         bool configured=false;
-        int seenPulse=0,count=0,renderOffset=0;
+        int seenPulse=0,count=0,renderOffset=0;float delayMs=-1;
         std::array<Pending,eventCapacity> waiting{};
         int waitingSize=0;
         void* triggerContext=nullptr;
@@ -262,6 +262,7 @@ class InstanceGraph {
         float echoTime=.25f,echoFeedback=.5f;
         int midiOutChannel=0;
         float outputWidth=1;
+        bool delaySync=false;int delayDivision=1;
         int echoRepeats=3,echoPitch=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
@@ -694,6 +695,8 @@ public:
             entry.echoPitch=int(graphParamValue(n,EchoPitch));
             entry.midiOutChannel=int(graphParamValue(n,MidiOutChannel));
             entry.outputWidth=graphParamValue(n,OutputWidth);
+            entry.delaySync=graphParamValue(n,DelaySync)!=0;
+            entry.delayDivision=int(graphParamValue(n,DelayDivision));
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -1006,6 +1009,12 @@ public:
                     else node.engine->clearHostTransport();
                 }
                 if(type==EQNode || type==DelayNode) {
+                    if(type==DelayNode && entry.delaySync && node.engine) {
+                        static const double beats[4]={1,.5,.25,.75};
+                        double ms=60000.0/(bpm>1?bpm:120)*beats[std::max(0,std::min(3,entry.delayDivision))];
+                        ms=std::max(20.0,std::min(1000.0,ms));
+                        if(std::fabs(ms-node.delayMs)>.01){node.engine->set(DelayTime,float(ms));node.delayMs=float(ms);}
+                    }
                     if(entry.bypass) {
                         if(source)for(int i=0;i<n;++i){node.left[i]=source->left[i];node.right[i]=source->right[i];}
                     } else {

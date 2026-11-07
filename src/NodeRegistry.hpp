@@ -52,6 +52,7 @@ inline constexpr int EchoTime=1250, EchoRepeats=1251, EchoFeedback=1252, EchoPit
 inline constexpr int GateThreshold=1260, GateAttack=1261, GateRelease=1262, GateRange=1263;
 inline constexpr int MidiOutChannel=1270;
 inline constexpr int OutputWidth=1280;
+inline constexpr int DelaySync=1290, DelayDivision=1291;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -129,6 +130,8 @@ inline constexpr ParamInfo gateReleaseInfo{"Release",.01f,2,.15f,"s"};
 inline constexpr ParamInfo gateRangeInfo{"Range",0,1,.8f,""};
 inline constexpr ParamInfo midiOutChannelInfo{"Channel",0,16,0,""};
 inline constexpr ParamInfo outputWidthInfo{"Width",0,2,1,""};
+inline constexpr ParamInfo delaySyncInfo{"Sync",0,1,0,""};
+inline constexpr ParamInfo delayDivisionInfo{"Division",0,3,1,""};
 
 struct NodeMeta {
     int type;
@@ -279,6 +282,8 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case GateRange:return &gateRangeInfo;
         case MidiOutChannel:return &midiOutChannelInfo;
         case OutputWidth:return &outputWidthInfo;
+        case DelaySync:return &delaySyncInfo;
+        case DelayDivision:return &delayDivisionInfo;
         default:return nullptr;
     }
 }
@@ -302,6 +307,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==EchoNode) return p>=EchoTime && p<=EchoPitch;
     if(type==GateNode) return p>=GateThreshold && p<=GateRange;
     if(type==MidiOutNode) return p==MidiOutChannel;
+    if(type==DelayNode) return p==DelaySync || p==DelayDivision || (p>=0 && p<ParamCount && !routeParam(p));
     if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode)
         return p==OutputWidth || (p>=0 && p<ParamCount && !routeParam(p));
     if(type>=FilterNode) return false;
@@ -318,7 +324,7 @@ inline std::vector<int> nodeParamList(int type) {
         case ClockNode:return {ClockBPM};
         case VelocityNode:return {VelocityMin,VelocityMax,VelocityRate,VelocityShape};
         case EQNode:return {EQLow,EQMid,EQHigh};
-        case DelayNode:return {DelayTime,DelayFeedback,DelayMix};
+        case DelayNode:return {DelayTime,DelayFeedback,DelayMix,DelaySync,DelayDivision};
         case WaitNode:return {WaitSeconds};
         case CountNode:return {TriggerCount};
         case ArrangerNode:return {ArrHighMin,ArrHighMax,ArrHighTexture,ArrMidMin,ArrMidMax,ArrMidTexture,ArrLowMin,ArrLowMax,ArrLowTexture};

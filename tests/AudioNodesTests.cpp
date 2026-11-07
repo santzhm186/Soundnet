@@ -448,6 +448,21 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
+    // Delay sync parameters are accepted and the synced delay renders.
+    {
+        GraphSpec graph;
+        add(graph,1,MidiNode);add(graph,2,Osc1Node,{{Master,1},{Level1,.7f}});
+        add(graph,3,DelayNode,{{DelaySync,1},{DelayDivision,1},{DelayFeedback,.3f},{DelayMix,.4f}});
+        add(graph,4,OutputNode,{{Master,1}});
+        connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,100);
+        std::vector<float> left(24000),right(24000);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,left.size())>.01);
+        assert(validGraphParam(DelayNode,DelaySync));
+        assert(validGraphParam(DelayNode,DelayDivision));
+        puts("synced delay accepts musically meaningful divisions");
+    }
     // MidiOut can force a channel while channel 0 follows the input.
     {
         struct Sent {uint8_t status,a,b;};
