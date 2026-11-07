@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.51
+- 新增 `scripts/test-sanitize.sh`，在 ASan/UBSan 下运行音频相关测试。
+
 ## 2.50
 - 采样器新增 Loop XFade，平滑循环接缝。
 

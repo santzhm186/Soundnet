@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.50**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.51**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,7 +8,7 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.50 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.51 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
@@ -211,6 +211,7 @@ build/release/Soundnet.app/Contents/MacOS/Soundnet --self-test
 ```sh
 ./scripts/test-all.sh build/tests
 ./scripts/verify-release.sh build/verify
+./scripts/test-sanitize.sh build/sanitize
 build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8
 auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
@@ -236,6 +237,7 @@ auval -strict -v aumu Tern Trny -oop
 | `examples/`、`tests/`、`tools/` | 示例、引擎与原生集成验证 |
 | `scripts/test-all.sh` | 编译并运行全部引擎、素材与渲染测试 |
 | `scripts/verify-release.sh` | 一条命令完成测试、双架构构建、签名、自检、示例导出与 MIDI 导出验证 |
+| `scripts/test-sanitize.sh` | 在 ASan/UBSan 下运行音频节点与压力测试 |
 | `CHANGELOG.md` | 版本更新记录 |
 
 更多操作见 [中文使用说明](docs/使用说明.txt)。Apple AudioUnitSDK 第三方源码与 Apache 2.0 许可证位于 `au/vendor/`。
