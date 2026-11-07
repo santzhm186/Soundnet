@@ -1503,6 +1503,16 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     NSBezierPath *clip=[NSBezierPath bezierPathWithRect:self.bounds];[clip addClip];
     NSAffineTransform *transform=[NSAffineTransform transform];
     [transform translateXBy:editor.origin.x yBy:editor.origin.y];[transform scaleBy:editor.zoom];[transform concat];
+    if(editor.snap) {
+        NSPoint a=[editor world:NSMakePoint(NSMinX(self.bounds),NSMinY(self.bounds))];
+        NSPoint b=[editor world:NSMakePoint(NSMaxX(self.bounds),NSMaxY(self.bounds))];
+        double x0=std::floor(std::min(a.x,b.x)/20)*20,x1=std::max(a.x,b.x),y0=std::floor(std::min(a.y,b.y)/20)*20,y1=std::max(a.y,b.y);
+        [[NSColor colorWithWhite:.14 alpha:1]setStroke];
+        NSBezierPath *grid=[NSBezierPath new];grid.lineWidth=1/[editor zoom];
+        for(double x=x0;x<=x1;x+=20){[grid moveToPoint:NSMakePoint(x,a.y)];[grid lineToPoint:NSMakePoint(x,b.y)];}
+        for(double y=y0;y<=y1;y+=20){[grid moveToPoint:NSMakePoint(a.x,y)];[grid lineToPoint:NSMakePoint(b.x,y)];}
+        [grid stroke];
+    }
     NSInteger edgeIndex=0;
     for(NSDictionary *edge in editor.document[@"edges"]) {
         NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
@@ -1678,6 +1688,9 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         if([key isEqualToString:@"v"]){[editor paste:nil];return;}
         if([key isEqualToString:@"x"]){[editor cut:nil];return;}
         if([key isEqualToString:@"a"]){[editor selectAll:nil];return;}
+        if([key isEqualToString:@"d"]){[editor duplicate:nil];return;}
+        if([key isEqualToString:@"f"]){[editor search:nil];return;}
+        if([key isEqualToString:@"g"]){[editor snap:nil];return;}
     }
     if(event.keyCode==51 || event.keyCode==117) {
         if(editor.selectedEdge>=0)[editor deleteEdge:editor.selectedEdge];
