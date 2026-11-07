@@ -48,8 +48,8 @@ inline bool validArrangerRanges(const GraphNode& node) {
     return true;
 }
 inline bool validAudioRanges(const GraphNode& node) {
-    if(node.type==AudioClipNode)return graphParamValue(node,AudioClipStart)<=graphParamValue(node,AudioClipEnd);
-    if(node.type==SamplerNode)return graphParamValue(node,SamplerStart)<=graphParamValue(node,SamplerEnd);
+    if(node.type==AudioClipNode)return graphParamValue(node,AudioClipStart)<graphParamValue(node,AudioClipEnd);
+    if(node.type==SamplerNode)return graphParamValue(node,SamplerStart)<graphParamValue(node,SamplerEnd);
     return true;
 }
 enum class Signal { None, Notes, Audio, Clock, Trigger };
@@ -120,8 +120,8 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::st
             if(!std::isfinite(v) || v<info.min || v>info.max || ((arrangerParam(p)||discreteParam(p)) && std::trunc(v)!=v))return graphFailure(why,"节点参数超出范围或必须为整数。");
         }
         if(n.type==ArrangerNode && !validArrangerRanges(n))return graphFailure(why,"编排器音域无效：低声部不能高于高声部。");
-        if(n.type==AudioClipNode && !validAudioRanges(n))return graphFailure(why,"音频片段起止位置无效：开始不能晚于结束。");
-        if(n.type==SamplerNode && !validAudioRanges(n))return graphFailure(why,"采样器起止位置无效：开始不能晚于结束。");
+        if(n.type==AudioClipNode && !validAudioRanges(n))return graphFailure(why,"音频片段起止位置无效：开始必须早于结束。");
+        if(n.type==SamplerNode && !validAudioRanges(n))return graphFailure(why,"采样器起止位置无效：开始必须早于结束。");
     }
     std::vector<std::vector<size_t>> next(graph.nodes.size());
     std::vector<size_t> pending(graph.nodes.size());
