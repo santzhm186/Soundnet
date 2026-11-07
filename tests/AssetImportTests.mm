@@ -98,6 +98,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(metronomeExample,metronomeGraph,&graphWhy));
     assert(metronomeGraph.nodes.size()==4 && metronomeGraph.edges.size()==3);
     assert(metronomeGraph.nodes[2].type==tri::MetronomeNode);
+    NSDictionary *transposeExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/transpose.json"] options:0 error:nil];
+    tri::GraphSpec transposeGraph;
+    assert(triassets::decodeGraph(transposeExample,transposeGraph,&graphWhy));
+    assert(transposeGraph.nodes.size()==5 && transposeGraph.edges.size()==4);
+    assert(transposeGraph.nodes[2].type==tri::TransposeNode);
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};

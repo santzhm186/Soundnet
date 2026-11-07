@@ -80,6 +80,13 @@ class InstanceGraph {
         float envelope=0;
         int beat=0;
     };
+    struct TransposeState {
+        std::array<int,2048> mapping{};
+        const void* source=nullptr;
+        int sourcePort=0;
+        int semitones=0;
+        bool bypassed=false;
+    };
     struct RandomState {
         uint64_t state=0x9e3779b97f4a7c15ull;
         float next01() {
@@ -98,6 +105,7 @@ class InstanceGraph {
         std::unique_ptr<QuantizeState> quantizer;
         std::unique_ptr<RandomState> random;
         std::unique_ptr<MetronomeState> metronome;
+        std::unique_ptr<TransposeState> transpose;
         std::array<float,quantum> left{},right{},inputL{},inputR{},sidechainL{},sidechainR{};
         Notes incoming{};
         GraphNode saved;
@@ -135,6 +143,11 @@ class InstanceGraph {
             }
             if(type==MetronomeNode) {
                 metronome=std::make_unique<MetronomeState>();
+                return;
+            }
+            if(type==TransposeNode) {
+                transpose=std::make_unique<TransposeState>();
+                transpose->mapping.fill(-1);
                 return;
             }
             if(type==RandomNode) {
@@ -226,6 +239,7 @@ class InstanceGraph {
         float randomChance=.5f;
         float metronomeBPM=120,metronomeLevel=.4f,metronomeAccent=1;
         int metronomeBeats=4;
+        int transposeSemitones=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
     };
@@ -650,6 +664,7 @@ public:
             entry.metronomeLevel=graphParamValue(n,MetronomeLevel);
             entry.metronomeAccent=graphParamValue(n,MetronomeAccent);
             entry.metronomeBeats=int(graphParamValue(n,MetronomeBeats));
+            entry.transposeSemitones=int(graphParamValue(n,TransposeSemitones));
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -737,6 +752,38 @@ public:
             node.left[i]=node.right[i]=v;
         }
     }
+    static void renderTranspose(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
+        auto& state=*node.transpose;
+        const int semitones=std::clamp(entry.transposeSemitones,-24,24);
+        const bool bypassed=entry.bypass;
+        bool force=source!=state.source || entry.noteSourcePort!=state.sourcePort || !source;
+        if(semitones!=state.semitones || bypassed!=state.bypassed)force=true;
+        state.source=source;state.sourcePort=entry.noteSourcePort;state.semitones=semitones;state.bypassed=bypassed;
+        auto emitOff=[&](int key){node.emit({0,uint8_t(0x80|(key%16)),uint8_t(key/16),0});};
+        auto mapPitch=[&](int pitch){return std::clamp(pitch+(bypassed?0:semitones),0,127);};
+        auto syncHeld=[&](){
+            for(int k=0;k<2048;++k)if(node.after[k].velocity)emitOff(k);
+            state.mapping.fill(-1);
+            if(input)for(int k=0;k<2048;++k)if(input->before[k].velocity){
+                const int out=mapPitch(k/16);
+                state.mapping[k]=out*16+(k%16);
+                node.emit({0,uint8_t(0x90|(k%16)),uint8_t(out),input->before[k].velocity});
+            }
+        };
+        if(force)syncHeld();
+        if(input)for(int j=0;j<input->eventCount;++j){
+            const auto event=input->events[j];const uint8_t kind=event.status&0xf0;
+            const int key=event.a*16+(event.status&15);
+            if(kind==0x90 && event.b){
+                const int out=mapPitch(event.a);
+                state.mapping[key]=out*16+(event.status&15);
+                node.emit({event.frame,uint8_t(0x90|(event.status&15)),uint8_t(out),event.b});
+            } else if(kind==0x80 || kind==0x90){
+                const int mapped=state.mapping[key];
+                if(mapped>=0){node.emit({event.frame,uint8_t(0x80|(mapped%16)),uint8_t(mapped/16),0});state.mapping[key]=-1;}
+            } else node.emit({event.frame,event.status,event.a,event.b});
+        }
+    }
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) {
         if(frames<=0 || !outL || !outR)return;
         bool planChanged=plans.consume();
@@ -807,6 +854,7 @@ public:
                     renderQuantize(entry,node,source,noteInput);
                     continue;
                 }
+                if(type==TransposeNode) {renderTranspose(entry,node,source,noteInput);continue;}
                 if(type==MetronomeNode) {
                     if(entry.bypass){node.metronome->running=false;node.metronome->envelope=0;std::fill(node.left.begin(),node.left.begin()+n,0.f);std::fill(node.right.begin(),node.right.begin()+n,0.f);}
                     else renderMetronome(entry,node,n,rate);

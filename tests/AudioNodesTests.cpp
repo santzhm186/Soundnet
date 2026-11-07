@@ -437,6 +437,30 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
+    // Transpose shifts note-ons and their matching note-offs.
+    {
+        struct Sent {uint8_t status,a,b;};
+        std::vector<Sent> sent;
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,TransposeNode,{{TransposeSemitones,7}});
+        add(graph,2,MidiOutNode);
+        connect(graph,10,1);connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
+        engine.midi(0x90,60,100);
+        std::vector<float> left(256),right(256);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool on=false;for(const auto& e:sent)if(e.status==0x90 && e.a==67 && e.b==100)on=true;
+        assert(on);
+        sent.clear();engine.midi(0x80,60,0);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool off=false;for(const auto& e:sent)if(e.status==0x80 && e.a==67)off=true;
+        assert(off);
+        assert(validGraphParam(TransposeNode,TransposeSemitones));
+        assert(!validGraphParam(TransposeNode,ChorusMix));
+        puts("transpose shifts note-on and note-off pitches");
+    }
         {
         tri::MidiClip clip;clip.lengthBeats=4;
         clip.events={{0,0x90,60,100},{1,0x80,60,0},{2,0x90,64,90},{3.5,0x80,64,0}};

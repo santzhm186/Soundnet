@@ -24,6 +24,7 @@ inline constexpr int TremoloNode=37, BitcrusherNode=38, PhaserNode=39;
 // Trigger logic added in 2.28.
 inline constexpr int RandomNode=40;
 inline constexpr int MetronomeNode=41;
+inline constexpr int TransposeNode=42;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
@@ -44,6 +45,7 @@ inline constexpr int CrushBits=1200, CrushRate=1201, CrushMix=1202;
 inline constexpr int PhaserRate=1210, PhaserDepth=1211, PhaserFeedback=1212, PhaserMix=1213;
 inline constexpr int RandomChance=1220;
 inline constexpr int MetronomeBPM=1230, MetronomeLevel=1231, MetronomeAccent=1232, MetronomeBeats=1233;
+inline constexpr int TransposeSemitones=1240;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -110,6 +112,7 @@ inline constexpr ParamInfo metronomeBPMInfo{"BPM",40,240,120,""};
 inline constexpr ParamInfo metronomeLevelInfo{"Level",0,1,.4f,""};
 inline constexpr ParamInfo metronomeAccentInfo{"Accent",0,1,1,""};
 inline constexpr ParamInfo metronomeBeatsInfo{"Beats",1,16,4,""};
+inline constexpr ParamInfo transposeSemitonesInfo{"Semitones",-24,24,0,""};
 
 struct NodeMeta {
     int type;
@@ -152,6 +155,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {PhaserNode,"相位器","处理",true,true},
         {RandomNode,"随机触发","逻辑",true,false},
         {MetronomeNode,"节拍器","逻辑",true,false},
+        {TransposeNode,"移调","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -179,7 +183,7 @@ inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
         Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,TremoloNode,BitcrusherNode,PhaserNode,
-        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,
+        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,TransposeNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
     return catalog;
@@ -246,6 +250,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case MetronomeLevel:return &metronomeLevelInfo;
         case MetronomeAccent:return &metronomeAccentInfo;
         case MetronomeBeats:return &metronomeBeatsInfo;
+        case TransposeSemitones:return &transposeSemitonesInfo;
         default:return nullptr;
     }
 }
@@ -265,6 +270,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==PhaserNode) return p>=PhaserRate && p<=PhaserMix;
     if(type==RandomNode) return p==RandomChance;
     if(type==MetronomeNode) return p>=MetronomeBPM && p<=MetronomeBeats;
+    if(type==TransposeNode) return p==TransposeSemitones;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -298,6 +304,7 @@ inline std::vector<int> nodeParamList(int type) {
         case PhaserNode:return {PhaserRate,PhaserDepth,PhaserFeedback,PhaserMix};
         case RandomNode:return {RandomChance};
         case MetronomeNode:return {MetronomeBPM,MetronomeLevel,MetronomeAccent,MetronomeBeats};
+        case TransposeNode:return {TransposeSemitones};
         default:return {};
     }
 }
