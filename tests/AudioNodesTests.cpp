@@ -84,6 +84,23 @@ int main() {
         for(float sample:left)assert(std::isfinite(sample));
         puts("noise/filter/reverb graph renders");
     }
+    // Reverb pre-delay postpones the wet signal.
+    {
+        GraphSpec graph;
+        add(graph,1,MidiNode);
+        add(graph,2,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+        add(graph,3,ReverbNode,{{ReverbMix,1},{ReverbSize,.6f},{ReverbDamping,.2f},{ReverbWidth,1},{ReverbPreDelay,120}});
+        add(graph,4,OutputNode,{{Master,1}});
+        connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,69,127);
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double early=rms(left,0,4000),late=rms(left,12000,26000);
+        assert(late>.001 && early<late*.2);
+        assert(validGraphParam(ReverbNode,ReverbPreDelay));
+        puts("reverb pre-delay postpones the wet signal");
+    }
 
     // Bypassing an inline filter must restore the unfiltered level.
     {

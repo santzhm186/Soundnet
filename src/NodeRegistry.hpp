@@ -28,7 +28,8 @@ inline constexpr int TransposeNode=42;
 inline constexpr int EchoNode=43;
 inline constexpr int GateNode=44;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
-inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
+inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113,
+    ReverbPreDelay=1114;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
 inline constexpr int SamplerRoot=1130, SamplerGain=1131, SamplerLoop=1132;
 inline constexpr int SamplerAttack=1133, SamplerRelease=1134;
@@ -73,6 +74,7 @@ inline constexpr ParamInfo reverbMixInfo    {"Mix",0,1,.25f,""};
 inline constexpr ParamInfo reverbSizeInfo   {"Size",0,1,.55f,""};
 inline constexpr ParamInfo reverbDampingInfo{"Damping",0,1,.4f,""};
 inline constexpr ParamInfo reverbWidthInfo  {"Width",0,1,.9f,""};
+inline constexpr ParamInfo reverbPreDelayInfo{"PreDelay",0,200,0,"ms"};
 inline constexpr ParamInfo noiseLevelInfo   {"Level",0,1,.2f,""};
 inline constexpr ParamInfo noiseTypeInfo    {"Type",0,1,0,""};
 inline constexpr ParamInfo samplerRootInfo   {"Root",0,127,60,"MIDI"};
@@ -231,6 +233,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case ReverbSize:return &reverbSizeInfo;
         case ReverbDamping:return &reverbDampingInfo;
         case ReverbWidth:return &reverbWidthInfo;
+        case ReverbPreDelay:return &reverbPreDelayInfo;
         case NoiseLevel:return &noiseLevelInfo;
         case NoiseType:return &noiseTypeInfo;
         case SamplerRoot:return &samplerRootInfo;
@@ -305,7 +308,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
 
 inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==FilterNode) return p>=FilterType && p<=FilterDrive;
-    if(type==ReverbNode) return p>=ReverbMix && p<=ReverbWidth;
+    if(type==ReverbNode) return p>=ReverbMix && p<=ReverbPreDelay;
     if(type==NoiseNode) return p==NoiseLevel || p==NoiseType;
     if(type==SamplerNode) return p>=SamplerRoot && p<=SamplerVelocity;
     if(type==AudioClipNode) return p>=AudioClipGain && p<=AudioClipReverse;
@@ -346,7 +349,7 @@ inline std::vector<int> nodeParamList(int type) {
         case CountNode:return {TriggerCount};
         case ArrangerNode:return {ArrHighMin,ArrHighMax,ArrHighTexture,ArrMidMin,ArrMidMax,ArrMidTexture,ArrLowMin,ArrLowMax,ArrLowTexture};
         case FilterNode:return {FilterType,FilterCutoff,FilterResonance,FilterDrive};
-        case ReverbNode:return {ReverbMix,ReverbSize,ReverbDamping,ReverbWidth};
+        case ReverbNode:return {ReverbMix,ReverbSize,ReverbDamping,ReverbWidth,ReverbPreDelay};
         case NoiseNode:return {NoiseLevel,NoiseType};
         case SamplerNode:return {SamplerRoot,SamplerGain,SamplerLoop,SamplerAttack,SamplerRelease,SamplerStart,SamplerEnd,SamplerReverse,SamplerVelocity};
         case AudioClipNode:return {AudioClipGain,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipFade,AudioClipPitch,AudioClipReverse};

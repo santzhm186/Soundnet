@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.47
+- 混响节点新增 PreDelay 参数（0–200 ms）。
+
 ## 2.46
 - 合唱节点新增 Feedback 参数。
 
