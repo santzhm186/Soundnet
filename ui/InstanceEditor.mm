@@ -163,6 +163,7 @@ static NSString *autosaveFilePath() {
 
 @implementation SNNoteRollView {
     BOOL _dragging, _resizing;
+    NSMutableDictionary *_noteClipboard;
     double _grid;
     NSPoint _dragPoint;
     double _dragStartBeat, _dragLength;
@@ -272,7 +273,26 @@ static NSString *autosaveFilePath() {
     NSInteger hit=[self noteAt:p];
     if(hit>=0){[_notes removeObjectAtIndex:(NSUInteger)hit];_selectedIndex=-1;if(_selectionChanged)_selectionChanged();[self setNeedsDisplay:YES];}
 }
+- (BOOL)acceptsFirstResponder { return YES; }
+- (void)copySelectedNote {
+    if(_selectedIndex<0 || _selectedIndex>=(NSInteger)_notes.count)return;
+    _noteClipboard=[_notes[(NSUInteger)_selectedIndex] mutableCopy];
+}
+- (void)pasteNote {
+    if(!_noteClipboard)return;
+    NSMutableDictionary *note=[_noteClipboard mutableCopy];
+    double start=std::min(_lengthBeats-[self grid],
+        std::max(0.0,snapBeat([note[@"start"] doubleValue]+[self grid],[self grid])));
+    note[@"start"]=@(start);
+    note[@"length"]=@(std::max([self grid],std::min(_lengthBeats-start,[note[@"length"] doubleValue])));
+    [_notes addObject:note];_selectedIndex=(NSInteger)_notes.count-1;
+    if(_selectionChanged)_selectionChanged();
+    [self setNeedsDisplay:YES];
+}
 - (void)keyDown:(NSEvent *)event {
+    NSString *chars=event.charactersIgnoringModifiers.lowercaseString;
+    if((event.modifierFlags&NSEventModifierFlagCommand) && [chars isEqualToString:@"c"]) {[self copySelectedNote];return;}
+    if((event.modifierFlags&NSEventModifierFlagCommand) && [chars isEqualToString:@"v"]) {[self pasteNote];return;}
     if(event.keyCode==51 || event.keyCode==117)[self deleteSelected];
     else [super keyDown:event];
 }
@@ -1852,7 +1872,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.77    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.78    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
