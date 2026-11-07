@@ -732,7 +732,7 @@ public:
             entry.samplerEnd=graphParamValue(n,SamplerEnd);
             entry.samplerReverse=graphParamValue(n,SamplerReverse)>=.5f;
             entry.samplerVelocity=graphParamValue(n,SamplerVelocity);
-            entry.samplerXfade=graphParamValue(n,SamplerXfade);
+            entry.samplerXfade=graphParamValue(n,SamplerXfade)*.001f;
             entry.audioClipGain=graphParamValue(n,AudioClipGain);
             entry.audioClipLoop=graphParamValue(n,AudioClipLoop)>=.5f;
             entry.audioClipStart=graphParamValue(n,AudioClipStart);
@@ -740,7 +740,7 @@ public:
             entry.audioClipFade=graphParamValue(n,AudioClipFade);
                 entry.audioClipPitch=graphParamValue(n,AudioClipPitch);
                 entry.audioClipReverse=graphParamValue(n,AudioClipReverse)>0.5f;
-                entry.audioClipXfade=graphParamValue(n,AudioClipXfade);
+                entry.audioClipXfade=graphParamValue(n,AudioClipXfade)*.001f;
             entry.quantizeRoot=int(graphParamValue(n,QuantizeRoot));
             entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
             entry.quantizeMode=int(graphParamValue(n,QuantizeMode));

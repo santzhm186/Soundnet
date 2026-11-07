@@ -160,7 +160,7 @@ int main() {
         engine.midi(0x90,60,100);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
-        assert(rms(left,0,24000)>.02);
+        assert(rms(left,0,24000)>.15); // crossfade is milliseconds, not seconds
         assert(rms(left,36000,48000)>.02); // loop survives past the 50 ms sample
         for(float value:left)assert(std::isfinite(value));
         engine.midi(0x80,60,0);
@@ -244,7 +244,7 @@ int main() {
         assert(engine.setGraph(graph));
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
-        assert(rms(left,2400,20000)>.02);
+        assert(rms(left,2400,20000)>.3); // 20 ms crossfade must not swallow a 100 ms loop
         for(float sample:left)assert(std::isfinite(sample));
         assert(validGraphParam(AudioClipNode,AudioClipXfade));
         graph.nodes[1].parameters[TriggerPulse]=1;
