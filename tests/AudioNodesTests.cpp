@@ -437,6 +437,26 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
+    // MidiOut can force a channel while channel 0 follows the input.
+    {
+        struct Sent {uint8_t status,a,b;};
+        std::vector<Sent> sent;
+        GraphSpec graph;
+        add(graph,1,MidiNode);add(graph,2,MidiOutNode,{{MidiOutChannel,5}});
+        connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
+        engine.midi(0x93,60,100);
+        std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool forced=false;for(const auto& e:sent)if(e.status==0x94&&e.a==60)forced=true;
+        assert(forced);
+        graph.nodes[1].parameters[MidiOutChannel]=0;assert(engine.setGraph(graph));sent.clear();
+        engine.midi(0x93,62,100);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool follows=false;for(const auto& e:sent)if(e.status==0x93&&e.a==62)follows=true;
+        assert(follows);
+        assert(validGraphParam(MidiOutNode,MidiOutChannel));
+        puts("MIDI output can force a channel");
+    }
     // Transpose shifts note-ons and their matching note-offs.
     {
         struct Sent {uint8_t status,a,b;};

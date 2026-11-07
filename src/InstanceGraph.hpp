@@ -260,6 +260,7 @@ class InstanceGraph {
         int metronomeBeats=4;
         int transposeSemitones=0;
         float echoTime=.25f,echoFeedback=.5f;
+        int midiOutChannel=0;
         int echoRepeats=3,echoPitch=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
@@ -690,6 +691,7 @@ public:
             entry.echoRepeats=int(graphParamValue(n,EchoRepeats));
             entry.echoFeedback=graphParamValue(n,EchoFeedback);
             entry.echoPitch=int(graphParamValue(n,EchoPitch));
+            entry.midiOutChannel=int(graphParamValue(n,MidiOutChannel));
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -1007,7 +1009,10 @@ public:
                 }
                 auto deliver=[&](Event e) {
                     if(type==MidiOutNode) {
-                        if(output)output(outputContext,offset+e.frame,e.status,e.a,e.b);
+                        uint8_t status=e.status;
+                        if(entry.midiOutChannel>0 && (status&0xf0)>=0x80 && (status&0xf0)<=0xe0)
+                            status=uint8_t((status&0xf0)|((entry.midiOutChannel-1)&15));
+                        if(output)output(outputContext,offset+e.frame,status,e.a,e.b);
                     } else node.engine->midi(e.status,e.a,e.b);
                 };
                 auto renderSpan=[&](int begin,int end) {

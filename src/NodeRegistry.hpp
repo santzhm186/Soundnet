@@ -50,6 +50,7 @@ inline constexpr int MetronomeBPM=1230, MetronomeLevel=1231, MetronomeAccent=123
 inline constexpr int TransposeSemitones=1240;
 inline constexpr int EchoTime=1250, EchoRepeats=1251, EchoFeedback=1252, EchoPitch=1253;
 inline constexpr int GateThreshold=1260, GateAttack=1261, GateRelease=1262, GateRange=1263;
+inline constexpr int MidiOutChannel=1270;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -125,6 +126,7 @@ inline constexpr ParamInfo gateThresholdInfo{"Threshold",-80,0,-40,"dB"};
 inline constexpr ParamInfo gateAttackInfo{"Attack",.001f,1,.005f,"s"};
 inline constexpr ParamInfo gateReleaseInfo{"Release",.01f,2,.15f,"s"};
 inline constexpr ParamInfo gateRangeInfo{"Range",0,1,.8f,""};
+inline constexpr ParamInfo midiOutChannelInfo{"Channel",0,16,0,""};
 
 struct NodeMeta {
     int type;
@@ -273,6 +275,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case GateAttack:return &gateAttackInfo;
         case GateRelease:return &gateReleaseInfo;
         case GateRange:return &gateRangeInfo;
+        case MidiOutChannel:return &midiOutChannelInfo;
         default:return nullptr;
     }
 }
@@ -295,6 +298,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==TransposeNode) return p==TransposeSemitones;
     if(type==EchoNode) return p>=EchoTime && p<=EchoPitch;
     if(type==GateNode) return p>=GateThreshold && p<=GateRange;
+    if(type==MidiOutNode) return p==MidiOutChannel;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -331,6 +335,7 @@ inline std::vector<int> nodeParamList(int type) {
         case TransposeNode:return {TransposeSemitones};
         case EchoNode:return {EchoTime,EchoRepeats,EchoFeedback,EchoPitch};
         case GateNode:return {GateThreshold,GateAttack,GateRelease,GateRange};
+        case MidiOutNode:return {MidiOutChannel};
         default:return {};
     }
 }

@@ -1118,7 +1118,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::DawClockNode){[self label:@"跟随 DAW 的 BPM、走带和定位。独立版可接收外部 MIDI Clock。" y:y];y+=70;}
     if(type==tri::DawOutputNode || type==tri::DawAudioNode){[self label:@"在 DAW 插件中连接对应音频总线。" y:y];y+=50;}
     if(type==tri::HardwareOutputNode){[self label:@"在独立版输出至系统选择的声卡。" y:y];y+=50;}
-    if(type==tri::MidiOutNode){[self label:@"独立版发送至 Soundnet MIDI Out；AU 使用宿主的 MIDI 输出回调。" y:y];y+=60;}
+    if(type==tri::MidiOutNode){[self label:@"独立版发送至 Soundnet MIDI Out；AU 使用宿主的 MIDI 输出回调。通道 0 跟随输入，1–16 强制输出通道。" y:y];y+=75;}
     _inspector.frame=NSMakeRect(0,0,260,std::max(520.,y+20));
 }
 -(void)preset:(id)sender {
@@ -1711,7 +1711,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.34    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.35    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
