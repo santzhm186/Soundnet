@@ -463,6 +463,18 @@ int main() {
         assert(validGraphParam(DelayNode,DelayDivision));
         puts("synced delay accepts musically meaningful divisions");
     }
+    // Comment nodes are inert and do not affect the graph.
+    {
+        GraphSpec graph;
+        add(graph,1,MidiNode);add(graph,2,Osc1Node);add(graph,3,HardwareOutputNode);add(graph,4,CommentNode);
+        connect(graph,1,2);connect(graph,2,3);
+        assert(validGraphParam(CommentNode,0)==false);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,100);
+        std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        float peak=0;for(float v:left)peak=std::max(peak,std::abs(v));assert(peak>0.001f);
+        puts("comment node is inert");
+    }
     // The channel filter only forwards the selected MIDI channel.
     {
         struct Sent {uint8_t status,a,b;};

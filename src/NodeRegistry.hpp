@@ -54,6 +54,7 @@ inline constexpr int MidiOutChannel=1270;
 inline constexpr int OutputWidth=1280;
 inline constexpr int DelaySync=1290, DelayDivision=1291;
 inline constexpr int ChannelFilterNode=45;
+inline constexpr int CommentNode=46;
 inline constexpr int ChannelFilter=1300;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
@@ -181,6 +182,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {EchoNode,"音符回声","处理",true,true},
         {GateNode,"噪声门","处理",true,true},
         {ChannelFilterNode,"通道过滤","处理",true,true},
+        {CommentNode,"注释","注释",true,false},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -208,7 +210,7 @@ inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
         Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,TremoloNode,BitcrusherNode,PhaserNode,
-        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,TransposeNode,EchoNode,GateNode,ChannelFilterNode,
+        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,TransposeNode,EchoNode,GateNode,ChannelFilterNode,CommentNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
     return catalog;
@@ -314,6 +316,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==MidiOutNode) return p==MidiOutChannel;
     if(type==DelayNode) return p==DelaySync || p==DelayDivision || (p>=0 && p<ParamCount && !routeParam(p));
     if(type==ChannelFilterNode) return p==ChannelFilter;
+    if(type==CommentNode) return false;
     if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode)
         return p==OutputWidth || (p>=0 && p<ParamCount && !routeParam(p));
     if(type>=FilterNode) return false;

@@ -164,6 +164,7 @@ class InstanceGraph {
                 channelFilter=std::make_unique<ChannelFilterState>();
                 return;
             }
+            if(type==CommentNode) return;
             if(type==MetronomeNode) {
                 metronome=std::make_unique<MetronomeState>();
                 return;

@@ -1105,6 +1105,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::EchoNode){[self label:@"为输入音符安排多次延迟重复，每次可按 Pitch 移调并按 Feedback 衰减力度。原音立即通过。" y:y];y+=65;}
     if(type==tri::GateNode){[self label:@"低于 Threshold 的音频会被压低；Range 控制关闭时的衰减深度，Attack/Release 控制开合速度。" y:y];y+=65;}
     if(type==tri::ChannelFilterNode){[self label:@"只放行指定 MIDI 通道（1–16）；0 表示全部通道，旁通时不过滤。" y:y];y+=60;}
+    if(type==tri::CommentNode){[self label:@"注释节点不参与音频或 MIDI；用上方名称字段记录说明文字。" y:y];y+=50;}
     if(type==tri::ClipNode || type==tri::ModelNode) {
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=40;
         if(type==tri::ClipNode) {
@@ -1558,7 +1559,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     SNInstanceEditor *editor=_editor;
     editor.menuPoint=[editor world:[self convertPoint:event.locationInWindow fromView:nil]];
     NSMenu *menu=[NSMenu new];
-    for(NSString *group in @[@"输入",@"处理",@"逻辑",@"输出"]) {
+    for(NSString *group in @[@"输入",@"处理",@"逻辑",@"注释",@"输出"]) {
         NSMenuItem *category=[menu addItemWithTitle:group action:nil keyEquivalent:@""];
         category.submenu=[NSMenu new];
         for(NSArray *row in catalog())if([row[2] isEqual:group]) {

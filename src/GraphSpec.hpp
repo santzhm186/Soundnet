@@ -103,7 +103,7 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::st
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
         if(!n.id || !index.emplace(n.id,i).second)return graphFailure(why,"节点 ID 必须非零且唯一。");
-        if(n.type<1 || n.type>ChannelFilterNode || n.type==Osc2Node || n.type==Osc3Node)return graphFailure(why,"节点类型无效。");
+        if(n.type<1 || n.type>CommentNode || n.type==Osc2Node || n.type==Osc3Node)return graphFailure(why,"节点类型无效。");
         for(auto [p,v]:n.parameters) {
             if(!validGraphParam(n.type,p))return graphFailure(why,"节点参数不属于该节点类型。");
             const auto& info=graphParamInfo(p);
