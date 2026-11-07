@@ -448,7 +448,21 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         value<info.min || value>info.max) { [self message:@"参数超出范围。"];return; }
     NSDictionary *previous=copyJSON(_document);
     node[@"parameters"][[@(p) stringValue]]=@(value);
+    NSSlider *slider=[_inspector viewWithTag:p+100000];
+    if([slider isKindOfClass:[NSSlider class]])slider.doubleValue=value;
     [self commit:previous];[self.window makeFirstResponder:_canvas];
+}
+-(void)sliderChanged:(NSSlider *)slider {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    int p=(int)slider.tag-100000;const auto& info=tri::graphParamInfo(p);
+    double value=slider.doubleValue;
+    if(info.max-info.min<=12)value=std::round(value);
+    if(value<info.min||value>info.max)return;
+    NSTextField *field=[_inspector viewWithTag:p];
+    if([field isKindOfClass:[NSTextField class]])field.stringValue=[NSString stringWithFormat:@"%.3g",value];
+    NSDictionary *previous=copyJSON(_document);
+    node[@"parameters"][[@(p) stringValue]]=@(value);
+    [self commit:previous];
 }
 -(void)trigger:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
@@ -608,10 +622,17 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
     else for(int p:controls(type)) {
         [self label:parameterName(p) y:y];
+        const auto& info=tri::graphParamInfo(p);
+        id val=node[@"parameters"][[@(p) stringValue]] ?: @(info.def);
         NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(142,y,96,25)];
-        id val=node[@"parameters"][[@(p) stringValue]] ?: @(tri::graphParamInfo(p).def);
         field.stringValue=[val description];field.tag=p;field.target=self;field.action=@selector(changed:);
-        [_inspector addSubview:field];y+=48;
+        [_inspector addSubview:field];
+        if(info.max-info.min<=20000) {
+            NSSlider *slider=[NSSlider sliderWithValue:[val doubleValue] minValue:info.min maxValue:info.max target:self action:@selector(sliderChanged:)];
+            slider.frame=NSMakeRect(12,y+27,225,18);slider.tag=p+100000;slider.continuous=NO;
+            [_inspector addSubview:slider];
+            y+=58;
+        } else y+=48;
     }
     if(type==tri::StartNode || type==tri::StopNode){
         [self button:@"发送触发信号" frame:NSMakeRect(12,y,225,30) action:@selector(trigger:) parent:_inspector];y+=44;
@@ -1152,7 +1173,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.11    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.12    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

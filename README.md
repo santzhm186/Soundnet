@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.11**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.12**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,7 +8,7 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.11 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.12 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
@@ -63,6 +63,7 @@ flowchart LR
 - 工具条「吸附」开启 20 点网格，拖动节点时自动对齐。「查找」可按名称或编号定位节点。
 - 拖空白处平移，滚轮移动画布，Command + 滚轮缩放。「适配」显示整张图。
 - 「撤销」「重做」支持节点、参数、连线和素材编辑，保留最近 64 步。
+- 数值参数在右侧提供滑块和精确输入框；整数参数按整数取值。
 - 「导出」把当前图离线渲染为 1–120 秒立体声 WAV。开始触发器会自动触发一次；只有 DAW 音频输出的图会自动改走硬件输出路径。没有开始触发器的图导出为静音；采样器还需要 Note 输入才能发声；音频片段需要开始触发器启动。
 - 「文件 → 导出 MIDI…」把图中的 MIDI 输出节点录成标准 MIDI 文件，方便继续在 DAW 或乐器中编辑。
 - 「停音」停止当前播放与音符。独立版也可使用 Command + .。
@@ -217,9 +218,8 @@ auval -strict -v aumu Tern Trny -oop
 | --- | --- |
 | `src/GraphSpec.hpp` | 实例、端口类型、连接与依赖验证 |
 | `src/InstanceGraph.hpp` | 实例运行时、执行计划、音频与触发调度 |
-| `src/NodeRegistry.hpp` | 节点标题、分类、参数表与菜单顺序 |
+| `src/NodeRegistry.hpp` | 节点 ID、标题、分类、参数元数据与菜单顺序 |
 | `src/DspNodes.hpp` | 滤波器、混响、噪声、压缩器、限幅器与合唱 DSP |
-| `src/NodeRegistry.hpp` | 节点 ID、菜单、参数元数据与音阶量化 |
 | `src/AudioSample.hpp` | 内嵌采样数据与音高/时长描述 |
 | `src/AudioFile.hpp` | WAV/AIFF 解码与采样导入限制 |
 | `src/OfflineRender.hpp` | 无宿主的图渲染与 MIDI 捕获、导出输出重定向 |
