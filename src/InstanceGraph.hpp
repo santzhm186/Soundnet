@@ -261,7 +261,7 @@ class InstanceGraph {
         float samplerRoot=60,samplerGain=.8f,samplerAttack=.005f,samplerRelease=.12f;
         float samplerStart=0,samplerEnd=1,samplerVelocity=1;
         bool samplerLoop=false,samplerReverse=false;
-        float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f,audioClipPitch=0;
+        float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f,audioClipPitch=0,audioClipXfade=.005f;
         bool audioClipLoop=false,audioClipReverse=false;
         int quantizeRoot=0,quantizeScale=0,quantizeMode=0;
         float randomChance=.5f;
@@ -498,6 +498,7 @@ class InstanceGraph {
         if(state.position<double(startFrame) || state.position>=double(endFrame))
             state.position=reverse?double(endFrame)-1.0:double(startFrame);
         const bool loop=entry.audioClipLoop && endFrame>startFrame+1;
+        const double xfade=loop ? std::min(double(endFrame-startFrame)*.5,double(entry.audioClipXfade)*rate) : 0.0;
         const float fadeStep=entry.audioClipFade>0 ? 1.f/float(entry.audioClipFade*rate) : 1.f;
         for(int i=first;i<frames && state.playing;++i) {
             if(direction>0 && state.position>=double(endFrame)) {
@@ -524,7 +525,14 @@ class InstanceGraph {
                 const float br=sample->samples[i1*size_t(channels)+1];
                 right=ar+(br-ar)*fraction;
             }
-            const float amp=state.envelope*entry.audioClipGain;
+            float loopGain=1.f;
+            if(xfade>0.0) {
+                const double sinceStart=direction>0 ? state.position-double(startFrame) : double(endFrame)-state.position;
+                const double remaining=direction>0 ? double(endFrame)-state.position : state.position-double(startFrame);
+                if(sinceStart<xfade)loopGain*=float(std::max(0.0,sinceStart)/xfade);
+                if(remaining<xfade)loopGain*=float(std::max(0.0,remaining)/xfade);
+            }
+            const float amp=state.envelope*loopGain*entry.audioClipGain;
             node.left[i]+=left*amp;node.right[i]+=right*amp;
             if(state.stopping) {
                 state.envelope-=fadeStep;
@@ -709,6 +717,7 @@ public:
             entry.audioClipFade=graphParamValue(n,AudioClipFade);
                 entry.audioClipPitch=graphParamValue(n,AudioClipPitch);
                 entry.audioClipReverse=graphParamValue(n,AudioClipReverse)>0.5f;
+                entry.audioClipXfade=graphParamValue(n,AudioClipXfade);
             entry.quantizeRoot=int(graphParamValue(n,QuantizeRoot));
             entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
             entry.quantizeMode=int(graphParamValue(n,QuantizeMode));

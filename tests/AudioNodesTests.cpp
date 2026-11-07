@@ -233,7 +233,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,StartNode,{{TriggerPulse,0}});
         add(graph,2,StopNode,{{TriggerPulse,0}});
-        size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+        size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
         graph.nodes[clip].sample=sample;
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,3,0);connect(graph,2,3,0);connect(graph,3,4);
@@ -243,6 +243,8 @@ int main() {
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,2400,20000)>.02);
+        for(float sample:left)assert(std::isfinite(sample));
+        assert(validGraphParam(AudioClipNode,AudioClipXfade));
         graph.nodes[1].parameters[TriggerPulse]=1;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -647,7 +649,7 @@ int main() {
             add(graph,2,RandomNode,{{RandomChance,chance}});
             auto sample=std::make_shared<AudioSample>();
             sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.5f);
-            size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+            size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
             graph.nodes[clip].sample=sample;
             add(graph,4,OutputNode,{{Master,1}});
             connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
