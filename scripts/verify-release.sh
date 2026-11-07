@@ -6,6 +6,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-"$root/build/verify-release"}
 mkdir -p "$out"
 echo "== Soundnet release verification in $out"
+echo "== version consistency"
+"$root/scripts/check-version.sh"
 echo "== engine and editor tests"
 "$root/scripts/test-all.sh" "$out/tests"
 echo "== app + AU build"
