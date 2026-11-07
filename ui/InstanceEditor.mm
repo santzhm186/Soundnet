@@ -18,6 +18,11 @@ NSArray *catalog() {
     return rows;
 }
 NSString *title(int type) { return @(tri::nodeTitle(type)); }
+static NSString *nodeLabel(NSDictionary *node) {
+    NSString *name=node[@"name"];
+    if([name isKindOfClass:NSString.class] && name.length)return name;
+    return title([node[@"type"] intValue]);
+}
 NSArray<NSString *> *voiceNames() { return @[@"高声部", @"中声部", @"低声部"]; }
 struct VoiceControls { int lower,upper,texture; };
 constexpr VoiceControls voiceControls[]={
@@ -638,7 +643,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSDictionary *found=nil;
     for(NSDictionary *node in _document[@"nodes"]) {
         int type=[node[@"type"] intValue];
-        NSString *labelText=[NSString stringWithFormat:@"%@ %@",title(type),node[@"id"]].lowercaseString;
+        NSString *labelText=[[NSString stringWithFormat:@"%@ %@",nodeLabel(node),node[@"id"]] lowercaseString];
         if([[node[@"id"] stringValue] isEqualToString:needle] || [labelText containsString:needle]){found=node;break;}
     }
     if(!found){[self message:@"没有找到匹配的节点。"];return;}
@@ -960,10 +965,15 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSMutableDictionary *node=[self node:_selected];
     if(!node){[self label:@"右键画布插入节点。拖动输出端口接到输入端口。" y:12];return;}
     int type=[node[@"type"] intValue];
-    [self label:[NSString stringWithFormat:@"%@  #%llu",title(type),_selected] y:12];
-    [self button:@"复制节点" frame:NSMakeRect(12,54,105,28) action:@selector(duplicate:) parent:_inspector];
-    [self button:@"删除节点" frame:NSMakeRect(132,54,105,28) action:@selector(remove:) parent:_inspector];
-    double y=96;
+    [self label:[NSString stringWithFormat:@"%@  #%llu",nodeLabel(node),_selected] y:12];
+    NSTextField *nameField=[[NSTextField alloc]initWithFrame:NSMakeRect(12,32,225,24)];
+    nameField.stringValue=node[@"name"] ?: @"";nameField.placeholderString=@"自定义名称（可选）";
+    nameField.tag=990001;nameField.target=self;nameField.action=@selector(nameChanged:);
+    [nameField setAccessibilityLabel:@"节点名称"];
+    [_inspector addSubview:nameField];
+    [self button:@"复制节点" frame:NSMakeRect(12,58,105,28) action:@selector(duplicate:) parent:_inspector];
+    [self button:@"删除节点" frame:NSMakeRect(132,58,105,28) action:@selector(remove:) parent:_inspector];
+    double y=100;
     const tri::NodeMeta *meta=tri::nodeMeta(type);
     if(meta && meta->bypassable) {
         NSButton *bypass=[NSButton checkboxWithTitle:@"旁通此节点（保留连线）" target:self action:@selector(bypassChanged:)];
@@ -1386,7 +1396,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         [[NSColor colorWithWhite:bypassed?.13:.18 alpha:1]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
         [[editor isSelected:[node[@"id"] unsignedLongLongValue]]?NSColor.whiteColor:[NSColor colorWithWhite:.4 alpha:1] setStroke];
         [[NSBezierPath bezierPathWithRect:r]stroke];
-        drawText([NSString stringWithFormat:@"%@ #%@",title(type),node[@"id"]],NSMakeRect(r.origin.x+9,r.origin.y+8,160,28),NSColor.whiteColor);
+        drawText([NSString stringWithFormat:@"%@ #%@",nodeLabel(node),node[@"id"]],NSMakeRect(r.origin.x+9,r.origin.y+8,160,28),NSColor.whiteColor);
         if(bypassed)drawText(@"旁通",NSMakeRect(NSMaxX(r)-46,r.origin.y+8,40,20),NSColor.systemOrangeColor,10);
         auto inputs=tri::inputTypes(type);
         for(int p=0;p<(int)inputs.size();++p) {
@@ -1613,7 +1623,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.25    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.26    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
