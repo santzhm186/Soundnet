@@ -273,6 +273,7 @@ class InstanceGraph {
         int channelFilter=0;
         float outputWidth=1;
         bool delaySync=false;int delayDivision=1;
+        bool tremoloSync=false;int tremoloDivision=0;
         int echoRepeats=3,echoPitch=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
@@ -725,6 +726,8 @@ public:
             entry.channelFilter=int(graphParamValue(n,ChannelFilter));
             entry.outputWidth=graphParamValue(n,OutputWidth);
             entry.delaySync=graphParamValue(n,DelaySync)!=0;
+            entry.tremoloSync=graphParamValue(n,TremoloSync)!=0;
+            entry.tremoloDivision=int(graphParamValue(n,TremoloDivision));
             entry.delayDivision=int(graphParamValue(n,DelayDivision));
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
@@ -945,6 +948,11 @@ public:
                         if(side) for(int i=0;i<n;++i){node.sidechainL[i]=side->left[i];node.sidechainR[i]=side->right[i];}
                         node.processor->setSidechain(side?node.sidechainL.data():nullptr,
                                                      side?node.sidechainR.data():nullptr,n);
+                    }
+                    if(type==TremoloNode && node.processor && entry.tremoloSync) {
+                        static const double divisions[]={1,2,4,1.5};
+                        double hz=std::clamp(bpm/60.0*divisions[std::clamp(entry.tremoloDivision,0,3)],0.1,20.0);
+                        node.processor->set(TremoloRate,float(hz));
                     }
                     if(entry.bypass) {
                         for(int i=0;i<n;++i){node.left[i]=node.inputL[i];node.right[i]=node.inputR[i];}

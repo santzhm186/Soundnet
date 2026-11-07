@@ -382,6 +382,12 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double dry=rms(left,4800,40000);
         assert(dry>wet*1.4);
+        assert(validGraphParam(TremoloNode,TremoloSync));
+        assert(validGraphParam(TremoloNode,TremoloDivision));
+        graph.nodes[2].parameters[TremoloSync]=1;
+        graph.nodes[2].parameters[TremoloDivision]=1;
+        assert(engine.setGraph(graph));
+        for(int b=0;b<8;++b)engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         puts("tremolo modulates level and bypass restores the dry signal");
     }
     // Bit crusher holds and quantizes samples; bypass restores the dry signal.

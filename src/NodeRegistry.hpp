@@ -42,7 +42,8 @@ inline constexpr int CompRelease=1153, CompMakeup=1154, CompMix=1155;
 inline constexpr int LimiterThreshold=1160, LimiterRelease=1161, LimiterCeiling=1162, LimiterGain=1163;
 inline constexpr int ChorusRate=1170, ChorusDepth=1171, ChorusMix=1172, ChorusDelay=1173;
 inline constexpr int QuantizeRoot=1180, QuantizeScale=1181, QuantizeMode=1182;
-inline constexpr int TremoloRate=1190, TremoloDepth=1191, TremoloMix=1192, TremoloStereo=1193;
+inline constexpr int TremoloRate=1190, TremoloDepth=1191, TremoloMix=1192, TremoloStereo=1193,
+    TremoloSync=1194, TremoloDivision=1195;
 inline constexpr int CrushBits=1200, CrushRate=1201, CrushMix=1202;
 inline constexpr int PhaserRate=1210, PhaserDepth=1211, PhaserFeedback=1212, PhaserMix=1213;
 inline constexpr int RandomChance=1220;
@@ -110,6 +111,8 @@ inline constexpr ParamInfo tremoloRateInfo {"Rate",.1f,20,4,"Hz"};
 inline constexpr ParamInfo tremoloDepthInfo{"Depth",0,1,.5f,""};
 inline constexpr ParamInfo tremoloMixInfo  {"Mix",0,1,1,""};
 inline constexpr ParamInfo tremoloStereoInfo{"Stereo",0,1,0,""};
+inline constexpr ParamInfo tremoloSyncInfo{"Sync",0,1,0,""};
+inline constexpr ParamInfo tremoloDivisionInfo{"Division",0,3,0,""};
 inline constexpr ParamInfo crushBitsInfo   {"Bits",1,16,8,"bit"};
 inline constexpr ParamInfo crushRateInfo   {"Rate",500,48000,8000,"Hz"};
 inline constexpr ParamInfo crushMixInfo    {"Mix",0,1,1,""};
@@ -265,6 +268,8 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case TremoloDepth:return &tremoloDepthInfo;
         case TremoloMix:return &tremoloMixInfo;
         case TremoloStereo:return &tremoloStereoInfo;
+        case TremoloSync:return &tremoloSyncInfo;
+        case TremoloDivision:return &tremoloDivisionInfo;
         case CrushBits:return &crushBitsInfo;
         case CrushRate:return &crushRateInfo;
         case CrushMix:return &crushMixInfo;
@@ -305,7 +310,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==LimiterNode) return p>=LimiterThreshold && p<=LimiterGain;
     if(type==ChorusNode) return p>=ChorusRate && p<=ChorusDelay;
     if(type==QuantizeNode) return p>=QuantizeRoot && p<=QuantizeMode;
-    if(type==TremoloNode) return p>=TremoloRate && p<=TremoloStereo;
+    if(type==TremoloNode) return p>=TremoloRate && p<=TremoloDivision;
     if(type==BitcrusherNode) return p>=CrushBits && p<=CrushMix;
     if(type==PhaserNode) return p>=PhaserRate && p<=PhaserMix;
     if(type==RandomNode) return p==RandomChance;
@@ -346,7 +351,7 @@ inline std::vector<int> nodeParamList(int type) {
         case LimiterNode:return {LimiterThreshold,LimiterRelease,LimiterCeiling,LimiterGain};
         case ChorusNode:return {ChorusRate,ChorusDepth,ChorusMix,ChorusDelay};
         case QuantizeNode:return {QuantizeRoot,QuantizeScale,QuantizeMode};
-        case TremoloNode:return {TremoloRate,TremoloDepth,TremoloMix,TremoloStereo};
+        case TremoloNode:return {TremoloRate,TremoloDepth,TremoloMix,TremoloStereo,TremoloSync,TremoloDivision};
         case BitcrusherNode:return {CrushBits,CrushRate,CrushMix};
         case PhaserNode:return {PhaserRate,PhaserDepth,PhaserFeedback,PhaserMix};
         case RandomNode:return {RandomChance};
