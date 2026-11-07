@@ -44,7 +44,13 @@ for example in "$root"/examples/*.json; do
 done
 "$app/Contents/MacOS/Soundnet" --export-midi "$root/examples/clip-to-midi.json" "$out/clip-to-midi.mid" 2 >/dev/null
 test -s "$out/clip-to-midi.mid"
-echo "== $count example graphs and MIDI export passed"
+"$app/Contents/MacOS/Soundnet" --export "$root/examples/audio-clip-compressor.json" "$out/format-44k1-24.wav" 1 44100 24 >/dev/null
+test -s "$out/format-44k1-24.wav"
+mkdir -p "$out/stems"
+"$app/Contents/MacOS/Soundnet" --export-stems "$root/examples/audio-clip-compressor.json" "$out/stems" 1 48000 24 >/dev/null
+stem_count=$(find "$out/stems" -name 'stem-*.wav' | wc -l | tr -d ' ')
+test "$stem_count" -ge 1
+echo "== $count example graphs, MIDI/stem/format exports passed"
 if command -v auval >/dev/null 2>&1; then
     echo "== installed Audio Unit validation (may target an older install)"
     auval -v aumu Tern Trny 2>&1 | tail -1 || true
