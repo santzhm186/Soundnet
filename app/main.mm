@@ -229,7 +229,7 @@
 }
 @end
 
-static int runExport(const char *input,const char *output,double seconds) {
+static int runExport(const char *input,const char *output,double seconds,int rate,int bits) {
     @autoreleasepool {
         NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
         if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
@@ -245,14 +245,14 @@ static int runExport(const char *input,const char *output,double seconds) {
             return 1;
         }
         tri::offline::Result rendered;std::string failure;
-        if(!tri::offline::render(graph,seconds,48000,rendered,failure)) {
+        if(!tri::offline::render(graph,seconds,double(rate),rendered,failure)) {
             std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
         }
-        if(!tri::wav::write(output,rendered.left,rendered.right,rendered.rate,failure)) {
+        if(!tri::wav::write(output,rendered.left,rendered.right,rendered.rate,failure,bits)) {
             std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
         }
         const double peak=rendered.peak>0 ? 20*std::log10(rendered.peak) : -120;
-        std::printf("PASS: exported %.1f s to %s (peak %.1f dBFS)\n",seconds,output,peak);
+        std::printf("PASS: exported %.1f s at %.1f kHz / %d-bit to %s (peak %.1f dBFS)\n",seconds,rate/1000.,bits,output,peak);
     }
     return 0;
 }
@@ -288,7 +288,7 @@ static int runExportMidi(const char *input,const char *output,double seconds) {
 }
 
 
-static int runExportStems(const char *input,const char *directory,double seconds) {
+static int runExportStems(const char *input,const char *directory,double seconds,int rate,int bits) {
     @autoreleasepool {
         NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
         if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
@@ -304,7 +304,7 @@ static int runExportStems(const char *input,const char *directory,double seconds
             return 1;
         }
         std::vector<tri::offline::Stem> stems;std::string failure;
-        if(!tri::offline::renderStems(graph,seconds,48000,stems,failure)) {
+        if(!tri::offline::renderStems(graph,seconds,double(rate),stems,failure)) {
             std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
         }
         NSString *folder=[NSString stringWithUTF8String:directory];
@@ -316,7 +316,7 @@ static int runExportStems(const char *input,const char *directory,double seconds
         for(const auto& stem:stems) {
             NSString *name=[NSString stringWithFormat:@"stem-%llu.wav",(unsigned long long)stem.id];
             NSString *path=[folder stringByAppendingPathComponent:name];
-            if(!tri::wav::write(path.UTF8String,stem.result.left,stem.result.right,stem.result.rate,failure)) {
+            if(!tri::wav::write(path.UTF8String,stem.result.left,stem.result.right,stem.result.rate,failure,bits)) {
                 std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
             }
             const double peak=stem.result.peak>0 ? 20*std::log10(stem.result.peak) : -120;
@@ -358,20 +358,24 @@ int main(int argc, const char **argv) {
             return 0;
         }
         if (argc==3 && strcmp(argv[1],"--validate")==0) return runValidate(argv[2]);
-        if ((argc==4 || argc==5) && strcmp(argv[1],"--export")==0) {
-            const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
-            return runExport(argv[2],argv[3],seconds);
+        if (argc>=4 && argc<=7 && strcmp(argv[1],"--export")==0) {
+            const double seconds=argc>=5 ? std::atof(argv[4]) : 8.0;
+            const int rate=argc>=6 ? std::atoi(argv[5]) : 48000;
+            const int bits=argc>=7 ? std::atoi(argv[6]) : 16;
+            return runExport(argv[2],argv[3],seconds,rate,bits);
         }
         if ((argc==4 || argc==5) && strcmp(argv[1],"--export-midi")==0) {
             const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
             return runExportMidi(argv[2],argv[3],seconds);
         }
-        if ((argc==4 || argc==5) && strcmp(argv[1],"--export-stems")==0) {
-            const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
-            return runExportStems(argv[2],argv[3],seconds);
+        if (argc>=4 && argc<=7 && strcmp(argv[1],"--export-stems")==0) {
+            const double seconds=argc>=5 ? std::atof(argv[4]) : 8.0;
+            const int rate=argc>=6 ? std::atoi(argv[5]) : 48000;
+            const int bits=argc>=7 ? std::atoi(argv[6]) : 16;
+            return runExportStems(argv[2],argv[3],seconds,rate,bits);
         }
         if (argc==2 && strcmp(argv[1],"--help")==0) {
-            std::printf("Usage: Soundnet [--self-test | --version | --validate workflow.json | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds]]\n");
+            std::printf("Usage: Soundnet [--self-test | --version | --validate workflow.json | --export workflow.json output.wav [seconds] [rate] [bits] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds] [rate] [bits]]\n");
             return 0;
         }
         NSApplication *app = [NSApplication sharedApplication];

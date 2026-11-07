@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.70**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.71**。
 
 **输入 → 节点处理 → 输出**
 
@@ -200,11 +200,13 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 
 ```sh
 build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8
+build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8 44100 24
+build/release/Soundnet.app/Contents/MacOS/Soundnet --export-stems examples/three-loops-then-wait.json stems 8 48000 24
 build/release/Soundnet.app/Contents/MacOS/Soundnet --export-midi examples/three-loops-then-wait.json out.mid 8
 build/release/Soundnet.app/Contents/MacOS/Soundnet --self-test
 ```
 
-`--export` 和 `--export-midi` 与界面导出使用同一套离线渲染逻辑，适合脚本化验证或批量生成音频与 MIDI。
+`--export` 和 `--export-stems` 支持可选的采样率（8000–192000）与位深（16/24），与界面导出使用同一套离线渲染逻辑；`--export-midi` 适合脚本化验证或批量生成音频与 MIDI。
 
 ## 验证与源码
 

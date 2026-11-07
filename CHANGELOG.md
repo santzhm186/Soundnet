@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.71
+- 命令行 `--export` / `--export-stems` 支持可选采样率（8–192 kHz）与位深（16/24）；`--export` 输出包含实际格式信息。
+
 ## 2.70
 - 支持 WAVE_FORMAT_EXTENSIBLE：校验扩展 GUID，并正确读取 24 位有效数据/32 位容器的 PCM（左对齐）以及 32 位浮点 WAV。
 
