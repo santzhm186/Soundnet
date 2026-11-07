@@ -779,6 +779,58 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         });
     }];
 }
+
+-(void)exportStems:(id)sender {
+    NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=YES;panel.canChooseFiles=NO;
+    panel.canCreateDirectories=YES;panel.prompt=@"选择文件夹";panel.message=@"选择分轨导出文件夹";
+    NSView *accessory=[[NSView alloc]initWithFrame:NSMakeRect(0,0,300,88)];
+    NSTextField *label=[NSTextField labelWithString:@"导出时长（秒，1–120）"];
+    label.frame=NSMakeRect(12,60,170,20);[accessory addSubview:label];
+    NSTextField *secondsField=[[NSTextField alloc]initWithFrame:NSMakeRect(190,56,80,26)];
+    secondsField.stringValue=@"8";[accessory addSubview:secondsField];
+    NSTextField *rateLabel=[NSTextField labelWithString:@"采样率"];
+    rateLabel.frame=NSMakeRect(12,30,60,20);[accessory addSubview:rateLabel];
+    NSPopUpButton *ratePopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(76,26,90,26)];
+    [ratePopup addItemsWithTitles:@[@"44.1 kHz",@"48 kHz",@"96 kHz"]];[ratePopup selectItemAtIndex:1];[accessory addSubview:ratePopup];
+    NSTextField *bitsLabel=[NSTextField labelWithString:@"位深"];
+    bitsLabel.frame=NSMakeRect(180,30,40,20);[accessory addSubview:bitsLabel];
+    NSPopUpButton *bitsPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(222,26,70,26)];
+    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
+    panel.accessoryView=accessory;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
+        if(result!=NSModalResponseOK)return;
+        double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
+        const double rates[]={44100,48000,96000};
+        double rate=rates[std::max(0,std::min(2,(int)ratePopup.indexOfSelectedItem))];
+        int bits=bitsPopup.indexOfSelectedItem==1?24:16;
+        NSURL *folder=panel.URL;NSDictionary *document=copyJSON(self.document);
+        [self message:[NSString stringWithFormat:@"正在导出 %.1f 秒分轨…",seconds]];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            tri::GraphSpec graph;NSString *why=nil;
+            if(!triassets::decodeGraph(document,graph,&why)) {
+                dispatch_async(dispatch_get_main_queue(),^{[self message:why ?: @"工作流无效，无法导出。"];});
+                return;
+            }
+            std::vector<tri::offline::Stem> stems;std::string error;
+            if(!tri::offline::renderStems(graph,seconds,rate,stems,error)) {
+                NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                return;
+            }
+            for(const auto& stem:stems) {
+                std::string name="stem-"+std::to_string(stem.id)+".wav";
+                std::string path=std::string(folder.fileSystemRepresentation)+"/"+name;
+                if(!tri::wav::write(path,stem.result.left,stem.result.right,stem.result.rate,error,bits)) {
+                    NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                    dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                    return;
+                }
+            }
+            NSString *text=[NSString stringWithFormat:@"已导出 %lu 条分轨 · %.1f 秒 · %.1f kHz / %d-bit",(unsigned long)stems.size(),seconds,rate/1000.,bits];
+            dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+        });
+    }];
+}
 -(void)save:(id)sender {
     NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.json";
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
@@ -1175,7 +1227,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.18    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.19    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

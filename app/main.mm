@@ -66,6 +66,7 @@
     [file addItem:[NSMenuItem separatorItem]];
     [file addItemWithTitle:@"导出音频…" action:@selector(exportWav:) keyEquivalent:@""];
     [file addItemWithTitle:@"导出 MIDI…" action:@selector(exportMidi:) keyEquivalent:@""];
+    [file addItemWithTitle:@"导出分轨…" action:@selector(exportStems:) keyEquivalent:@""];
     [file addItem:[NSMenuItem separatorItem]];
     _recordItem = [file addItemWithTitle:@"录制输出…" action:@selector(toggleRecording:) keyEquivalent:@""];
     _recordItem.target = self;
@@ -241,6 +242,46 @@ static int runExportMidi(const char *input,const char *output,double seconds) {
     return 0;
 }
 
+
+static int runExportStems(const char *input,const char *directory,double seconds) {
+    @autoreleasepool {
+        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
+        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
+        NSError *error=nil;
+        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+        if(![object isKindOfClass:NSDictionary.class]) {
+            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+            return 1;
+        }
+        tri::GraphSpec graph;NSString *why=nil;
+        if(!triassets::decodeGraph(object,graph,&why)) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
+            return 1;
+        }
+        std::vector<tri::offline::Stem> stems;std::string failure;
+        if(!tri::offline::renderStems(graph,seconds,48000,stems,failure)) {
+            std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
+        }
+        NSString *folder=[NSString stringWithUTF8String:directory];
+        if(![[NSFileManager defaultManager] createDirectoryAtPath:folder
+                withIntermediateDirectories:YES attributes:nil error:&error]) {
+            std::fprintf(stderr,"Soundnet: cannot create %s: %s\n",directory,error.localizedDescription.UTF8String ?: "unknown error");
+            return 1;
+        }
+        for(const auto& stem:stems) {
+            NSString *name=[NSString stringWithFormat:@"stem-%llu.wav",(unsigned long long)stem.id];
+            NSString *path=[folder stringByAppendingPathComponent:name];
+            if(!tri::wav::write(path.UTF8String,stem.result.left,stem.result.right,stem.result.rate,failure)) {
+                std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
+            }
+            const double peak=stem.result.peak>0 ? 20*std::log10(stem.result.peak) : -120;
+            std::printf("  %s: %s (peak %.1f dBFS)\n",stem.name.c_str(),name.UTF8String,peak);
+        }
+        std::printf("PASS: exported %zu audio stems over %.1f s to %s\n",stems.size(),seconds,directory);
+    }
+    return 0;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc==2 && strcmp(argv[1],"--self-test")==0) return [TRIHost runOfflineCheck];
@@ -252,8 +293,12 @@ int main(int argc, const char **argv) {
             const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
             return runExportMidi(argv[2],argv[3],seconds);
         }
+        if ((argc==4 || argc==5) && strcmp(argv[1],"--export-stems")==0) {
+            const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
+            return runExportStems(argv[2],argv[3],seconds);
+        }
         if (argc==2 && strcmp(argv[1],"--help")==0) {
-            std::printf("Usage: Soundnet [--self-test | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds]]\n");
+            std::printf("Usage: Soundnet [--self-test | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds]]\n");
             return 0;
         }
         NSApplication *app = [NSApplication sharedApplication];

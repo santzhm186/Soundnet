@@ -18,6 +18,13 @@ struct Result {
     double peak=0;
     double bpm=120;
 };
+struct Stem {
+    InstanceID id=0;
+    int type=0;
+    std::string name;
+    Result result;
+};
+
 struct MidiCapture {
     Result* result=nullptr;
     double rate=48000;
@@ -81,6 +88,43 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
         result.peak=std::max(result.peak,double(std::max(std::fabs(l),std::fabs(r))));
         result.left[i]=std::max(-1.f,std::min(1.f,l));
         result.right[i]=std::max(-1.f,std::min(1.f,r));
+    }
+    return true;
+}
+// Renders each output node separately, muting the others, so a project can be
+// exported as a set of stems for mixing. DAW outputs are treated as hardware
+// outputs for the isolated pass, matching render()'s offline behavior.
+inline bool renderStems(GraphSpec graph,double seconds,double rate,
+        std::vector<Stem>& stems,std::string& why) {
+    stems.clear();
+    std::vector<size_t> outputs;
+    for(size_t i=0;i<graph.nodes.size();++i) {
+        int type=graph.nodes[i].type;
+        if(type==HardwareOutputNode||type==DawOutputNode||type==OutputNode)
+            outputs.push_back(i);
+    }
+    if(outputs.empty()) {why="工作流没有音频输出节点。";return false;}
+    if(outputs.size()>64) {why="音频输出节点过多。";return false;}
+    for(size_t index:outputs) {
+        GraphSpec copy=graph;
+        for(size_t i=0;i<copy.nodes.size();++i) {
+            GraphNode& node=copy.nodes[i];
+            const bool output=node.type==HardwareOutputNode||node.type==DawOutputNode||node.type==OutputNode;
+            if(i==index) {
+                if(node.type==DawOutputNode) node.type=HardwareOutputNode;
+            } else if(output) {
+                node.bypass=true;
+            }
+        }
+        Result result;
+        if(!render(copy,seconds,rate,result,why)) return false;
+        const GraphNode& original=graph.nodes[index];
+        Stem stem;
+        stem.id=original.id;
+        stem.type=original.type;
+        stem.name=std::string(nodeTitle(original.type))+" #"+std::to_string(original.id);
+        stem.result=std::move(result);
+        stems.push_back(std::move(stem));
     }
     return true;
 }

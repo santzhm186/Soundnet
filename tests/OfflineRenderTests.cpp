@@ -110,8 +110,24 @@ int main() {
     assert(std::abs(rateResult.rate-44100)<.1 && rateResult.left.size()==44100);
     puts("44.1 kHz offline rendering is supported");
 
+    GraphSpec stemGraph;
+    GraphNode noise;noise.id=1;noise.type=NoiseNode;noise.parameters[NoiseLevel]=.5f;stemGraph.nodes.push_back(noise);
+    GraphNode outA;outA.id=2;outA.type=HardwareOutputNode;outA.parameters[Master]=1;stemGraph.nodes.push_back(outA);
+    GraphNode noiseB;noiseB.id=3;noiseB.type=NoiseNode;noiseB.parameters[NoiseLevel]=.3f;stemGraph.nodes.push_back(noiseB);
+    GraphNode outB;outB.id=4;outB.type=HardwareOutputNode;outB.parameters[Master]=1;stemGraph.nodes.push_back(outB);
+    edge(stemGraph,1,2);edge(stemGraph,3,4);
+    std::vector<offline::Stem> stems;
+    assert(offline::renderStems(stemGraph,.25,48000,stems,why));
+    assert(stems.size()==2);
+    for(const offline::Stem& stem:stems){assert(stem.result.peak>.01);assert(stem.name.find('#')!=std::string::npos);}
+    GraphSpec noOutput;
+    GraphNode lonely;lonely.id=1;lonely.type=Osc1Node;noOutput.nodes.push_back(lonely);
+    stems.clear();
+    assert(!offline::renderStems(noOutput,.1,48000,stems,why));
+    puts("offline stems isolate each audio output");
+
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
     puts("invalid export durations are rejected");
-    puts("PASS: offline rendering, WAV/multi-track MIDI export, MIDI capture and output redirection.");
+    puts("PASS: offline rendering, stems, WAV/multi-track MIDI export, MIDI capture and output redirection.");
 }
