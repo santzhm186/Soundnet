@@ -57,6 +57,7 @@ inline Signal outputType(int type,int port=0) {
     if(type==MetronomeNode)return Signal::Audio;
     if(type==TransposeNode)return Signal::Notes;
     if(type==EchoNode)return Signal::Notes;
+    if(type==ChannelFilterNode)return Signal::Notes;
     if(type==GateNode)return Signal::Audio;
     if (type==QuantizeNode || noteSource(type)) return Signal::Notes;
     if(type==ClockNode || type==DawClockNode) return Signal::Clock;
@@ -80,6 +81,7 @@ inline std::vector<Signal> inputTypes(int type) {
     if(type==MetronomeNode)return {Signal::Trigger};
     if(type==TransposeNode)return {Signal::Notes};
     if(type==EchoNode)return {Signal::Notes};
+    if(type==ChannelFilterNode)return {Signal::Notes};
     if(type==GateNode)return {Signal::Audio};
     if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node || type==ArrangerNode || type==SamplerNode || type==QuantizeNode) return {Signal::Notes};
     if(type==AudioClipNode)return {Signal::Trigger};
@@ -101,7 +103,7 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::st
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
         if(!n.id || !index.emplace(n.id,i).second)return graphFailure(why,"节点 ID 必须非零且唯一。");
-        if(n.type<1 || n.type>GateNode || n.type==Osc2Node || n.type==Osc3Node)return graphFailure(why,"节点类型无效。");
+        if(n.type<1 || n.type>ChannelFilterNode || n.type==Osc2Node || n.type==Osc3Node)return graphFailure(why,"节点类型无效。");
         for(auto [p,v]:n.parameters) {
             if(!validGraphParam(n.type,p))return graphFailure(why,"节点参数不属于该节点类型。");
             const auto& info=graphParamInfo(p);

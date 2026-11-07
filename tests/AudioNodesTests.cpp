@@ -463,6 +463,27 @@ int main() {
         assert(validGraphParam(DelayNode,DelayDivision));
         puts("synced delay accepts musically meaningful divisions");
     }
+    // The channel filter only forwards the selected MIDI channel.
+    {
+        struct Sent {uint8_t status,a,b;};
+        std::vector<Sent> sent;
+        GraphSpec graph;
+        add(graph,1,MidiNode);add(graph,2,ChannelFilterNode,{{ChannelFilter,4}});add(graph,3,MidiOutNode);
+        connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
+        engine.midi(0x93,60,100);engine.midi(0x94,62,100);
+        std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool passed=false,dropped=true;
+        for(const auto& e:sent){if(e.status==0x93&&e.a==60)passed=true;if(e.status==0x94&&e.a==62)dropped=false;}
+        assert(passed&&dropped);
+        graph.nodes[1].parameters[ChannelFilter]=0;assert(engine.setGraph(graph));sent.clear();
+        engine.midi(0x94,64,100);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool all=false;for(const auto& e:sent)if(e.status==0x94&&e.a==64)all=true;
+        assert(all);
+        assert(validGraphParam(ChannelFilterNode,ChannelFilter));
+        puts("MIDI channel filter forwards only the selected channel");
+    }
     // MidiOut can force a channel while channel 0 follows the input.
     {
         struct Sent {uint8_t status,a,b;};

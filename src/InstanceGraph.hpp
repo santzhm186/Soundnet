@@ -65,6 +65,9 @@ class InstanceGraph {
         bool playing=false,stopping=false,pendingStart=false,bypassed=false;
         int startFrame=0;
     };
+    struct ChannelFilterState {
+        int channel=0;bool bypassed=false;
+    };
     struct QuantizeState {
         std::array<int,2048> mapping{};
         std::array<int,2048> counts{};
@@ -117,6 +120,7 @@ class InstanceGraph {
         std::unique_ptr<SamplerState> sampler;
         std::unique_ptr<AudioClipState> audioClip;
         std::unique_ptr<QuantizeState> quantizer;
+        std::unique_ptr<ChannelFilterState> channelFilter;
         std::unique_ptr<RandomState> random;
         std::unique_ptr<MetronomeState> metronome;
         std::unique_ptr<TransposeState> transpose;
@@ -154,6 +158,10 @@ class InstanceGraph {
             }
             if(type==QuantizeNode) {
                 quantizer=std::make_unique<QuantizeState>();
+                return;
+            }
+            if(type==ChannelFilterNode) {
+                channelFilter=std::make_unique<ChannelFilterState>();
                 return;
             }
             if(type==MetronomeNode) {
@@ -261,6 +269,7 @@ class InstanceGraph {
         int transposeSemitones=0;
         float echoTime=.25f,echoFeedback=.5f;
         int midiOutChannel=0;
+        int channelFilter=0;
         float outputWidth=1;
         bool delaySync=false;int delayDivision=1;
         int echoRepeats=3,echoPitch=0;
@@ -348,6 +357,24 @@ class InstanceGraph {
         }
         return note;
     }
+    static void renderChannelFilter(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
+        (void)source;
+        auto& state=*node.channelFilter;
+        bool force=!input || state.channel!=entry.channelFilter || state.bypassed!=entry.bypass;
+        if(force) {
+            for(int k=0;k<2048;++k)if(node.after[k].velocity)
+                node.emit({0,uint8_t(0x80|(k%16)),uint8_t(k/16),0});
+            state.channel=entry.channelFilter;state.bypassed=entry.bypass;
+        }
+        if(!input)return;
+        for(int j=0;j<input->eventCount;++j) {
+            const auto event=input->events[j];
+            if(entry.bypass || entry.channelFilter==0 || (event.status&15)==entry.channelFilter-1)
+                node.emit(event);
+        }
+        node.controlSize=0;
+    }
+
     static void renderQuantize(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
         auto& state=*node.quantizer;
         const bool bypassed=entry.bypass;
@@ -694,6 +721,7 @@ public:
             entry.echoFeedback=graphParamValue(n,EchoFeedback);
             entry.echoPitch=int(graphParamValue(n,EchoPitch));
             entry.midiOutChannel=int(graphParamValue(n,MidiOutChannel));
+            entry.channelFilter=int(graphParamValue(n,ChannelFilter));
             entry.outputWidth=graphParamValue(n,OutputWidth);
             entry.delaySync=graphParamValue(n,DelaySync)!=0;
             entry.delayDivision=int(graphParamValue(n,DelayDivision));
@@ -939,6 +967,7 @@ public:
                     renderQuantize(entry,node,source,noteInput);
                     continue;
                 }
+                if(type==ChannelFilterNode) {renderChannelFilter(entry,node,source,noteInput);continue;}
                 if(type==TransposeNode) {renderTranspose(entry,node,source,noteInput);continue;}
                 if(type==EchoNode) {renderEcho(entry,node,source,noteInput,samplePosition,rate,n);continue;}
                 if(type==MetronomeNode) {

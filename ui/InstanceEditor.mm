@@ -1104,6 +1104,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::TransposeNode){[self label:@"把输入音符按半音移调，范围外自动夹到 0–127。旁通时保持原音高。" y:y];y+=52;}
     if(type==tri::EchoNode){[self label:@"为输入音符安排多次延迟重复，每次可按 Pitch 移调并按 Feedback 衰减力度。原音立即通过。" y:y];y+=65;}
     if(type==tri::GateNode){[self label:@"低于 Threshold 的音频会被压低；Range 控制关闭时的衰减深度，Attack/Release 控制开合速度。" y:y];y+=65;}
+    if(type==tri::ChannelFilterNode){[self label:@"只放行指定 MIDI 通道（1–16）；0 表示全部通道，旁通时不过滤。" y:y];y+=60;}
     if(type==tri::ClipNode || type==tri::ModelNode) {
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=40;
         if(type==tri::ClipNode) {
