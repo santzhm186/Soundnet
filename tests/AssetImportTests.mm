@@ -64,6 +64,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(samplerExample,samplerExampleGraph,&graphWhy));
     assert(samplerExampleGraph.nodes.size()==5 && samplerExampleGraph.edges.size()==4);
     assert(samplerExampleGraph.nodes[1].sample && samplerExampleGraph.nodes[1].sample->frames()>1000);
+    NSDictionary *clipExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/audio-clip-compressor.json"] options:0 error:nil];
+    tri::GraphSpec clipExampleGraph;
+    assert(triassets::decodeGraph(clipExample,clipExampleGraph,&graphWhy));
+    assert(clipExampleGraph.nodes.size()==5 && clipExampleGraph.edges.size()==4);
+    assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};
     NSData *pcmData=[NSData dataWithBytes:pcm length:sizeof(pcm)];
@@ -79,6 +85,17 @@ int main() { @autoreleasepool {
     NSMutableDictionary *badAsset=[badNode[@"asset"] mutableCopy];
     badAsset[@"channels"]=@3;badNode[@"asset"]=badAsset;badChannels[@"nodes"]=@[badNode];
     assert(!triassets::decodeGraph(badChannels,samplerGraph,&graphWhy));
+    tri::GraphSpec clipGraph;
+    NSDictionary *clipDocument=@{@"version":@3,@"nodes":@[
+        @{@"id":@1,@"type":@(tri::AudioClipNode),@"x":@0,@"y":@0,@"parameters":@{@"1140":@.8},
+          @"asset":@{@"name":@"loop.wav",@"rate":@48000,@"channels":@1,
+                      @"pcm":[pcmData base64EncodedStringWithOptions:0]}},
+        @{@"id":@2,@"type":@(tri::CompressorNode),@"x":@200,@"y":@0,
+          @"parameters":@{@"1150":@-20,@"1151":@8}}],@"edges":@[]};
+    assert(triassets::decodeGraph(clipDocument,clipGraph,&graphWhy));
+    assert(clipGraph.nodes.size()==2 && clipGraph.nodes[0].sample &&
+           clipGraph.nodes[0].sample->frames()==4);
+    puts("audio clip and compressor JSON decode");
     puts("sampler audio JSON decodes and validates");
     {
         NSMutableData *wav=[NSMutableData data];
@@ -98,5 +115,5 @@ int main() { @autoreleasepool {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         puts("audio file import round-trips through a graph asset");
     }
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler asset and real Core ML pitch predictions.");
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor and real Core ML pitch predictions.");
 } }

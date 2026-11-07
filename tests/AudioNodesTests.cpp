@@ -38,6 +38,10 @@ int main() {
         assert(!validGraphParam(NoiseNode,FilterCutoff));
         assert(!validGraphParam(FilterNode,ReverbMix));
         assert(validGraphParam(NoiseNode,NoiseType));
+        assert(validGraphParam(AudioClipNode,AudioClipGain));
+        assert(!validGraphParam(AudioClipNode,CompThreshold));
+        assert(validGraphParam(CompressorNode,CompThreshold));
+        assert(!validGraphParam(CompressorNode,AudioClipGain));
         graph.nodes[0].parameters[FilterCutoff]=1000;
         assert(!graphOrder(graph,order));
         graph.nodes[0].parameters.erase(FilterCutoff);
@@ -168,5 +172,72 @@ int main() {
         assert(l/double(left.size())>.05 && r/double(right.size())<-.05);
         puts("sampler preserves stereo channels");
     }
-    puts("PASS: filter, reverb, noise, sampler, bypass and type-scoped validation.");
+    // An audio clip starts from a trigger, loops, and stops on a stop trigger.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.4f);
+        GraphSpec graph;
+        add(graph,1,StartNode,{{TriggerPulse,0}});
+        add(graph,2,StopNode,{{TriggerPulse,0}});
+        size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+        graph.nodes[clip].sample=sample;
+        add(graph,4,OutputNode,{{Master,1}});
+        connect(graph,1,3,0);connect(graph,2,3,0);connect(graph,3,4);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        graph.nodes[0].parameters[TriggerPulse]=1;
+        assert(engine.setGraph(graph));
+        std::vector<float> left(24000),right(24000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,2400,20000)>.02);
+        graph.nodes[1].parameters[TriggerPulse]=1;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,12000,24000)<.005);
+        puts("audio clip starts, loops and stops");
+    }
+    // A one-shot audio clip stops at its end, and bypass is silent.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.assign(2400,.4f);
+        GraphSpec graph;
+        add(graph,1,StartNode,{{TriggerPulse,0}});
+        size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+        graph.nodes[clip].sample=sample;
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,1,2,0);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        graph.nodes[0].parameters[TriggerPulse]=1;
+        assert(engine.setGraph(graph));
+        std::vector<float> left(9600),right(9600);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,1200)>.02);
+        assert(rms(left,4800,9600)<.005);
+        graph.nodes[clip].bypass=true;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,left.size())==0);
+        puts("one-shot audio clip ends and bypass is silent");
+    }
+    // The compressor reduces a loud signal and preserves the dry path when mixed out.
+    {
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+        add(graph,2,CompressorNode,{{CompThreshold,-30},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,69,127);
+        std::vector<float> left(24000),right(24000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double compressed=rms(left,4800,20000);
+        graph.nodes[2].parameters[CompMix]=0;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double dry=rms(left,4800,20000);
+        assert(compressed<dry*.8);
+        puts("compressor reduces gain and honors dry mix");
+    }
+    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, bypass and type-scoped validation.");
+
 }

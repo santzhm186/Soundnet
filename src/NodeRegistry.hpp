@@ -15,12 +15,18 @@ inline constexpr int StartNode=23, StopNode=24, WaitNode=25, CountNode=26, Arran
 inline constexpr int FilterNode=28, ReverbNode=29, NoiseNode=30;
 // Audio-file sampler added in 2.3.
 inline constexpr int SamplerNode=31;
+// Audio clip player and compressor added in 2.4.
+inline constexpr int AudioClipNode=32, CompressorNode=33;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
 inline constexpr int SamplerRoot=1130, SamplerGain=1131, SamplerLoop=1132;
 inline constexpr int SamplerAttack=1133, SamplerRelease=1134;
 inline constexpr int SamplerStart=1135, SamplerEnd=1136;
+inline constexpr int AudioClipGain=1140, AudioClipLoop=1141;
+inline constexpr int AudioClipStart=1142, AudioClipEnd=1143, AudioClipFade=1144;
+inline constexpr int CompThreshold=1150, CompRatio=1151, CompAttack=1152;
+inline constexpr int CompRelease=1153, CompMakeup=1154, CompMix=1155;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -45,6 +51,17 @@ inline constexpr ParamInfo samplerAttackInfo {"Attack",.001f,5,.005f,"s"};
 inline constexpr ParamInfo samplerReleaseInfo{"Release",.001f,5,.12f,"s"};
 inline constexpr ParamInfo samplerStartInfo  {"Start",0,1,0,""};
 inline constexpr ParamInfo samplerEndInfo    {"End",0,1,1,""};
+inline constexpr ParamInfo audioClipGainInfo  {"Gain",0,1,.9f,""};
+inline constexpr ParamInfo audioClipLoopInfo  {"Loop",0,1,0,""};
+inline constexpr ParamInfo audioClipStartInfo {"Start",0,1,0,""};
+inline constexpr ParamInfo audioClipEndInfo   {"End",0,1,1,""};
+inline constexpr ParamInfo audioClipFadeInfo  {"Fade",0,2,.01f,"s"};
+inline constexpr ParamInfo compThresholdInfo  {"Threshold",-60,0,-18,"dB"};
+inline constexpr ParamInfo compRatioInfo      {"Ratio",1,20,4,":1"};
+inline constexpr ParamInfo compAttackInfo     {"Attack",.001f,1,.01f,"s"};
+inline constexpr ParamInfo compReleaseInfo    {"Release",.01f,2,.15f,"s"};
+inline constexpr ParamInfo compMakeupInfo     {"Makeup",0,2,1,""};
+inline constexpr ParamInfo compMixInfo        {"Mix",0,1,1,""};
 
 struct NodeMeta {
     int type;
@@ -77,6 +94,8 @@ inline const NodeMeta* nodeMeta(int type) {
         {ReverbNode,"混响","处理",true,true},
         {NoiseNode,"噪声","处理",true,true},
         {SamplerNode,"采样器","处理",true,true},
+        {AudioClipNode,"音频片段","处理",true,true},
+        {CompressorNode,"压缩器","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -103,7 +122,7 @@ inline const char* nodeCategory(int type) {
 inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
-        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,
+        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,
         StartNode,StopNode,WaitNode,CountNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
@@ -129,6 +148,17 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case SamplerRelease:return &samplerReleaseInfo;
         case SamplerStart:return &samplerStartInfo;
         case SamplerEnd:return &samplerEndInfo;
+        case AudioClipGain:return &audioClipGainInfo;
+        case AudioClipLoop:return &audioClipLoopInfo;
+        case AudioClipStart:return &audioClipStartInfo;
+        case AudioClipEnd:return &audioClipEndInfo;
+        case AudioClipFade:return &audioClipFadeInfo;
+        case CompThreshold:return &compThresholdInfo;
+        case CompRatio:return &compRatioInfo;
+        case CompAttack:return &compAttackInfo;
+        case CompRelease:return &compReleaseInfo;
+        case CompMakeup:return &compMakeupInfo;
+        case CompMix:return &compMixInfo;
         default:return nullptr;
     }
 }
@@ -138,6 +168,8 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==ReverbNode) return p>=ReverbMix && p<=ReverbWidth;
     if(type==NoiseNode) return p==NoiseLevel || p==NoiseType;
     if(type==SamplerNode) return p>=SamplerRoot && p<=SamplerEnd;
+    if(type==AudioClipNode) return p>=AudioClipGain && p<=AudioClipFade;
+    if(type==CompressorNode) return p>=CompThreshold && p<=CompMix;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -161,6 +193,8 @@ inline std::vector<int> nodeParamList(int type) {
         case ReverbNode:return {ReverbMix,ReverbSize,ReverbDamping,ReverbWidth};
         case NoiseNode:return {NoiseLevel,NoiseType};
         case SamplerNode:return {SamplerRoot,SamplerGain,SamplerLoop,SamplerAttack,SamplerRelease,SamplerStart,SamplerEnd};
+        case AudioClipNode:return {AudioClipGain,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipFade};
+        case CompressorNode:return {CompThreshold,CompRatio,CompAttack,CompRelease,CompMakeup,CompMix};
         default:return {};
     }
 }

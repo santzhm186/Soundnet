@@ -58,6 +58,13 @@ class InstanceGraph {
         int sourcePort=0;
         bool bypassed=false;
     };
+    struct AudioClipState {
+        const AudioSample* sample=nullptr;
+        double position=0;
+        float envelope=0;
+        bool playing=false,stopping=false,pendingStart=false,bypassed=false;
+        int startFrame=0;
+    };
     struct Runtime : NotePort {
         int type;
         uint64_t generation;
@@ -65,6 +72,7 @@ class InstanceGraph {
         std::unique_ptr<AudioProcessor> processor;
         std::unique_ptr<ArrangerState> arranger;
         std::unique_ptr<SamplerState> sampler;
+        std::unique_ptr<AudioClipState> audioClip;
         std::array<float,quantum> left{},right{},inputL{},inputR{};
         Notes incoming{};
         GraphNode saved;
@@ -90,6 +98,10 @@ class InstanceGraph {
             }
             if(type==SamplerNode) {
                 sampler=std::make_unique<SamplerState>();
+                return;
+            }
+            if(type==AudioClipNode) {
+                audioClip=std::make_unique<AudioClipState>();
                 return;
             }
             if(auto audio=makeAudioProcessor(type)) {
@@ -169,6 +181,8 @@ class InstanceGraph {
         float samplerRoot=60,samplerGain=.8f,samplerAttack=.005f,samplerRelease=.12f;
         float samplerStart=0,samplerEnd=1;
         bool samplerLoop=false;
+        float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f;
+        bool audioClipLoop=false;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
     };
@@ -203,6 +217,10 @@ class InstanceGraph {
                     if(target.waitingSize<eventCapacity)
                         target.waiting[target.waitingSize++]={samplePosition+uint64_t(event.frame)+uint64_t(entry.wait*rate),event.start};
                     else target.overflow=true;
+                } else if(target.type==AudioClipNode) {
+                    auto& clip=*target.audioClip;
+                    if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
+                    else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
                 } else if(&target==renderingNode) {
                     int p=target.type==ClipNode?ClipRun:target.type==ProgressNode?ProgressRun:ArpOn;
                     target.engine->set(p,event.start?1:0);
@@ -241,6 +259,72 @@ class InstanceGraph {
         voice.releaseStep=entry.samplerRelease>0 ? 1.f/float(entry.samplerRelease*rate) : 1.f;
         voice.age=++state.serial;
         voice.active=true;voice.releasing=false;
+    }
+    static void renderAudioClip(const Entry& entry,Runtime& node,int frames,double rate) {
+        auto& state=*node.audioClip;
+        const AudioSample* sample=entry.sample.get();
+        if(!sample || !sample->valid()) {state=AudioClipState{};return;}
+        if(state.sample!=sample) {
+            const bool pending=state.pendingStart;
+            const int startFrame=state.startFrame;
+            state=AudioClipState{};
+            state.sample=sample;
+            state.pendingStart=pending;
+            state.startFrame=startFrame;
+        }
+        const size_t sampleFrames=sample->frames();
+        const int channels=sample->channels;
+        double start=std::min(std::max(double(entry.audioClipStart),0.0),1.0);
+        double end=std::min(std::max(double(entry.audioClipEnd),0.0),1.0);
+        size_t startFrame=size_t(start*double(sampleFrames>0?sampleFrames-1:0));
+        size_t endFrame=size_t(end*double(sampleFrames));
+        if(endFrame<=startFrame)endFrame=std::min(sampleFrames,startFrame+1);
+        int first=0;
+        if(state.pendingStart) {
+            state.pendingStart=false;
+            state.position=double(startFrame);
+            state.envelope=entry.audioClipFade>0 ? 0.f : 1.f;
+            state.playing=true;state.stopping=false;
+            first=std::max(0,std::min(state.startFrame,frames));
+            state.startFrame=0;
+        }
+        if(!state.playing)return;
+        if(state.position<double(startFrame) || state.position>=double(endFrame))state.position=double(startFrame);
+        const bool loop=entry.audioClipLoop && endFrame>startFrame+1;
+        const float fadeStep=entry.audioClipFade>0 ? 1.f/float(entry.audioClipFade*rate) : 1.f;
+        const double step=sample->rate/rate;
+        for(int i=first;i<frames && state.playing;++i) {
+            if(state.position>=double(endFrame)) {
+                if(loop)state.position=double(startFrame);
+                else if(state.stopping && state.envelope>0)state.position=std::max(double(startFrame),double(endFrame)-step);
+                else {state.playing=false;break;}
+            }
+            const size_t i0=std::min(size_t(state.position),sampleFrames-1);
+            size_t i1=i0+1;
+            if(loop) {if(i1>=endFrame)i1=startFrame;}
+            else i1=std::min(i1,sampleFrames-1);
+            const float fraction=float(state.position-double(i0));
+            const float a=sample->samples[i0*size_t(channels)];
+            const float b=sample->samples[i1*size_t(channels)];
+            const float left=a+(b-a)*fraction;
+            float right=left;
+            if(channels>1) {
+                const float ar=sample->samples[i0*size_t(channels)+1];
+                const float br=sample->samples[i1*size_t(channels)+1];
+                right=ar+(br-ar)*fraction;
+            }
+            const float amp=state.envelope*entry.audioClipGain;
+            node.left[i]+=left*amp;node.right[i]+=right*amp;
+            if(state.stopping) {
+                state.envelope-=fadeStep;
+                if(state.envelope<=0){state.envelope=0;state.playing=false;break;}
+            } else if(state.envelope<1)state.envelope=std::min(1.f,state.envelope+fadeStep);
+            state.position+=step;
+            if(!loop && state.position>=double(endFrame)) {
+                state.stopping=true;
+                if(entry.audioClipFade<=0){state.playing=false;break;}
+            }
+        }
     }
     static void renderSampler(const Entry& entry,Runtime* source,NotePort* input,int frames,bool force,double rate) {
         auto& node=*entry.state;
@@ -397,6 +481,11 @@ public:
             entry.samplerRelease=graphParamValue(n,SamplerRelease);
             entry.samplerStart=graphParamValue(n,SamplerStart);
             entry.samplerEnd=graphParamValue(n,SamplerEnd);
+            entry.audioClipGain=graphParamValue(n,AudioClipGain);
+            entry.audioClipLoop=graphParamValue(n,AudioClipLoop)>=.5f;
+            entry.audioClipStart=graphParamValue(n,AudioClipStart);
+            entry.audioClipEnd=graphParamValue(n,AudioClipEnd);
+            entry.audioClipFade=graphParamValue(n,AudioClipFade);
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -445,6 +534,7 @@ public:
             if(n.engine)n.engine->reset();
             if(n.processor)n.processor->reset();
             if(n.sampler) {samplerStop(*n.sampler);n.sampler->generation=0;n.sampler->sourcePort=0;n.sampler->bypassed=false;}
+            if(n.audioClip) {*n.audioClip=AudioClipState{};}
             n.clear();n.incoming={};
             if(n.arranger) {
                 for(auto& port:n.arranger->otherVoices)port.clear();
@@ -493,7 +583,7 @@ public:
                         node.processor->render(nullptr,nullptr,node.left.data(),node.right.data(),n);
                     continue;
                 }
-                if(type==FilterNode || type==ReverbNode) {
+                if(type==FilterNode || type==ReverbNode || type==CompressorNode) {
                     if(source)for(int i=0;i<n;++i){node.inputL[i]=source->left[i];node.inputR[i]=source->right[i];}
                     else for(int i=0;i<n;++i){node.inputL[i]=0;node.inputR[i]=0;}
                     if(entry.bypass) {
@@ -511,6 +601,17 @@ public:
                     } else {
                         node.sampler->bypassed=false;
                         renderSampler(entry,source,noteInput,n,wasBypassed,rate);
+                    }
+                    continue;
+                }
+                if(type==AudioClipNode) {
+                    bool wasBypassed=node.audioClip->bypassed;
+                    if(entry.bypass) {
+                        if(!wasBypassed)*node.audioClip=AudioClipState{};
+                        node.audioClip->bypassed=true;
+                    } else {
+                        node.audioClip->bypassed=false;
+                        renderAudioClip(entry,node,n,rate);
                     }
                     continue;
                 }

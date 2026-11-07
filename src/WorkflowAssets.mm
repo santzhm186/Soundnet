@@ -182,7 +182,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     tri::GraphSpec next;
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::SamplerNode) ||
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::CompressorNode) ||
            !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
            !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
             return fail(why,@"节点的实例 ID、类型或坐标无效。");
@@ -209,9 +209,9 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
             return fail(why,@"同一声部的最低音不能高于最高音。");
         if(obj[@"asset"]) {
             NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":
-                node.type==tri::SamplerNode?@"audio":nil;
+                node.type==tri::SamplerNode?@"audio":node.type==tri::AudioClipNode?@"audio":nil;
             if(!kind)return fail(why,@"该节点类型不能包含素材。");
-            if(node.type==tri::SamplerNode) {
+            if(node.type==tri::SamplerNode || node.type==tri::AudioClipNode) {
                 std::shared_ptr<tri::AudioSample> audio;
                 if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
                 node.sample=std::move(audio);

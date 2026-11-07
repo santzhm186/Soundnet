@@ -437,7 +437,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     uint64_t uid=_selected;
     int nodeType=[node[@"type"] intValue];
-    BOOL clip=nodeType==tri::ClipNode,audio=nodeType==tri::SamplerNode;
+    BOOL clip=nodeType==tri::ClipNode,audio=nodeType==tri::SamplerNode || nodeType==tri::AudioClipNode;
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=!clip && !audio;
     NSArray *extensions=clip?@[@"mid",@"midi"]:audio?@[@"wav",@"aif",@"aiff",@"aifc"]:
         @[@"mlmodel",@"mlmodelc",@"mlpackage",@"json"];
@@ -568,7 +568,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
         [self label:node[@"asset"][@"name"] ?: @"未载入素材" y:y];y+=46;
     }
-    if(type==tri::SamplerNode) {
+    if(type==tri::SamplerNode || type==tri::AudioClipNode) {
         [self button:@"载入音频（WAV / AIFF）…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
         NSDictionary *asset=node[@"asset"];
         if(asset[@"name"]) {
@@ -580,7 +580,10 @@ namespace { NSRect nodeRect(NSDictionary *node); }
             SNWaveformView *wave=[[SNWaveformView alloc]initWithFrame:NSMakeRect(12,y,225,58)];
             wave.pcm=pcm;wave.channels=channels;[_inspector addSubview:wave];y+=66;
         } else [self label:@"未载入音频素材" y:y],y+=28;
-        [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音。" y:y];y+=62;
+        if(type==tri::SamplerNode)
+            [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音。" y:y],y+=62;
+        else
+            [self label:@"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益。" y:y],y+=62;
     }
     if(type==tri::ChordNode || type==tri::ProgressNode) {
         [self label:@"和弦 / 走向，可手动输入" y:y];y+=28;
@@ -597,6 +600,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     if(type==tri::FilterNode){[self label:@"Type  0 低通  1 高通  2 带通\nCutoff 20–20000 Hz，Resonance 为 Q 值。" y:y];y+=62;}
     if(type==tri::ReverbNode){[self label:@"Mix 干湿比，Size 空间大小，Damping 高频吸收，Width 立体声宽度。" y:y];y+=62;}
     if(type==tri::NoiseNode){[self label:@"Type  0 白噪声  1 粉红噪声。" y:y];y+=50;}
+    if(type==tri::CompressorNode){[self label:@"Threshold 阈值，Ratio 压缩比，Attack/Release 包络，Makeup 补偿增益，Mix 干湿比。" y:y];y+=62;}
     if(type==tri::ArpNode){[self label:@"Rhythm  0 直拍  1 Bossa Nova  2 Reggae  3 Disco  4 十六分" y:y];y+=70;}
     if(type==tri::DawClockNode){[self label:@"跟随 DAW 的 BPM、走带和定位。独立版可接收外部 MIDI Clock。" y:y];y+=70;}
     if(type==tri::DawOutputNode || type==tri::DawAudioNode){[self label:@"在 DAW 插件中连接对应音频总线。" y:y];y+=50;}
@@ -1022,7 +1026,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.3    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.4    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
