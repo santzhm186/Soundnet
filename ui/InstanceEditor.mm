@@ -389,6 +389,21 @@ std::vector<ParamPreset> presetsFor(int type) {
             {"C 大调",{{tri::QuantizeRoot,0},{tri::QuantizeScale,0},{tri::QuantizeMode,0}}},
             {"A 小调",{{tri::QuantizeRoot,9},{tri::QuantizeScale,1},{tri::QuantizeMode,0}}},
             {"C 五声",{{tri::QuantizeRoot,0},{tri::QuantizeScale,3},{tri::QuantizeMode,0}}} };
+        case tri::EchoNode: return {
+            {"短回声",{{tri::EchoTime,.18f},{tri::EchoRepeats,2},{tri::EchoFeedback,.4f},{tri::EchoPitch,0}}},
+            {"八度回声",{{tri::EchoTime,.25f},{tri::EchoRepeats,3},{tri::EchoFeedback,.5f},{tri::EchoPitch,12}}} };
+        case tri::GateNode: return {
+            {"轻门",{{tri::GateThreshold,-50},{tri::GateAttack,.002f},{tri::GateRelease,.25f},{tri::GateRange,.6f}}},
+            {"硬门",{{tri::GateThreshold,-24},{tri::GateAttack,.001f},{tri::GateRelease,.05f},{tri::GateRange,1}}} };
+        case tri::TransposeNode: return {
+            {"升八度",{{tri::TransposeSemitones,12}}},
+            {"降八度",{{tri::TransposeSemitones,-12}}} };
+        case tri::MetronomeNode: return {
+            {"慢速",{{tri::MetronomeBPM,80},{tri::MetronomeLevel,.4f},{tri::MetronomeAccent,1},{tri::MetronomeBeats,4}}},
+            {"快速",{{tri::MetronomeBPM,160},{tri::MetronomeLevel,.3f},{tri::MetronomeAccent,1},{tri::MetronomeBeats,4}}} };
+        case tri::RandomNode: return {
+            {"半数",{{tri::RandomChance,.5f}}},
+            {"稀疏",{{tri::RandomChance,.2f}}} };
         default: return {};
     }
 }
@@ -1696,7 +1711,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.33    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.34    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
