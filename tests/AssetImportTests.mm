@@ -104,6 +104,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(transposeExample,transposeGraph,&graphWhy));
     assert(transposeGraph.nodes.size()==5 && transposeGraph.edges.size()==4);
     assert(transposeGraph.nodes[2].type==tri::TransposeNode);
+    NSDictionary *echoExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/note-echo.json"] options:0 error:nil];
+    tri::GraphSpec echoGraph;
+    assert(triassets::decodeGraph(echoExample,echoGraph,&graphWhy));
+    assert(echoGraph.nodes.size()==5 && echoGraph.edges.size()==4);
+    assert(echoGraph.nodes[2].type==tri::EchoNode);
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};

@@ -461,6 +461,27 @@ int main() {
         assert(!validGraphParam(TransposeNode,ChorusMix));
         puts("transpose shifts note-on and note-off pitches");
     }
+    // Note echo schedules delayed repeats with pitch and velocity feedback.
+    {
+        struct Sent {uint8_t status,a,b;};
+        std::vector<Sent> sent;
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,EchoNode,{{EchoTime,.1f},{EchoRepeats,2},{EchoFeedback,.5f},{EchoPitch,12}});
+        add(graph,2,MidiOutNode);
+        connect(graph,10,1);connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
+        engine.midi(0x90,60,100);
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        int on60=0,on72=0,on84=0;
+        for(const auto& e:sent){if(e.status==0x90&&e.a==60)++on60;if(e.status==0x90&&e.a==72)++on72;if(e.status==0x90&&e.a==84)++on84;}
+        assert(on60==1 && on72==1 && on84==1);
+        assert(validGraphParam(EchoNode,EchoTime));
+        assert(!validGraphParam(EchoNode,ChorusMix));
+        puts("note echo repeats with pitch and velocity feedback");
+    }
         {
         tri::MidiClip clip;clip.lengthBeats=4;
         clip.events={{0,0x90,60,100},{1,0x80,60,0},{2,0x90,64,90},{3.5,0x80,64,0}};

@@ -25,6 +25,7 @@ inline constexpr int TremoloNode=37, BitcrusherNode=38, PhaserNode=39;
 inline constexpr int RandomNode=40;
 inline constexpr int MetronomeNode=41;
 inline constexpr int TransposeNode=42;
+inline constexpr int EchoNode=43;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
@@ -46,6 +47,7 @@ inline constexpr int PhaserRate=1210, PhaserDepth=1211, PhaserFeedback=1212, Pha
 inline constexpr int RandomChance=1220;
 inline constexpr int MetronomeBPM=1230, MetronomeLevel=1231, MetronomeAccent=1232, MetronomeBeats=1233;
 inline constexpr int TransposeSemitones=1240;
+inline constexpr int EchoTime=1250, EchoRepeats=1251, EchoFeedback=1252, EchoPitch=1253;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -113,6 +115,10 @@ inline constexpr ParamInfo metronomeLevelInfo{"Level",0,1,.4f,""};
 inline constexpr ParamInfo metronomeAccentInfo{"Accent",0,1,1,""};
 inline constexpr ParamInfo metronomeBeatsInfo{"Beats",1,16,4,""};
 inline constexpr ParamInfo transposeSemitonesInfo{"Semitones",-24,24,0,""};
+inline constexpr ParamInfo echoTimeInfo{"Time",.05f,2,.25f,"s"};
+inline constexpr ParamInfo echoRepeatsInfo{"Repeats",1,8,3,""};
+inline constexpr ParamInfo echoFeedbackInfo{"Feedback",0,1,.5f,""};
+inline constexpr ParamInfo echoPitchInfo{"Pitch",-12,12,0,""};
 
 struct NodeMeta {
     int type;
@@ -156,6 +162,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {RandomNode,"随机触发","逻辑",true,false},
         {MetronomeNode,"节拍器","逻辑",true,false},
         {TransposeNode,"移调","处理",true,true},
+        {EchoNode,"音符回声","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -183,7 +190,7 @@ inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
         Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,TremoloNode,BitcrusherNode,PhaserNode,
-        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,TransposeNode,
+        StartNode,StopNode,WaitNode,CountNode,RandomNode,MetronomeNode,TransposeNode,EchoNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
     return catalog;
@@ -251,6 +258,10 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case MetronomeAccent:return &metronomeAccentInfo;
         case MetronomeBeats:return &metronomeBeatsInfo;
         case TransposeSemitones:return &transposeSemitonesInfo;
+        case EchoTime:return &echoTimeInfo;
+        case EchoRepeats:return &echoRepeatsInfo;
+        case EchoFeedback:return &echoFeedbackInfo;
+        case EchoPitch:return &echoPitchInfo;
         default:return nullptr;
     }
 }
@@ -271,6 +282,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==RandomNode) return p==RandomChance;
     if(type==MetronomeNode) return p>=MetronomeBPM && p<=MetronomeBeats;
     if(type==TransposeNode) return p==TransposeSemitones;
+    if(type==EchoNode) return p>=EchoTime && p<=EchoPitch;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -305,6 +317,7 @@ inline std::vector<int> nodeParamList(int type) {
         case RandomNode:return {RandomChance};
         case MetronomeNode:return {MetronomeBPM,MetronomeLevel,MetronomeAccent,MetronomeBeats};
         case TransposeNode:return {TransposeSemitones};
+        case EchoNode:return {EchoTime,EchoRepeats,EchoFeedback,EchoPitch};
         default:return {};
     }
 }

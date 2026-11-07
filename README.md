@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.30**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.31**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,7 +8,7 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.30 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.31 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
@@ -129,7 +129,7 @@ WAV/AIFF 由内置解码器读取（8/16/24/32 位整数、32 位浮点、`sowt`
 「合唱」是立体声调制延迟：Rate 为 0.05–8 Hz 的 LFO 速度，Depth 为 0–1 的调制深度，Mix 为 0–1 干湿比，Delay 为 1–30 ms 基础延迟。左右声道使用相位差 LFO，可给采样器、音频片段或合成器增加宽度。
 
 「颤音」用 0.1–20 Hz 正弦 LFO 调制左右声道音量，Depth 为 0–1 深度，Stereo 为左右相位差，Mix 为干湿比；「位深破碎」用 1–16 bit 量化和 500–48000 Hz 采样保持做 lo-fi 处理，Mix 为干湿比。打开[颤音与破碎示例](examples/tremolo-crush.json)试听。
-「音阶量化」接收 Note 输入，把音高吸附到指定调性：Root 0–11（C–B），Scale 0 大调 1 自然小调 2 多利亚 3 大调五声 4 半音，Mode 0 最近音 1 向上 2 向下。同一个输出音高由多个输入音符共享时会正确计数，最后一个释放才发出 Note Off；修改参数时仍按住的音符会重新量化。打开[随机触发示例](examples/random-gate.json)、[节拍器示例](examples/metronome-click.json)、[移调示例](examples/transpose.json)或[音阶量化示例](examples/scale-quantizer.json)，开始触发器会播放经过小调量化的 Clip。
+「音阶量化」接收 Note 输入，把音高吸附到指定调性：Root 0–11（C–B），Scale 0 大调 1 自然小调 2 多利亚 3 大调五声 4 半音，Mode 0 最近音 1 向上 2 向下。同一个输出音高由多个输入音符共享时会正确计数，最后一个释放才发出 Note Off；修改参数时仍按住的音符会重新量化。打开[随机触发示例](examples/random-gate.json)、[节拍器示例](examples/metronome-click.json)、[移调示例](examples/transpose.json)、[音符回声示例](examples/note-echo.json)或[音阶量化示例](examples/scale-quantizer.json)，开始触发器会播放经过小调量化的 Clip。
 
 打开[音频片段与压缩示例](examples/audio-clip-compressor.json)，点开始触发器即可听到循环片段经过压缩和补偿增益；[母带限幅示例](examples/master-limiter.json)在压缩器后串联限幅器，适合对比输出上限。
 
@@ -145,7 +145,7 @@ ARP 提供直拍、Bossa Nova、Reggae、Disco、十六分音符节奏，支持�
 
 **触发器**
 
-开始、停止节点可以手动发送命令，也可把上游触发转换为相应命令。等待节点按秒延后转发收到的命令。次数条件每收到 X 次信号后输出一次，再开始下一轮计数。随机触发按 Chance 概率决定是否把触发继续传递，可用于生成式段落。节拍器在收到开始触发后按 BPM 发声，停止触发后静音。移调节点把输入音符按半音移动。MIDI Clip 提供独立的「循环完成」触发输出。
+开始、停止节点可以手动发送命令，也可把上游触发转换为相应命令。等待节点按秒延后转发收到的命令。次数条件每收到 X 次信号后输出一次，再开始下一轮计数。随机触发按 Chance 概率决定是否把触发继续传递，可用于生成式段落。节拍器在收到开始触发后按 BPM 发声，停止触发后静音。移调节点把输入音符按半音移动。音符回声按时间安排多次延迟重复。MIDI Clip 提供独立的「循环完成」触发输出。
 
 ## 独立 App 与 DAW
 

@@ -1051,6 +1051,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::RandomNode){[self label:@"收到触发后按 Chance 概率决定是否继续转发，适合生成随机段落或概率门限。" y:y];y+=52;}
     if(type==tri::MetronomeNode){[self label:@"开始触发后按 BPM 产生节拍，停止触发后静音。Beats 控制每小节拍数，Accent 控制第一拍重音。" y:y];y+=65;}
     if(type==tri::TransposeNode){[self label:@"把输入音符按半音移调，范围外自动夹到 0–127。旁通时保持原音高。" y:y];y+=52;}
+    if(type==tri::EchoNode){[self label:@"为输入音符安排多次延迟重复，每次可按 Pitch 移调并按 Feedback 衰减力度。原音立即通过。" y:y];y+=65;}
     if(type==tri::ClipNode || type==tri::ModelNode) {
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=40;
         if(type==tri::ClipNode) {
@@ -1662,7 +1663,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.30    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.31    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
