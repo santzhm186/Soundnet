@@ -174,7 +174,28 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double l=0,r=0;for(size_t i=0;i<left.size();++i){l+=left[i];r+=right[i];}
         assert(l/double(left.size())>.05 && r/double(right.size())<-.05);
-        puts("sampler preserves stereo channels");
+        puts("sampler preserves stereo channels and reverse");
+    }
+    // Reverse sampler playback starts at the sample end.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.assign(4800,0.0f);
+        for(int i=0;i<2400;++i)sample->samples[i]=.5f;
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        size_t sampler=add(graph,2,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,0},{SamplerAttack,.001f},{SamplerRelease,.01f},{SamplerStart,0},{SamplerEnd,1},{SamplerReverse,1},{SamplerVelocity,1}});
+        graph.nodes[sampler].sample=sample;
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,10,2,0);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,60,127);
+        std::vector<float> left(4800),right(4800);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,400)<.01);
+        assert(rms(left,4000,4800)>.01);
+        assert(validGraphParam(SamplerNode,SamplerReverse));
+        assert(validGraphParam(SamplerNode,SamplerVelocity));
+        puts("reverse sampler plays from the end");
     }
     // An audio clip starts from a trigger, loops, and stops on a stop trigger.
     {
@@ -221,6 +242,32 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,left.size())==0);
         puts("one-shot audio clip ends and bypass is silent");
+    }
+    // Reverse playback starts at the end and reads backwards.
+    {
+        auto sample=std::make_shared<AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.assign(4800,0.0f);
+        for(int i=0;i<2400;++i)sample->samples[i]=.5f;
+        GraphSpec graph;
+        add(graph,1,StartNode,{{TriggerPulse,0}});
+        size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,0},{AudioClipReverse,1}});
+        graph.nodes[clip].sample=sample;
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,1,2,0);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        graph.nodes[0].parameters[TriggerPulse]=1;
+        assert(engine.setGraph(graph));
+        std::vector<float> left(4800),right(4800);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,400)<.01);
+        assert(rms(left,4000,4800)>.01);
+        graph.nodes[clip].parameters[AudioClipPitch]=12;
+        graph.nodes[clip].parameters[AudioClipReverse]=0;
+        graph.nodes[clip].parameters[ClipRun]=1;
+        assert(validGraphParam(AudioClipNode,AudioClipPitch));
+        assert(validGraphParam(AudioClipNode,AudioClipReverse));
+        assert(!validGraphParam(AudioClipNode,ChorusRate));
+        puts("audio clip pitch and reverse playback are accepted");
     }
     // The compressor reduces a loud signal and preserves the dry path when mixed out.
     {
@@ -365,6 +412,6 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
+    puts("PASS: filter, reverb, noise, sampler, audio clip, pitch/reverse, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
 
 }

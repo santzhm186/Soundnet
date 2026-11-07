@@ -1,4 +1,4 @@
-Soundnet 2.14 · 输入 → 节点处理 → 输出
+Soundnet 2.16 · 输入 → 节点处理 → 输出
 
 右键画布，可以插入所有类型的节点。同一种节点可以添加多个，每个实例拥有自己的 ID、参数、素材和运行状态。选中节点后在右侧编辑；拖输出圆点到输入圆点建立连接。Shift 点击可增减选择，Shift 拖动空白处可框选；拖动任一选中节点会整体移动。Command+C / Command+V 复制粘贴节点和内部连线，Command+X 剪切，Command+A 全选，Delete 删除；选中连线后按 Delete 可单独删除连线。方向键微调位置，按住 Shift 每次移动 10 点。工具条「复制」「粘贴」「查找」「吸附」提供对应操作；吸附按 20 点网格对齐。
 
@@ -12,8 +12,8 @@ Soundnet 2.14 · 输入 → 节点处理 → 输出
 第一个 Clip 完整播放三次后自动停止。触发信号同时进入一秒等待，再启动第二个 Clip。两个 Clip 各自控制一个振荡器，混合后输出。示例内嵌 MIDI 和模型映射，打开后即可使用。
 此示例使用独立版的硬件输出。在 Logic 中载入后，删除硬件输出，右键添加「DAW 音频输出」并连接混音器。
 打开 examples/filter-reverb-noise.json 可试听滤波器与混响：振荡器先经过低通滤波，再进入混响，并与粉红噪声混合。EQ、Delay、滤波器、混响、噪声和音频输出节点可在右侧勾选「旁通」，跳过处理但保留连线。
-采样器：右键插入「采样器」，点「载入音频（WAV / AIFF）…」。采样器有 16 个复音声部，音符按 Root 移调。Root 为素材原始音高，Start/End 为 0–1 区间，Loop 打开后循环，Attack/Release 为秒，Gain 为 0–1。支持未压缩 WAV（8/16/24/32 位整数或 32 位浮点）和 AIFF/AIFC；单文件最大 64 MB，解码后最多约 4M 个采样点。打开 examples/sampler-pluck.json，用键盘或 MIDI 演奏 C4 可试听。
-音频片段：右键插入「音频片段」，点「载入音频（WAV / AIFF）…」。把开始触发器接到触发输入，停止触发器可停止；Loop 循环，Start/End 为 0–1 区间，Fade 为淡入淡出秒数，Gain 为增益。音频片段不需要 Note 输入。
+采样器：右键插入「采样器」，点「载入音频（WAV / AIFF）…」。采样器有 16 个复音声部，音符按 Root 移调。Root 为素材原始音高，Start/End 为 0–1 区间，Loop 打开后循环，Attack/Release 为秒，Gain 为 0–1；Reverse 反向播放，Velocity 为力度敏感度。支持未压缩 WAV（8/16/24/32 位整数或 32 位浮点）和 AIFF/AIFC；单文件最大 64 MB，解码后最多约 4M 个采样点。打开 examples/sampler-pluck.json，用键盘或 MIDI 演奏 C4 可试听。
+音频片段：右键插入「音频片段」，点「载入音频（WAV / AIFF）…」。把开始触发器接到触发输入，停止触发器可停止；Loop 循环，Start/End 为 0–1 区间，Fade 为淡入淡出秒数，Gain 为增益；Pitch 为半音移调，Reverse 为反向播放。音频片段不需要 Note 输入。打开 examples/audio-clip-reverse.json 可试听。
 压缩器：Threshold 为 -60–0 dB，Ratio 为 1–20，Attack/Release 为秒，Makeup 为 0–2 补偿增益，Mix 为干湿比。打开 examples/audio-clip-compressor.json 可试听。打开 examples/clip-to-midi.json 可试听 MIDI Clip，并用「文件 → 导出 MIDI…」写出 .mid。
 限幅器：Threshold 为开始限幅电平（-60–0 dB），Ceiling 为输出上限（-12–0 dB），Release 为恢复秒数，Gain 为输入增益。放在压缩器与音频输出之间，限制最终峰值。打开 examples/master-limiter.json 可试听。可在右侧勾选「旁通」。
 合唱：Rate 为 0.05–8 Hz，Depth 为调制深度 0–1，Mix 为干湿比，Delay 为 1–30 ms 基础延迟。左右声道相位差 LFO，可增加立体声宽度。

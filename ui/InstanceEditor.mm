@@ -656,9 +656,9 @@ namespace { NSRect nodeRect(NSDictionary *node); }
             wave.pcm=pcm;wave.channels=channels;[_inspector addSubview:wave];y+=66;
         } else [self label:@"未载入音频素材" y:y],y+=28;
         if(type==tri::SamplerNode)
-            [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音。" y:y],y+=62;
+            [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音；Reverse 反向播放，Velocity 为力度敏感度。" y:y],y+=74;
         else
-            [self label:@"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益。" y:y],y+=62;
+            [self label:@"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益；Pitch 为半音移调，Reverse 反向播放。" y:y],y+=76;
     }
     if(type==tri::ChordNode || type==tri::ProgressNode) {
         [self label:@"和弦 / 走向，可手动输入" y:y];y+=28;
@@ -1175,7 +1175,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.14    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.16    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

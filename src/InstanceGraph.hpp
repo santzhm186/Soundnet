@@ -46,7 +46,7 @@ class InstanceGraph {
     };
     struct SamplerVoice {
         int note=-1;
-        double position=0,step=1;
+        double position=0,step=1,direction=1;
         float velocity=0,envelope=0,attackStep=0,releaseStep=0;
         uint64_t age=0;
         bool active=false,releasing=false;
@@ -193,10 +193,10 @@ class InstanceGraph {
         bool hostClock=false,bypass=false;
         std::shared_ptr<const AudioSample> sample;
         float samplerRoot=60,samplerGain=.8f,samplerAttack=.005f,samplerRelease=.12f;
-        float samplerStart=0,samplerEnd=1;
-        bool samplerLoop=false;
-        float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f;
-        bool audioClipLoop=false;
+        float samplerStart=0,samplerEnd=1,samplerVelocity=1;
+        bool samplerLoop=false,samplerReverse=false;
+        float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f,audioClipPitch=0;
+        bool audioClipLoop=false,audioClipReverse=false;
         int quantizeRoot=0,quantizeScale=0,quantizeMode=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
@@ -350,9 +350,11 @@ class InstanceGraph {
         size_t endFrame=size_t(end*double(frames));
         if(endFrame<=startFrame)endFrame=std::min(frames,startFrame+1);
         voice.note=note;
-        voice.position=double(startFrame);
+        voice.direction=entry.samplerReverse?-1.0:1.0;
+        voice.position=entry.samplerReverse?double(endFrame)-1.0:double(startFrame);
         voice.step=std::pow(2.0,(double(note)-double(entry.samplerRoot))/12.0)*sample->rate/rate;
-        voice.velocity=std::min(std::max(velocity,0.f),1.f);
+        const float sensitivity=std::min(std::max(entry.samplerVelocity,0.f),1.f);
+        voice.velocity=(1.0f-sensitivity)+sensitivity*std::min(std::max(velocity,0.f),1.f);
         voice.envelope=entry.samplerAttack>0 ? 0.f : 1.f;
         voice.attackStep=entry.samplerAttack>0 ? 1.f/float(entry.samplerAttack*rate) : 1.f;
         voice.releaseStep=entry.samplerRelease>0 ? 1.f/float(entry.samplerRelease*rate) : 1.f;
@@ -373,29 +375,37 @@ class InstanceGraph {
         }
         const size_t sampleFrames=sample->frames();
         const int channels=sample->channels;
-        double start=std::min(std::max(double(entry.audioClipStart),0.0),1.0);
-        double end=std::min(std::max(double(entry.audioClipEnd),0.0),1.0);
-        size_t startFrame=size_t(start*double(sampleFrames>0?sampleFrames-1:0));
+        const double start=std::min(std::max(double(entry.audioClipStart),0.0),1.0);
+        const double end=std::min(std::max(double(entry.audioClipEnd),0.0),1.0);
+        const size_t startFrame=size_t(start*double(sampleFrames>0?sampleFrames-1:0));
         size_t endFrame=size_t(end*double(sampleFrames));
         if(endFrame<=startFrame)endFrame=std::min(sampleFrames,startFrame+1);
+        const bool reverse=entry.audioClipReverse;
+        const double direction=reverse?-1.0:1.0;
+        const double step=double(sample->rate)/rate*std::pow(2.0,double(entry.audioClipPitch)/12.0);
         int first=0;
         if(state.pendingStart) {
             state.pendingStart=false;
-            state.position=double(startFrame);
+            state.position=reverse?double(endFrame)-1.0:double(startFrame);
             state.envelope=entry.audioClipFade>0 ? 0.f : 1.f;
             state.playing=true;state.stopping=false;
             first=std::max(0,std::min(state.startFrame,frames));
             state.startFrame=0;
         }
         if(!state.playing)return;
-        if(state.position<double(startFrame) || state.position>=double(endFrame))state.position=double(startFrame);
+        if(state.position<double(startFrame) || state.position>=double(endFrame))
+            state.position=reverse?double(endFrame)-1.0:double(startFrame);
         const bool loop=entry.audioClipLoop && endFrame>startFrame+1;
         const float fadeStep=entry.audioClipFade>0 ? 1.f/float(entry.audioClipFade*rate) : 1.f;
-        const double step=sample->rate/rate;
         for(int i=first;i<frames && state.playing;++i) {
-            if(state.position>=double(endFrame)) {
+            if(direction>0 && state.position>=double(endFrame)) {
                 if(loop)state.position=double(startFrame);
                 else if(state.stopping && state.envelope>0)state.position=std::max(double(startFrame),double(endFrame)-step);
+                else {state.playing=false;break;}
+            }
+            if(direction<0 && state.position<double(startFrame)) {
+                if(loop)state.position=std::max(double(startFrame),double(endFrame)-step);
+                else if(state.stopping && state.envelope>0)state.position=double(startFrame);
                 else {state.playing=false;break;}
             }
             const size_t i0=std::min(size_t(state.position),sampleFrames-1);
@@ -418,8 +428,9 @@ class InstanceGraph {
                 state.envelope-=fadeStep;
                 if(state.envelope<=0){state.envelope=0;state.playing=false;break;}
             } else if(state.envelope<1)state.envelope=std::min(1.f,state.envelope+fadeStep);
-            state.position+=step;
-            if(!loop && state.position>=double(endFrame)) {
+            state.position+=step*direction;
+            if(!loop && ((direction>0 && state.position>=double(endFrame)) ||
+                         (direction<0 && state.position<double(startFrame)))) {
                 state.stopping=true;
                 if(entry.audioClipFade<=0){state.playing=false;break;}
             }
@@ -459,7 +470,8 @@ class InstanceGraph {
             for(;position<limit;++position) {
                 for(auto& voice:state.voices) {
                     if(!voice.active)continue;
-                    if(voice.position>=double(sampleFrames)){voice.active=false;continue;}
+                    if(voice.direction>0 && voice.position>=double(sampleFrames)){voice.active=false;continue;}
+                    if(voice.direction<0 && voice.position<double(startFrame)){voice.active=false;continue;}
                     const size_t i0=size_t(voice.position);
                     size_t i1=i0+1;
                     if(loop) {
@@ -481,11 +493,17 @@ class InstanceGraph {
                     } else if(voice.envelope<1) {
                         voice.envelope=std::min(1.f,voice.envelope+voice.attackStep);
                     }
-                    voice.position+=voice.step;
-                    if(voice.position>=double(endFrame)) {
+                    voice.position+=voice.step*voice.direction;
+                    if(voice.direction>0 && voice.position>=double(endFrame)) {
                         if(loop) {
                             const double length=double(endFrame-startFrame);
                             voice.position=double(startFrame)+std::fmod(voice.position-double(startFrame),length);
+                        } else voice.active=false;
+                    } else if(voice.direction<0 && voice.position<double(startFrame)) {
+                        if(loop) {
+                            const double length=double(endFrame-startFrame);
+                            voice.position=double(endFrame)-1.0-std::fmod(double(startFrame)-voice.position,length);
+                            if(voice.position<double(startFrame))voice.position=double(endFrame)-1.0;
                         } else voice.active=false;
                     }
                 }
@@ -580,11 +598,15 @@ public:
             entry.samplerRelease=graphParamValue(n,SamplerRelease);
             entry.samplerStart=graphParamValue(n,SamplerStart);
             entry.samplerEnd=graphParamValue(n,SamplerEnd);
+            entry.samplerReverse=graphParamValue(n,SamplerReverse)>=.5f;
+            entry.samplerVelocity=graphParamValue(n,SamplerVelocity);
             entry.audioClipGain=graphParamValue(n,AudioClipGain);
             entry.audioClipLoop=graphParamValue(n,AudioClipLoop)>=.5f;
             entry.audioClipStart=graphParamValue(n,AudioClipStart);
             entry.audioClipEnd=graphParamValue(n,AudioClipEnd);
             entry.audioClipFade=graphParamValue(n,AudioClipFade);
+                entry.audioClipPitch=graphParamValue(n,AudioClipPitch);
+                entry.audioClipReverse=graphParamValue(n,AudioClipReverse)>0.5f;
             entry.quantizeRoot=int(graphParamValue(n,QuantizeRoot));
             entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
             entry.quantizeMode=int(graphParamValue(n,QuantizeMode));
