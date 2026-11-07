@@ -338,6 +338,21 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     return p>=0 && p<ParamCount && !routeParam(p);
 }
 
+inline bool discreteParam(int p) {
+    switch(p) {
+        case FilterType: case NoiseType:
+        case SamplerLoop: case SamplerReverse:
+        case AudioClipLoop: case AudioClipReverse:
+        case QuantizeRoot: case QuantizeScale: case QuantizeMode:
+        case TremoloSync: case TremoloDivision:
+        case DelaySync: case DelayDivision:
+        case ChannelFilter: case MidiOutChannel:
+        case MetronomeBeats: case EchoRepeats:
+            return true;
+        default:return false;
+    }
+}
+
 inline std::vector<int> nodeParamList(int type) {
     switch(type) {
         case Osc1Node:return {Wave1,Level1,Tune1,Attack,Decay,Sustain,Release};

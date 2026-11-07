@@ -636,6 +636,9 @@ int main() {
         assert(on60==1 && on72==1 && on84==1);
         assert(validGraphParam(EchoNode,EchoTime));
         assert(!validGraphParam(EchoNode,ChorusMix));
+        assert(discreteParam(EchoRepeats) && !discreteParam(EchoTime));
+        GraphSpec bad=graph;bad.nodes[1].parameters[EchoRepeats]=2.5f;
+        std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
         puts("note echo repeats with pitch and velocity feedback");
     }
         {

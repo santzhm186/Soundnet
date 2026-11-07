@@ -112,7 +112,7 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::st
         for(auto [p,v]:n.parameters) {
             if(!validGraphParam(n.type,p))return graphFailure(why,"节点参数不属于该节点类型。");
             const auto& info=graphParamInfo(p);
-            if(!std::isfinite(v) || v<info.min || v>info.max || (arrangerParam(p) && std::trunc(v)!=v))return graphFailure(why,"节点参数超出范围。");
+            if(!std::isfinite(v) || v<info.min || v>info.max || ((arrangerParam(p)||discreteParam(p)) && std::trunc(v)!=v))return graphFailure(why,"节点参数超出范围或必须为整数。");
         }
         if(n.type==ArrangerNode && !validArrangerRanges(n))return graphFailure(why,"编排器音域无效：低声部不能高于高声部。");
         if(n.type==AudioClipNode && !validAudioRanges(n))return graphFailure(why,"音频片段起止位置无效：开始不能晚于结束。");
