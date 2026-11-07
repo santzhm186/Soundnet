@@ -1345,6 +1345,37 @@ std::vector<ParamPreset> presetsFor(int type) {
     _zoom=std::clamp(std::min(800./all.size.width,450./all.size.height),.1,1.2);
     _origin=NSMakePoint(20-all.origin.x*_zoom,35-all.origin.y*_zoom);_canvas.needsDisplay=YES;
 }
+-(void)autoLayout:(id)sender {
+    NSArray<NSDictionary*> *nodes=_document[@"nodes"];
+    if(!nodes.count)return;
+    NSMutableDictionary<NSNumber*,NSNumber*> *depth=[NSMutableDictionary new];
+    for(NSDictionary *node in nodes)depth[node[@"id"]]=@0;
+    NSArray<NSDictionary*> *edges=_document[@"edges"];
+    for(NSUInteger pass=0;pass<nodes.count;++pass) {
+        BOOL changed=NO;
+        for(NSDictionary *edge in edges) {
+            NSNumber *source=edge[@"source"],*target=edge[@"target"];
+            if(!depth[source] || !depth[target])continue;
+            NSUInteger next=[depth[source] unsignedIntegerValue]+1;
+            if(next>[depth[target] unsignedIntegerValue]){depth[target]=@(next);changed=YES;}
+        }
+        if(!changed)break;
+    }
+    NSMutableDictionary<NSNumber*,NSNumber*> *slots=[NSMutableDictionary new];
+    NSArray<NSDictionary*> *ordered=[nodes sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        return [a[@"id"] compare:b[@"id"]];
+    }];
+    NSDictionary *previous=copyJSON(_document);
+    for(NSDictionary *node in ordered) {
+        NSNumber *level=depth[node[@"id"]] ?: @0;
+        NSUInteger slot=[slots[level] unsignedIntegerValue];slots[level]=@(slot+1);
+        NSMutableDictionary *mutableNode=(NSMutableDictionary *)node;
+        mutableNode[@"x"]=@(80+[level doubleValue]*240);
+        mutableNode[@"y"]=@(60+slot*150);
+    }
+    [self commit:previous];[self fit:nil];_canvas.needsDisplay=YES;
+    [self message:[NSString stringWithFormat:@"已按信号深度排列 %lu 个节点",(unsigned long)nodes.count]];
+}
 -(void)blank:(id)sender {
     NSDictionary *previous=copyJSON(_document);
     _document=[@{@"version":@3,@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];
@@ -1663,8 +1694,9 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.31    输入 → 处理 → 输出"];
-    heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
+    [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.32    输入 → 处理 → 输出"];
+    heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
     NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(878,48,260,505)];
