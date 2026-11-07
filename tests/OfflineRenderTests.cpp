@@ -75,6 +75,22 @@ int main() {
     assert(decoded.frames()==48000 && decoded.channels==2 && std::abs(decoded.rate-48000)<.1);
     puts("offline render writes a stereo WAV");
 
+    std::string path24="build/tests-offline/export24.wav";
+    assert(wav::write(path24,result.left,result.right,result.rate,why,24));
+    std::string bytes24;
+    {
+        FILE *file=std::fopen(path24.c_str(),"rb");assert(file);
+        std::fseek(file,0,SEEK_END);long size=std::ftell(file);std::fseek(file,0,SEEK_SET);
+        bytes24.resize(size_t(size));assert(std::fread(bytes24.data(),1,bytes24.size(),file)==bytes24.size());
+        std::fclose(file);
+    }
+    assert(bytes24.rfind("RIFF",0)==0);
+    assert(uint8_t(bytes24[34])==24 && uint8_t(bytes24[35])==0);
+    AudioSample decoded24;
+    assert(audiofile::parse(reinterpret_cast<const uint8_t*>(bytes24.data()),bytes24.size(),decoded24,why));
+    assert(decoded24.frames()==48000 && decoded24.channels==2);
+    puts("24-bit export round-trips through the WAV reader");
+
     GraphSpec daw;
     GraphNode dawStart;dawStart.id=1;dawStart.type=StartNode;daw.nodes.push_back(dawStart);
     GraphNode dawClip;dawClip.id=2;dawClip.type=ClipNode;dawClip.clip.lengthBeats=2;
@@ -87,6 +103,11 @@ int main() {
     double redirectedPeak=0;for(float value:redirected.left)redirectedPeak=std::max(redirectedPeak,double(std::fabs(value)));
     assert(redirectedPeak>.01);
     puts("DAW-only graphs export through the hardware path");
+
+    offline::Result rateResult;
+    assert(offline::render(graph,1,44100,rateResult,why));
+    assert(std::abs(rateResult.rate-44100)<.1 && rateResult.left.size()==44100);
+    puts("44.1 kHz offline rendering is supported");
 
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
