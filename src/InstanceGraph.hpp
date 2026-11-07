@@ -283,8 +283,9 @@ class InstanceGraph {
     std::map<InstanceID,std::shared_ptr<Runtime>> controlNodes;
     uint64_t nextGeneration=1;
     std::mutex edits;
-    double rate=48000,bpm=0,beat=0;
-    bool transport=false,playing=false,hosted=false;
+    double rate=48000;
+    std::atomic<double> bpm{0},beat{0};
+    std::atomic<bool> transport{false},playing{false},hosted{false};
     std::atomic<bool> active{false},panicRequested{false};
     std::array<Event,eventCapacity> local{},daw{};
     int localCount=0,dawCount=0;
@@ -695,7 +696,7 @@ class InstanceGraph {
     }
 public:
     bool enabled() const {return active.load(std::memory_order_acquire);}
-    void setHosted(bool v) {hosted=v;}
+    void setHosted(bool v) {hosted.store(v,std::memory_order_release);}
     bool publish(const GraphSpec& spec) {
         std::vector<size_t> order;
         if(!graphOrder(spec,order))return false;
@@ -791,9 +792,13 @@ public:
         }
         reset();
     }
-    void setHostTempo(double tempo) {bpm=tempo;}
-    void setHostTransport(bool on,double position) {transport=true;playing=on;beat=position;}
-    void clearHostTransport() {transport=false;}
+    void setHostTempo(double tempo) {bpm.store(tempo,std::memory_order_release);}
+    void setHostTransport(bool on,double position) {
+        playing.store(on,std::memory_order_release);
+        beat.store(position,std::memory_order_release);
+        transport.store(true,std::memory_order_release);
+    }
+    void clearHostTransport() {transport.store(false,std::memory_order_release);}
     void setMidiOutput(void* ctx,void (*fn)(void*,int,uint8_t,uint8_t,uint8_t)) {outputContext=ctx;output=fn;}
     void midi(bool fromDAW,uint8_t s,uint8_t a,uint8_t b) {
         std::lock_guard<std::mutex> lock(midiLock);
@@ -939,6 +944,11 @@ public:
     }
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) {
         if(frames<=0 || !outL || !outR)return;
+        const bool hosted=this->hosted.load(std::memory_order_acquire);
+        const double bpm=this->bpm.load(std::memory_order_acquire);
+        const bool transport=this->transport.load(std::memory_order_acquire);
+        const bool playing=this->playing.load(std::memory_order_acquire);
+        const double beat=this->beat.load(std::memory_order_acquire);
         bool planChanged=plans.consume();
         if(planChanged) {
             if(output)for(auto& node:plans.current().retired)for(int k=0;k<2048;++k)
@@ -1177,7 +1187,7 @@ public:
                 outL[offset+i]=left;outR[offset+i]=right;
             }
         }
-        if(transport && playing)beat+=frames*(bpm>0?bpm:112)/(60*rate);
+        if(transport && playing)this->beat.store(beat+frames*(bpm>0?bpm:112)/(60*rate),std::memory_order_release);
         renderingPlan=nullptr;renderingNode=nullptr;
     }
 };
