@@ -215,6 +215,14 @@ int main() {
         puts("AIFF PCM16 decodes");
     }
     {
+        auto bytes=makeWavFloat();
+        const float bad=std::nanf("");
+        std::memcpy(bytes.data()+44,&bad,4);
+        AudioSample sample;
+        assert(!audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        puts("non-finite audio samples are rejected");
+    }
+    {
         auto bytes=makeWav();
         bytes.resize(30);
         AudioSample sample;

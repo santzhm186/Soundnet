@@ -272,8 +272,12 @@ bool decodeCompressedAudio(NSURL *url, tri::AudioSample& sample, NSString **why)
             float *const *data=buffer.floatChannelData;
             if(!data || !data[0]) {fail(why,@"音频解码结果为空。");return false;}
             for(AVAudioFrameCount i=0;i<frames;++i) {
-                samples.push_back(data[0][i]);
-                samples.push_back(channels>1 && data[1] ? data[1][i] : data[0][i]);
+                const float left=data[0][i];
+                const float right=channels>1 && data[1] ? data[1][i] : left;
+                if(!std::isfinite(left) || !std::isfinite(right)) {
+                    fail(why,@"音频包含无效的采样值。");return false;
+                }
+                samples.push_back(left);samples.push_back(right);
             }
         }
     }

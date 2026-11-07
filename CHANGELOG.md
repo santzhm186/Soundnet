@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.67
+- 音频导入拒绝 NaN/Inf 采样值（WAV/AIFF 与 AVFoundation 压缩音频两条路径），避免无效浮点进入实时渲染。
+
 ## 2.66
 - 补充 32 位 WAV、24 位 AIFF、AIFC fl32/FL32 导入回归测试。
 

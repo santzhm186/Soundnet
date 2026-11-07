@@ -4,6 +4,7 @@
 // the plain C++ test harness (no AVFoundation / CoreAudio).
 #include "AudioSample.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -174,6 +175,8 @@ inline bool parse(const uint8_t *data,size_t size,tri::AudioSample& out,std::str
         return fail(why,"目前支持 WAV 与 AIFF/AIFC 音频文件。");
     }
     if(!out.valid())return fail(why,"解码后的音频参数无效。");
+    for(float value:out.samples)
+        if(!std::isfinite(value))return fail(why,"音频包含无效的采样值。");
     return true;
 }
 } // namespace audiofile
