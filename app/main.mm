@@ -323,9 +323,37 @@ static int runExportStems(const char *input,const char *directory,double seconds
     return 0;
 }
 
+
+static int runValidate(const char *input) {
+    @autoreleasepool {
+        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
+        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
+        NSError *error=nil;
+        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+        if(![object isKindOfClass:NSDictionary.class]) {
+            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+            return 1;
+        }
+        tri::GraphSpec graph;NSString *why=nil;
+        if(!triassets::decodeGraph(object,graph,&why)) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
+            return 1;
+        }
+        std::printf("OK: %zu nodes, %zu edges\n",graph.nodes.size(),graph.edges.size());
+    }
+    return 0;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc==2 && strcmp(argv[1],"--self-test")==0) return [TRIHost runOfflineCheck];
+        if (argc==2 && (strcmp(argv[1],"--version")==0 || strcmp(argv[1],"-v")==0)) {
+            NSDictionary *info=[NSBundle mainBundle].infoDictionary;
+            std::printf("Soundnet %s (%s)\n",[info[@"CFBundleShortVersionString"] UTF8String] ?: "2.37.0",
+                        [info[@"CFBundleVersion"] UTF8String] ?: "43");
+            return 0;
+        }
+        if (argc==3 && strcmp(argv[1],"--validate")==0) return runValidate(argv[2]);
         if ((argc==4 || argc==5) && strcmp(argv[1],"--export")==0) {
             const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
             return runExport(argv[2],argv[3],seconds);
@@ -339,7 +367,7 @@ int main(int argc, const char **argv) {
             return runExportStems(argv[2],argv[3],seconds);
         }
         if (argc==2 && strcmp(argv[1],"--help")==0) {
-            std::printf("Usage: Soundnet [--self-test | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds]]\n");
+            std::printf("Usage: Soundnet [--self-test | --version | --validate workflow.json | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds]]\n");
             return 0;
         }
         NSApplication *app = [NSApplication sharedApplication];

@@ -29,6 +29,7 @@ for example in "$root"/examples/*.json; do
         continue
     fi
     name=$(basename "$example" .json)
+    "$app/Contents/MacOS/Soundnet" --validate "$example" >/dev/null
     "$app/Contents/MacOS/Soundnet" --export "$example" "$out/$name.wav" 1 >/dev/null
     count=$((count+1))
 done
