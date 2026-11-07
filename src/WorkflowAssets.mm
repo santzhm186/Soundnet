@@ -172,7 +172,7 @@ bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NS
     return true;
 }
 
-bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) {
+bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, bool decodeAssets) {
     if(![document isKindOfClass:NSDictionary.class] || ![document[@"version"] isEqual:@3] ||
        ![document[@"nodes"] isKindOfClass:NSArray.class] || ![document[@"edges"] isKindOfClass:NSArray.class])
         return fail(why,@"请选择版本 3 的 Soundnet 工作流。");
@@ -214,12 +214,14 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
             NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":
                 node.type==tri::SamplerNode?@"audio":node.type==tri::AudioClipNode?@"audio":nil;
             if(!kind)return fail(why,@"该节点类型不能包含素材。");
-            if(node.type==tri::SamplerNode || node.type==tri::AudioClipNode) {
-                std::shared_ptr<tri::AudioSample> audio;
-                if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
-                node.sample=std::move(audio);
-            } else if(!decode(@{kind:obj[@"asset"]},node.clip,node.model,why)) {
-                return fail(why,@"节点素材无效。");
+            if(decodeAssets) {
+                if(node.type==tri::SamplerNode || node.type==tri::AudioClipNode) {
+                    std::shared_ptr<tri::AudioSample> audio;
+                    if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
+                    node.sample=std::move(audio);
+                } else if(!decode(@{kind:obj[@"asset"]},node.clip,node.model,why)) {
+                    return fail(why,@"节点素材无效。");
+                }
             }
         }
         next.nodes.push_back(std::move(node));

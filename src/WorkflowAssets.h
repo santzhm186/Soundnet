@@ -10,6 +10,6 @@ namespace triassets {
 NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why);
 NSDictionary *encodeClipAsset(NSString *name, const tri::MidiClip &clip, NSString **why);
 bool decode(NSDictionary *assets, tri::MidiClip &clip, tri::NoteModel &model, NSString **why);
-bool decodeGraph(NSDictionary *document, tri::GraphSpec &graph, NSString **why);
+bool decodeGraph(NSDictionary *document, tri::GraphSpec &graph, NSString **why, bool decodeAssets=true);
 bool validate(NSDictionary *assets, NSString **why);
 }

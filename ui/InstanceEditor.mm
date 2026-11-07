@@ -457,7 +457,7 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)message:(NSString *)text {_status.stringValue=text ?: @"";}
 -(void)commit:(NSDictionary *)previous {
     tri::GraphSpec graph;NSString *why=nil;
-    if(!triassets::decodeGraph(_document,graph,&why) || !_assetsWrite || !_assetsWrite(@{@"graph":_document})) {
+    if(!triassets::decodeGraph(_document,graph,&why,false) || !_assetsWrite || !_assetsWrite(@{@"graph":_document})) {
         _document=copyJSON(previous) ?: [@{@"version":@3,@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];[self message:why ?: @"宿主无法应用节点图。"];
     } else {
         if(previous && ![previous isEqual:_document]) {
@@ -1840,7 +1840,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.72    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.73    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

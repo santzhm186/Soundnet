@@ -121,6 +121,9 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(samplerDocument,samplerGraph,&graphWhy));
     assert(samplerGraph.nodes.size()==1 && samplerGraph.nodes[0].sample &&
            samplerGraph.nodes[0].sample->frames()==4 && samplerGraph.nodes[0].sample->channels==1);
+    tri::GraphSpec fastSamplerGraph;
+    assert(triassets::decodeGraph(samplerDocument,fastSamplerGraph,&graphWhy,false));
+    assert(fastSamplerGraph.nodes.size()==1 && !fastSamplerGraph.nodes[0].sample);
     NSMutableDictionary *badChannels=[samplerDocument mutableCopy];
     NSMutableDictionary *badNode=[samplerDocument[@"nodes"][0] mutableCopy];
     NSMutableDictionary *badAsset=[badNode[@"asset"] mutableCopy];

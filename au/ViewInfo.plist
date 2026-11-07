@@ -7,7 +7,7 @@
 <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 <key>CFBundleName</key><string>Soundnet Editor</string>
 <key>CFBundlePackageType</key><string>BNDL</string>
-<key>CFBundleShortVersionString</key><string>2.72.0</string>
-<key>CFBundleVersion</key><string>78</string>
+<key>CFBundleShortVersionString</key><string>2.73.0</string>
+<key>CFBundleVersion</key><string>79</string>
 <key>NSPrincipalClass</key><string>TrnyTernaryViewFactory</string>
 </dict></plist>
