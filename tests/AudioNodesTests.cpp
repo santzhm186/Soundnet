@@ -461,6 +461,26 @@ int main() {
         assert(!validGraphParam(TransposeNode,ChorusMix));
         puts("transpose shifts note-on and note-off pitches");
     }
+    // Noise gate closes on low-level input while opening on loud input.
+    {
+        GraphSpec graph;
+        add(graph,1,NoiseNode,{{NoiseLevel,.6f},{NoiseType,0}});
+        add(graph,2,GateNode,{{GateThreshold,-20},{GateRange,.8f},{GateAttack,.001f},{GateRelease,.05f}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        float open=rms(left,24000,48000);
+        assert(open>.02);
+        graph.nodes[0].parameters[NoiseLevel]=.001f;assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        float closed=rms(left,24000,48000);
+        assert(closed<open*.3f);
+        assert(validGraphParam(GateNode,GateThreshold));
+        assert(!validGraphParam(GateNode,ChorusMix));
+        puts("noise gate closes on low-level audio");
+    }
     // Note echo schedules delayed repeats with pitch and velocity feedback.
     {
         struct Sent {uint8_t status,a,b;};

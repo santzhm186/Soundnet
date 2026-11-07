@@ -900,7 +900,7 @@ public:
                         node.processor->render(nullptr,nullptr,node.left.data(),node.right.data(),n);
                     continue;
                 }
-                if(type==FilterNode || type==ReverbNode || type==CompressorNode || type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode || type==PhaserNode) {
+                if(type==FilterNode || type==ReverbNode || type==CompressorNode || type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode || type==PhaserNode || type==GateNode) {
                     if(source)for(int i=0;i<n;++i){node.inputL[i]=source->left[i];node.inputR[i]=source->right[i];}
                     else for(int i=0;i<n;++i){node.inputL[i]=0;node.inputR[i]=0;}
                     if(type==CompressorNode && node.processor) {
