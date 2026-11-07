@@ -2,6 +2,7 @@
 # Compile and run the complete Soundnet test suite against the current sources.
 # Usage: scripts/test-all.sh [build-directory]
 set -euo pipefail
+export SOUNDNET_NO_AUTOSAVE=1
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/build/tests}"
 mkdir -p "$build"

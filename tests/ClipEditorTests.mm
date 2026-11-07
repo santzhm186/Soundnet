@@ -2,6 +2,7 @@
 #import "../src/WorkflowAssets.h"
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 
 @interface NSView (SoundnetClipActions)
 - (void)insert:(NSMenuItem *)item;
@@ -10,7 +11,7 @@
 - (id)clipRoll;
 @end
 
-int main() { @autoreleasepool {
+int main() { setenv("SOUNDNET_NO_AUTOSAVE","1",1); @autoreleasepool {
     [NSApplication sharedApplication];
     __block NSDictionary *assets=@{};
     NSWindow *window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,1144,650)

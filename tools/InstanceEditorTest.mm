@@ -3,6 +3,7 @@
 #include "../src/Engine.hpp"
 #include "../src/WavFile.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <memory>
 #include <cassert>

@@ -114,6 +114,14 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 
 static double snapBeat(double value, double grid=0.25) { return std::round(value/grid)*grid; }
 
+static NSString *autosaveFilePath() {
+    NSString *base=[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES) firstObject];
+    if(!base.length)return nil;
+    NSString *directory=[base stringByAppendingPathComponent:@"Soundnet"];
+    [[NSFileManager defaultManager]createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    return [directory stringByAppendingPathComponent:@"Autosave.json"];
+}
+
 @interface SNNoteRollView : NSView
 @property(nonatomic,strong) NSMutableArray<NSMutableDictionary *> *notes;
 @property(nonatomic) double lengthBeats;
@@ -289,6 +297,8 @@ static double snapBeat(double value, double grid=0.25) { return std::round(value
 -(void)clipNoteLengthChanged:(id)sender;
 -(void)clipVelocityChanged:(id)sender;
 -(void)refreshClipFields;
+-(void)autosave;
+-(void)restoreAutosave:(id)sender;
 -(NSMutableDictionary *)node:(uint64_t)uid;
 -(BOOL)isSelected:(uint64_t)uid;
 -(NSArray<NSNumber *> *)selectedIDs;
@@ -393,10 +403,32 @@ std::vector<ParamPreset> presetsFor(int type) {
             [_history addObject:copyJSON(previous)];[_future removeAllObjects];
             while(_history.count>64)[_history removeObjectAtIndex:0];
         }
+        [self autosave];
         [self message:[NSString stringWithFormat:@"%lu 个独立节点 · %lu 条连接",(unsigned long)[_document[@"nodes"] count],(unsigned long)[_document[@"edges"] count]]];
     }
     [self pruneSelection];
     _canvas.needsDisplay=YES;
+}
+-(void)autosave {
+    if(getenv("SOUNDNET_NO_AUTOSAVE"))return;
+    NSString *path=autosaveFilePath();if(!path.length)return;
+    NSData *data=[NSJSONSerialization dataWithJSONObject:_document options:0 error:nil];
+    if(data)[data writeToFile:path atomically:YES];
+}
+-(void)restoreAutosave:(id)sender {
+    NSString *path=autosaveFilePath();
+    NSData *data=path.length?[NSData dataWithContentsOfFile:path]:nil;
+    if(!data){[self message:@"没有可恢复的自动保存"];return;}
+    id object=[NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
+    tri::GraphSpec graph;NSString *why=nil;
+    if(![object isKindOfClass:NSDictionary.class] || !triassets::decodeGraph(object,graph,&why)) {
+        [self message:why ?: @"自动保存文件无效"];return;
+    }
+    NSDictionary *previous=copyJSON(_document);
+    _document=copyJSON(object);
+    [_selection removeAllObjects];_selected=0;_selectedEdge=-1;
+    [self commit:previous];[self inspect];[self fit:nil];
+    [self message:@"已恢复自动保存"];
 }
 -(void)pruneSelection {
     if(!_selection)_selection=[NSMutableSet new];
@@ -1581,7 +1613,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.23    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.24    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

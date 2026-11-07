@@ -62,6 +62,7 @@
     NSMenu *file=[[NSMenu alloc] initWithTitle:@"文件"];
     fileItem.submenu=file;
     [file addItemWithTitle:@"打开…" action:@selector(open:) keyEquivalent:@"o"];
+    [file addItemWithTitle:@"恢复自动保存…" action:@selector(restoreAutosave:) keyEquivalent:@""];
     [file addItemWithTitle:@"保存…" action:@selector(save:) keyEquivalent:@"s"];
     [file addItem:[NSMenuItem separatorItem]];
     [file addItemWithTitle:@"导出音频…" action:@selector(exportWav:) keyEquivalent:@""];
