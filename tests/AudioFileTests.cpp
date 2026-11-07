@@ -52,6 +52,27 @@ static std::vector<uint8_t> makeWavFloat() {
     const float values[2]={.25f,-.5f};std::memcpy(out.data()+44,values,8);
     return out;
 }
+static std::vector<uint8_t> makeAifcSowt() {
+    std::vector<uint8_t> out(66);
+    std::memcpy(out.data(),"FORM",4);put32be(out,4,58);std::memcpy(out.data()+8,"AIFC",4);
+    std::memcpy(out.data()+12,"COMM",4);put32be(out,16,22);
+    put16be(out,20,1);put32be(out,22,2);put16be(out,26,16);
+    const uint8_t rate[10]={0x40,0x0e,0xbb,0x80,0,0,0,0,0,0};
+    std::memcpy(out.data()+28,rate,10);std::memcpy(out.data()+38,"sowt",4);
+    std::memcpy(out.data()+42,"SSND",4);put32be(out,46,12);
+    put32be(out,50,0);put32be(out,54,0);
+    put16(out,58,16384);put16(out,60,uint16_t(int16_t(-16384)));
+    return out;
+}
+static std::vector<uint8_t> makeWav8() {
+    std::vector<uint8_t> out(48);
+    std::memcpy(out.data(),"RIFF",4);put32(out,4,40);std::memcpy(out.data()+8,"WAVEfmt ",8);
+    put32(out,16,16);put16(out,20,1);put16(out,22,1);put32(out,24,8000);
+    put32(out,28,8000);put16(out,32,1);put16(out,34,8);
+    std::memcpy(out.data()+36,"data",4);put32(out,40,4);
+    out[44]=0;out[45]=128;out[46]=255;out[47]=128;
+    return out;
+}
 static std::vector<uint8_t> makeAiff() {
     std::vector<uint8_t> out(62);
     std::memcpy(out.data(),"FORM",4);put32be(out,4,54);std::memcpy(out.data()+8,"AIFF",4);
@@ -94,6 +115,25 @@ int main() {
         puts("WAV float32 decodes");
     }
     {
+        auto bytes=makeAifcSowt();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(sample.frames()==2);
+        assert(std::abs(sample.samples[0]-.5f)<1e-4);
+        assert(std::abs(sample.samples[1]+.5f)<1e-4);
+        puts("AIFC sowt decodes");
+    }
+    {
+        auto bytes=makeWav8();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(sample.frames()==4);
+        assert(std::abs(sample.samples[0]+1.f)<1e-4);
+        assert(std::abs(sample.samples[1])<1e-4);
+        assert(std::abs(sample.samples[3]-.0f)<.01f);
+        puts("WAV PCM8 decodes");
+    }
+    {
         auto bytes=makeAiff();
         AudioSample sample;
         assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
@@ -109,5 +149,5 @@ int main() {
         assert(!audiofile::parse(bytes.data(),bytes.size(),sample,why));
         puts("truncated audio is rejected");
     }
-    puts("PASS: WAV and AIFF audio import.");
+    puts("PASS: WAV, AIFF and AIFC audio import.");
 }
