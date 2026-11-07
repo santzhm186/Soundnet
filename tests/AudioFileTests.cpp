@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 using namespace tri;
 
@@ -53,7 +54,7 @@ static std::vector<uint8_t> makeWavFloat() {
     return out;
 }
 static std::vector<uint8_t> makeAifcSowt() {
-    std::vector<uint8_t> out(66);
+    std::vector<uint8_t> out(70);
     std::memcpy(out.data(),"FORM",4);put32be(out,4,58);std::memcpy(out.data()+8,"AIFC",4);
     std::memcpy(out.data()+12,"COMM",4);put32be(out,16,22);
     put16be(out,20,1);put32be(out,22,2);put16be(out,26,16);
@@ -62,6 +63,44 @@ static std::vector<uint8_t> makeAifcSowt() {
     std::memcpy(out.data()+42,"SSND",4);put32be(out,46,12);
     put32be(out,50,0);put32be(out,54,0);
     put16(out,58,16384);put16(out,60,uint16_t(int16_t(-16384)));
+    return out;
+}
+static std::vector<uint8_t> makeWav32() {
+    std::vector<uint8_t> out(44+8);
+    std::memcpy(out.data(),"RIFF",4);put32(out,4,36+8);std::memcpy(out.data()+8,"WAVEfmt ",8);
+    put32(out,16,16);put16(out,20,1);put16(out,22,1);put32(out,24,48000);
+    put32(out,28,192000);put16(out,32,4);put16(out,34,32);
+    std::memcpy(out.data()+36,"data",4);put32(out,40,8);
+    put32(out,44,0x40000000u);put32(out,48,0xc0000000u);
+    return out;
+}
+static std::vector<uint8_t> makeAiff24() {
+    std::vector<uint8_t> out(64);
+    std::memcpy(out.data(),"FORM",4);put32be(out,4,56);std::memcpy(out.data()+8,"AIFF",4);
+    std::memcpy(out.data()+12,"COMM",4);put32be(out,16,18);
+    put16be(out,20,1);put32be(out,22,2);put16be(out,26,24);
+    const uint8_t rate[10]={0x40,0x0e,0xbb,0x80,0,0,0,0,0,0};
+    std::memcpy(out.data()+28,rate,10);
+    std::memcpy(out.data()+38,"SSND",4);put32be(out,42,14);
+    put32be(out,46,0);put32be(out,50,0);
+    out[54]=0x40;out[55]=0;out[56]=0;out[57]=0xc0;out[58]=0;out[59]=0;
+    return out;
+}
+static std::vector<uint8_t> makeAifcFloat(bool little) {
+    std::vector<uint8_t> out(70);
+    std::memcpy(out.data(),"FORM",4);put32be(out,4,58);std::memcpy(out.data()+8,"AIFC",4);
+    std::memcpy(out.data()+12,"COMM",4);put32be(out,16,22);
+    put16be(out,20,1);put32be(out,22,2);put16be(out,26,32);
+    const uint8_t rate[10]={0x40,0x0e,0xbb,0x80,0,0,0,0,0,0};
+    std::memcpy(out.data()+28,rate,10);
+    std::memcpy(out.data()+38,little?"FL32":"fl32",4);
+    std::memcpy(out.data()+42,"SSND",4);put32be(out,46,16);
+    put32be(out,50,0);put32be(out,54,0);
+    const float values[2]={.35f,-.45f};
+    std::memcpy(out.data()+58,values,8);
+    if(!little) {
+        for(int i=0;i<2;++i) std::reverse(out.begin()+58+i*4,out.begin()+62+i*4);
+    }
     return out;
 }
 static std::vector<uint8_t> makeWav8() {
@@ -113,6 +152,39 @@ int main() {
         assert(std::abs(sample.samples[0]-.25f)<1e-6);
         assert(std::abs(sample.samples[1]+.5f)<1e-6);
         puts("WAV float32 decodes");
+    }
+    {
+        auto bytes=makeWav32();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(std::abs(sample.samples[0]-.5f)<1e-4);
+        assert(std::abs(sample.samples[1]+.5f)<1e-4);
+        puts("WAV PCM32 decodes");
+    }
+    {
+        auto bytes=makeAiff24();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(sample.frames()==2);
+        assert(std::abs(sample.samples[0]-.5f)<1e-4);
+        assert(std::abs(sample.samples[1]+.5f)<1e-4);
+        puts("AIFF PCM24 decodes");
+    }
+    {
+        auto bytes=makeAifcFloat(false);
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(std::abs(sample.samples[0]-.35f)<1e-6);
+        assert(std::abs(sample.samples[1]+.45f)<1e-6);
+        puts("AIFC fl32 decodes");
+    }
+    {
+        auto bytes=makeAifcFloat(true);
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(std::abs(sample.samples[0]-.35f)<1e-6);
+        assert(std::abs(sample.samples[1]+.45f)<1e-6);
+        puts("AIFC FL32 decodes");
     }
     {
         auto bytes=makeAifcSowt();

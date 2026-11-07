@@ -1,5 +1,8 @@
 # Soundnet 更新记录
 
+## 2.66
+- 补充 32 位 WAV、24 位 AIFF、AIFC fl32/FL32 导入回归测试。
+
 ## 2.65
 - 补充 8 位 WAV、AIFF/AIFC（sowt）导入回归测试。
 
