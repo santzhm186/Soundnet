@@ -65,7 +65,8 @@ inline float pcmValue(const uint8_t *p,int bytes,bool little,bool floating,bool 
 inline bool parseWav(const uint8_t *data,size_t size,tri::AudioSample& out,std::string& why) {
     size_t position=12;
     bool haveFormat=false,haveData=false;
-    uint16_t format=0,channels=0,bits=0;
+    uint16_t format=0,channels=0,bits=0,validBits=0;
+    bool extensible=false;
     uint32_t rate=0,blockAlign=0;
     size_t dataOffset=0,dataSize=0;
     while(position+8<=size) {
@@ -77,7 +78,15 @@ inline bool parseWav(const uint8_t *data,size_t size,tri::AudioSample& out,std::
             if(chunk<16)return fail(why,"WAV 格式块过短。");
             format=le16(data+body);channels=le16(data+body+2);
             rate=le32(data+body+4);blockAlign=le16(data+body+12);bits=le16(data+body+14);
-            if(format==0xfffe && chunk>=40)format=le16(data+body+24);
+            validBits=bits;
+            if(format==0xfffe) {
+                static const uint8_t guidTail[14]={0,0,0,0,0x10,0,0x80,0,0,0xaa,0,0x38,0x9b,0x71};
+                if(chunk<40 || std::memcmp(data+body+26,guidTail,14))return fail(why,"WAV 扩展格式块无效。");
+                extensible=true;
+                format=le16(data+body+24);
+                validBits=le16(data+body+18);
+                if(!validBits)validBits=bits;
+            }
             haveFormat=true;
         } else if(!std::memcmp(id,"data",4)) {
             dataOffset=body;dataSize=chunk;haveData=true;
@@ -91,6 +100,8 @@ inline bool parseWav(const uint8_t *data,size_t size,tri::AudioSample& out,std::
     if(!floating && format!=1)return fail(why,"暂不支持该 WAV 编码，请使用 PCM 或 Float32。");
     if(floating && bits!=32)return fail(why,"目前只支持 32 位浮点 WAV。");
     if(!floating && bits!=8 && bits!=16 && bits!=24 && bits!=32)return fail(why,"仅支持 8/16/24/32 位 PCM。");
+    if(validBits>bits)return fail(why,"WAV 有效位数超过容器位数。");
+    if(validBits!=bits && !(bits==32 && validBits==24))return fail(why,"仅支持 24 位有效数据的 32 位 WAV 容器。");
     const int bytes=int(bits/8);
     if(blockAlign && blockAlign!=uint32_t(bytes*channels))return fail(why,"WAV 的 block align 与格式不符。");
     const size_t stride=size_t(bytes)*channels;
@@ -99,9 +110,15 @@ inline bool parseWav(const uint8_t *data,size_t size,tri::AudioSample& out,std::
     if(!frames)return fail(why,"音频文件没有采样数据。");
     if(frames>maxSamples/size_t(channels))return fail(why,"音频过长，请导入 20 秒以内的素材。");
     out.samples.resize(frames*size_t(channels));
-    for(size_t frame=0;frame<frames;++frame)for(int c=0;c<int(channels);++c)
-        out.samples[frame*size_t(channels)+size_t(c)]=
-            pcmValue(data+dataOffset+frame*stride+size_t(c)*size_t(bytes),bytes,true,floating,true);
+    for(size_t frame=0;frame<frames;++frame)for(int c=0;c<int(channels);++c) {
+        const uint8_t *source=data+dataOffset+frame*stride+size_t(c)*size_t(bytes);
+        if(extensible && !floating && bits==32 && validBits==24) {
+            const int32_t value=int32_t(le32(source))>>8;
+            out.samples[frame*size_t(channels)+size_t(c)]=float(double(value)/8388608.0);
+        } else {
+            out.samples[frame*size_t(channels)+size_t(c)]=pcmValue(source,bytes,true,floating,true);
+        }
+    }
     out.channels=channels;out.rate=rate;
     return true;
 }

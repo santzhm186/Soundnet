@@ -74,6 +74,20 @@ static std::vector<uint8_t> makeWav32() {
     put32(out,44,0x40000000u);put32(out,48,0xc0000000u);
     return out;
 }
+
+static std::vector<uint8_t> makeWavExtensible24in32() {
+    std::vector<uint8_t> out(84);
+    std::memcpy(out.data(),"RIFF",4);put32(out,4,76);std::memcpy(out.data()+8,"WAVEfmt ",8);
+    put32(out,16,40);put16(out,20,0xfffe);put16(out,22,1);put32(out,24,48000);
+    put32(out,28,192000);put16(out,32,4);put16(out,34,32);put16(out,36,22);
+    put16(out,38,24);put32(out,40,0);
+    const uint8_t guid[16]={1,0,0,0,0,0,0x10,0,0x80,0,0,0xaa,0,0x38,0x9b,0x71};
+    std::memcpy(out.data()+44,guid,16);
+    std::memcpy(out.data()+60,"data",4);put32(out,64,8);
+    put32(out,68,0x40000000u);put32(out,72,0xc0000000u);
+    return out;
+}
+
 static std::vector<uint8_t> makeAiff24() {
     std::vector<uint8_t> out(64);
     std::memcpy(out.data(),"FORM",4);put32be(out,4,56);std::memcpy(out.data()+8,"AIFF",4);
@@ -160,6 +174,15 @@ int main() {
         assert(std::abs(sample.samples[0]-.5f)<1e-4);
         assert(std::abs(sample.samples[1]+.5f)<1e-4);
         puts("WAV PCM32 decodes");
+    }
+    {
+        auto bytes=makeWavExtensible24in32();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(sample.frames()==2);
+        assert(std::abs(sample.samples[0]-.5f)<1e-4);
+        assert(std::abs(sample.samples[1]+.5f)<1e-4);
+        puts("WAV extensible 24-in-32 decodes");
     }
     {
         auto bytes=makeAiff24();

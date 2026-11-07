@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.69**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.70**。
 
 **输入 → 节点处理 → 输出**
 
@@ -114,7 +114,7 @@ flowchart LR
 
 右键插入「采样器」，在右侧点「载入音频（WAV / AIFF / MP3 / M4A / AAC / CAF / FLAC）…」选择文件。采样器支持 16 个复音声部：每个音符从原始音高按十二平均律移调播放，可使用音域起点/终点、循环、起音、释放和增益塑造声音。Root 是素材的原始 MIDI 音高，中央 C 为 60；Start/End 是 0–1 的采样区间；Loop 打开后在区间内循环，关闭则播放到终点后释放；Reverse 从区间末尾反向播放，Velocity 控制力度敏感度（0 忽略力度，1 完全跟随）。
 
-WAV/AIFF 由内置解码器读取（8/16/24/32 位整数、32 位浮点、`sowt`/`fl32`）；MP3/M4A/AAC/CAF/FLAC 由 AVFoundation 解码成浮点 PCM。单个文件最大 64 MB，解码后最多约 4M 个采样点（48 kHz 立体声约 40 秒）。采样数据以浮点 PCM 嵌入版本 3 JSON，工程可脱离原文件移动。
+WAV/AIFF 由内置解码器读取（8/16/24/32 位整数、32 位浮点、`sowt`/`fl32`，并支持 WAVE_FORMAT_EXTENSIBLE 的 24-in-32 与浮点容器）；MP3/M4A/AAC/CAF/FLAC 由 AVFoundation 解码成浮点 PCM。单个文件最大 64 MB，解码后最多约 4M 个采样点（48 kHz 立体声约 40 秒）。采样数据以浮点 PCM 嵌入版本 3 JSON，工程可脱离原文件移动。
 
 打开[采样器示例](examples/sampler-pluck.json)，用键盘或 MIDI 演奏 C4 即可听到经过低通滤波和混响的拨弦采样。
 
