@@ -473,6 +473,23 @@ int main() {
         assert(level(0)<0.001);
         puts("random trigger gates downstream events");
     }
+    // Metronome runs between start and stop triggers.
+    {
+        GraphSpec graph;
+        add(graph,1,StartNode);add(graph,2,StopNode);
+        add(graph,3,MetronomeNode,{{MetronomeBPM,120},{MetronomeLevel,.5f},{MetronomeAccent,1},{MetronomeBeats,4}});
+        add(graph,4,OutputNode,{{Master,1}});
+        connect(graph,1,3);connect(graph,2,3);connect(graph,3,4);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,0,24000)>.001);
+        graph.nodes[1].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,24000,48000)<.001);
+        puts("metronome clicks between start and stop triggers");
+    }
     puts("MIDI clips round-trip through the encoder");
 puts("PASS: filter, reverb, noise, sampler, audio clip, pitch/reverse, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
 

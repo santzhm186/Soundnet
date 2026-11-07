@@ -1,0 +1,57 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": 23,
+      "x": 80,
+      "y": 80,
+      "parameters": {}
+    },
+    {
+      "id": 2,
+      "type": 24,
+      "x": 80,
+      "y": 220,
+      "parameters": {}
+    },
+    {
+      "id": 3,
+      "type": 41,
+      "x": 330,
+      "y": 130,
+      "parameters": {
+        "1230": 120,
+        "1231": 0.5,
+        "1232": 1,
+        "1233": 4
+      }
+    },
+    {
+      "id": 4,
+      "type": 19,
+      "x": 600,
+      "y": 130,
+      "parameters": {
+        "24": 0.7
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": 1,
+      "target": 3,
+      "port": 0
+    },
+    {
+      "source": 2,
+      "target": 3,
+      "port": 0
+    },
+    {
+      "source": 3,
+      "target": 4,
+      "port": 0
+    }
+  ]
+}

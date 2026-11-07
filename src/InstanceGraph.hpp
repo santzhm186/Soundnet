@@ -74,6 +74,12 @@ class InstanceGraph {
         bool bypassed=false;
         QuantizeState(){mapping.fill(-1);}
     };
+    struct MetronomeState {
+        bool running=false;
+        double phase=0,clickPhase=0;
+        float envelope=0;
+        int beat=0;
+    };
     struct RandomState {
         uint64_t state=0x9e3779b97f4a7c15ull;
         float next01() {
@@ -91,6 +97,7 @@ class InstanceGraph {
         std::unique_ptr<AudioClipState> audioClip;
         std::unique_ptr<QuantizeState> quantizer;
         std::unique_ptr<RandomState> random;
+        std::unique_ptr<MetronomeState> metronome;
         std::array<float,quantum> left{},right{},inputL{},inputR{},sidechainL{},sidechainR{};
         Notes incoming{};
         GraphNode saved;
@@ -124,6 +131,10 @@ class InstanceGraph {
             }
             if(type==QuantizeNode) {
                 quantizer=std::make_unique<QuantizeState>();
+                return;
+            }
+            if(type==MetronomeNode) {
+                metronome=std::make_unique<MetronomeState>();
                 return;
             }
             if(type==RandomNode) {
@@ -213,6 +224,8 @@ class InstanceGraph {
         bool audioClipLoop=false,audioClipReverse=false;
         int quantizeRoot=0,quantizeScale=0,quantizeMode=0;
         float randomChance=.5f;
+        float metronomeBPM=120,metronomeLevel=.4f,metronomeAccent=1;
+        int metronomeBeats=4;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
     };
@@ -250,6 +263,10 @@ class InstanceGraph {
                     if(target.waitingSize<eventCapacity)
                         target.waiting[target.waitingSize++]={samplePosition+uint64_t(event.frame)+uint64_t(entry.wait*rate),event.start};
                     else target.overflow=true;
+                } else if(target.type==MetronomeNode) {
+                    auto& state=*target.metronome;
+                    if(event.start){state.running=true;state.phase=0;state.beat=0;state.envelope=1;state.clickPhase=0;}
+                    else state.running=false;
                 } else if(target.type==AudioClipNode) {
                     auto& clip=*target.audioClip;
                     if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
@@ -629,6 +646,10 @@ public:
             entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
             entry.quantizeMode=int(graphParamValue(n,QuantizeMode));
             entry.randomChance=graphParamValue(n,RandomChance);
+            entry.metronomeBPM=graphParamValue(n,MetronomeBPM);
+            entry.metronomeLevel=graphParamValue(n,MetronomeLevel);
+            entry.metronomeAccent=graphParamValue(n,MetronomeAccent);
+            entry.metronomeBeats=int(graphParamValue(n,MetronomeBeats));
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -691,6 +712,31 @@ public:
     // Only the render thread is allowed to touch live node state. UI/MIDI
     // callers publish a request; the next render block performs the reset.
     void panic() {panicRequested.store(true,std::memory_order_release);}
+    static void renderMetronome(const Entry& entry,Runtime& node,int n,double rate) {
+        const double bpm=std::clamp(double(entry.metronomeBPM),40.0,240.0);
+        const double step=bpm/(60.0*rate);
+        const int beats=std::clamp(entry.metronomeBeats,1,16);
+        const float level=std::clamp(entry.metronomeLevel,0.f,1.f);
+        const float accent=std::clamp(entry.metronomeAccent,0.f,1.f);
+        auto& state=*node.metronome;
+        const float decay=std::exp(-1.f/float(0.035*rate));
+        for(int i=0;i<n;++i) {
+            state.envelope*=decay;
+            state.clickPhase+=1800.0/rate;
+            if(state.clickPhase>=1.0)state.clickPhase-=1.0;
+            if(state.running) {
+                state.phase+=step;
+                if(state.phase>=1.0) {
+                    state.phase-=1.0;
+                    state.beat=(state.beat+1)%beats;
+                    state.envelope=1;state.clickPhase=0;
+                }
+            }
+            const float amp=state.envelope*level*(state.beat==0?accent:1.f);
+            const float v=std::sin(float(2.0*3.14159265358979323846)*float(state.clickPhase))*amp;
+            node.left[i]=node.right[i]=v;
+        }
+    }
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) {
         if(frames<=0 || !outL || !outR)return;
         bool planChanged=plans.consume();
@@ -759,6 +805,11 @@ public:
                 }
                 if(type==QuantizeNode) {
                     renderQuantize(entry,node,source,noteInput);
+                    continue;
+                }
+                if(type==MetronomeNode) {
+                    if(entry.bypass){node.metronome->running=false;node.metronome->envelope=0;std::fill(node.left.begin(),node.left.begin()+n,0.f);std::fill(node.right.begin(),node.right.begin()+n,0.f);}
+                    else renderMetronome(entry,node,n,rate);
                     continue;
                 }
                 if(type==AudioClipNode) {

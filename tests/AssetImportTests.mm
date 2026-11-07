@@ -92,6 +92,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(randomExample,randomGraph,&graphWhy));
     assert(randomGraph.nodes.size()==5 && randomGraph.edges.size()==4);
     assert(randomGraph.nodes[1].type==tri::RandomNode);
+    NSDictionary *metronomeExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/metronome-click.json"] options:0 error:nil];
+    tri::GraphSpec metronomeGraph;
+    assert(triassets::decodeGraph(metronomeExample,metronomeGraph,&graphWhy));
+    assert(metronomeGraph.nodes.size()==4 && metronomeGraph.edges.size()==3);
+    assert(metronomeGraph.nodes[2].type==tri::MetronomeNode);
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};

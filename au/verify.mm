@@ -65,7 +65,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x21C00,"system found installed Soundnet 2.28");
+            check(version==0x21D00,"system found installed Soundnet 2.29");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);
@@ -83,7 +83,7 @@ int main(int argc,char** argv) {
             if (!lib) { fprintf(stderr,"%s\n",dlerror()); return 1; }
             auto factory=reinterpret_cast<AudioComponentFactoryFunction>(dlsym(lib,"TernaryUnitFactory"));
             check(factory,"exported factory");
-            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x21C00,factory);
+            auto comp=AudioComponentRegister(&desc,CFSTR("Ternary: Ternary"),0x21D00,factory);
             check(comp,"component registration");
             requireOK(AudioComponentInstanceNew(comp,&unit),"AudioComponentInstanceNew");
         }
