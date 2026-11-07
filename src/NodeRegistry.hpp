@@ -16,7 +16,7 @@ inline constexpr int FilterNode=28, ReverbNode=29, NoiseNode=30;
 // Audio-file sampler added in 2.3.
 inline constexpr int SamplerNode=31;
 // Audio clip player and compressor added in 2.4.
-inline constexpr int AudioClipNode=32, CompressorNode=33;
+inline constexpr int AudioClipNode=32, CompressorNode=33, LimiterNode=34;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
@@ -27,6 +27,7 @@ inline constexpr int AudioClipGain=1140, AudioClipLoop=1141;
 inline constexpr int AudioClipStart=1142, AudioClipEnd=1143, AudioClipFade=1144;
 inline constexpr int CompThreshold=1150, CompRatio=1151, CompAttack=1152;
 inline constexpr int CompRelease=1153, CompMakeup=1154, CompMix=1155;
+inline constexpr int LimiterThreshold=1160, LimiterRelease=1161, LimiterCeiling=1162, LimiterGain=1163;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -62,6 +63,10 @@ inline constexpr ParamInfo compAttackInfo     {"Attack",.001f,1,.01f,"s"};
 inline constexpr ParamInfo compReleaseInfo    {"Release",.01f,2,.15f,"s"};
 inline constexpr ParamInfo compMakeupInfo     {"Makeup",0,2,1,""};
 inline constexpr ParamInfo compMixInfo        {"Mix",0,1,1,""};
+inline constexpr ParamInfo limiterThresholdInfo {"Threshold",-60,0,-6,"dB"};
+inline constexpr ParamInfo limiterReleaseInfo   {"Release",.01f,2,.12f,"s"};
+inline constexpr ParamInfo limiterCeilingInfo   {"Ceiling",-12,0,-.3f,"dB"};
+inline constexpr ParamInfo limiterGainInfo      {"Gain",0,2,1,""};
 
 struct NodeMeta {
     int type;
@@ -96,6 +101,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {SamplerNode,"采样器","处理",true,true},
         {AudioClipNode,"音频片段","处理",true,true},
         {CompressorNode,"压缩器","处理",true,true},
+        {LimiterNode,"限幅器","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -122,7 +128,7 @@ inline const char* nodeCategory(int type) {
 inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
-        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,
+        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,
         StartNode,StopNode,WaitNode,CountNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
@@ -159,6 +165,10 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case CompRelease:return &compReleaseInfo;
         case CompMakeup:return &compMakeupInfo;
         case CompMix:return &compMixInfo;
+        case LimiterThreshold:return &limiterThresholdInfo;
+        case LimiterRelease:return &limiterReleaseInfo;
+        case LimiterCeiling:return &limiterCeilingInfo;
+        case LimiterGain:return &limiterGainInfo;
         default:return nullptr;
     }
 }
@@ -170,6 +180,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==SamplerNode) return p>=SamplerRoot && p<=SamplerEnd;
     if(type==AudioClipNode) return p>=AudioClipGain && p<=AudioClipFade;
     if(type==CompressorNode) return p>=CompThreshold && p<=CompMix;
+    if(type==LimiterNode) return p>=LimiterThreshold && p<=LimiterGain;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -195,6 +206,7 @@ inline std::vector<int> nodeParamList(int type) {
         case SamplerNode:return {SamplerRoot,SamplerGain,SamplerLoop,SamplerAttack,SamplerRelease,SamplerStart,SamplerEnd};
         case AudioClipNode:return {AudioClipGain,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipFade};
         case CompressorNode:return {CompThreshold,CompRatio,CompAttack,CompRelease,CompMakeup,CompMix};
+        case LimiterNode:return {LimiterThreshold,LimiterRelease,LimiterCeiling,LimiterGain};
         default:return {};
     }
 }

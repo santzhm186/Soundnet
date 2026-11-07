@@ -64,6 +64,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(samplerExample,samplerExampleGraph,&graphWhy));
     assert(samplerExampleGraph.nodes.size()==5 && samplerExampleGraph.edges.size()==4);
     assert(samplerExampleGraph.nodes[1].sample && samplerExampleGraph.nodes[1].sample->frames()>1000);
+    NSDictionary *limiterExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/master-limiter.json"] options:0 error:nil];
+    tri::GraphSpec limiterGraph;
+    assert(triassets::decodeGraph(limiterExample,limiterGraph,&graphWhy));
+    assert(limiterGraph.nodes.size()==6 && limiterGraph.edges.size()==5);
+    assert(limiterGraph.nodes[4].type==tri::LimiterNode);
     NSDictionary *clipExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/audio-clip-compressor.json"] options:0 error:nil];
     NSDictionary *midiExample=[NSJSONSerialization JSONObjectWithData:
@@ -120,5 +126,5 @@ int main() { @autoreleasepool {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         puts("audio file import round-trips through a graph asset");
     }
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor and real Core ML pitch predictions.");
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter and real Core ML pitch predictions.");
 } }

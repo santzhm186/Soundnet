@@ -42,6 +42,8 @@ int main() {
         assert(!validGraphParam(AudioClipNode,CompThreshold));
         assert(validGraphParam(CompressorNode,CompThreshold));
         assert(!validGraphParam(CompressorNode,AudioClipGain));
+        assert(validGraphParam(LimiterNode,LimiterCeiling));
+        assert(!validGraphParam(LimiterNode,CompThreshold));
         graph.nodes[0].parameters[FilterCutoff]=1000;
         assert(!graphOrder(graph,order));
         graph.nodes[0].parameters.erase(FilterCutoff);
@@ -238,6 +240,25 @@ int main() {
         assert(compressed<dry*.8);
         puts("compressor reduces gain and honors dry mix");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, bypass and type-scoped validation.");
+    // A hard ceiling catches peaks above the limiter threshold; bypass exposes them again.
+    {
+        GraphSpec graph;
+        add(graph,1,NoiseNode,{{NoiseLevel,1},{NoiseType,0}});
+        add(graph,2,LimiterNode,{{LimiterThreshold,-6},{LimiterRelease,.05f},{LimiterCeiling,-12},{LimiterGain,2}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        std::vector<float> left(24000),right(24000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        float limited=0;for(float sample:left)limited=std::max(limited,std::fabs(sample));
+        graph.nodes[1].bypass=true;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        float dry=0;for(float sample:left)dry=std::max(dry,std::fabs(sample));
+
+        assert(dry>limited*1.05f);
+        puts("limiter clamps peaks and bypass restores level");
+    }
+    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, bypass and type-scoped validation.");
 
 }
