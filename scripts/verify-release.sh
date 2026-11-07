@@ -46,6 +46,11 @@ done
 test -s "$out/clip-to-midi.mid"
 "$app/Contents/MacOS/Soundnet" --export "$root/examples/audio-clip-compressor.json" "$out/format-44k1-24.wav" 1 44100 24 >/dev/null
 test -s "$out/format-44k1-24.wav"
+"$app/Contents/MacOS/Soundnet" --export "$root/examples/audio-clip-compressor.json" "$out/format-48k-32f.wav" 1 48000 32 >/dev/null
+test -s "$out/format-48k-32f.wav"
+format32=$(od -An -tu1 -j20 -N2 "$out/format-48k-32f.wav" | tr -s ' ' | sed 's/^ //')
+bits32=$(od -An -tu1 -j34 -N2 "$out/format-48k-32f.wav" | tr -s ' ' | sed 's/^ //')
+test "$format32" = "3 0" && test "$bits32" = "32 0"
 mkdir -p "$out/stems"
 "$app/Contents/MacOS/Soundnet" --export-stems "$root/examples/audio-clip-compressor.json" "$out/stems" 1 48000 24 >/dev/null
 stem_count=$(find "$out/stems" -name 'stem-*.wav' | wc -l | tr -d ' ')
