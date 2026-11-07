@@ -23,6 +23,31 @@ static NSString *nodeLabel(NSDictionary *node) {
     if([name isKindOfClass:NSString.class] && name.length)return name;
     return title([node[@"type"] intValue]);
 }
+static NSArray<NSString*> *paramOptions(int p) {
+    if(p==tri::Wave1 || p==tri::Wave2 || p==tri::Wave3)
+        return @[@"正弦",@"方波",@"锯齿",@"三角"];
+    if(p==tri::Pattern)
+        return @[@"直八",@"Bossa Nova",@"Reggae",@"Disco",@"十六分脉冲"];
+    if(p==tri::ChordQuality)
+        return @[@"大三和弦",@"小三和弦",@"属七",@"大七",@"小七",@"减三",@"挂二",@"挂四"];
+    if(p==tri::FilterType)
+        return @[@"低通",@"高通",@"带通"];
+    if(p==tri::NoiseType)
+        return @[@"白噪声",@"粉红噪声"];
+    if(p==tri::QuantizeScale)
+        return @[@"大调",@"小调",@"多利亚",@"五声",@"半音"];
+    if(p==tri::QuantizeMode)
+        return @[@"就近",@"向上",@"向下"];
+    if(p==tri::QuantizeRoot)
+        return @[@"C",@"C#",@"D",@"D#",@"E",@"F",@"F#",@"G",@"G#",@"A",@"A#",@"B"];
+    if(p==tri::ArpOn || p==tri::ClipRun || p==tri::ClipLoop || p==tri::ProgressRun ||
+       p==tri::ChordRun || p==tri::SamplerLoop || p==tri::AudioClipLoop ||
+       p==tri::SamplerReverse || p==tri::AudioClipReverse)
+        return @[@"关闭",@"开启"];
+    if(p==tri::ClockSync)
+        return @[@"自由",@"同步宿主"];
+    return nil;
+}
 NSArray<NSString *> *voiceNames() { return @[@"高声部", @"中声部", @"低声部"]; }
 struct VoiceControls { int lower,upper,texture; };
 constexpr VoiceControls voiceControls[]={
@@ -997,6 +1022,17 @@ std::vector<ParamPreset> presetsFor(int type) {
         [self label:parameterName(p) y:y];
         const auto& info=tri::graphParamInfo(p);
         id val=node[@"parameters"][[@(p) stringValue]] ?: @(info.def);
+        NSArray<NSString*> *options=paramOptions(p);
+        if(options) {
+            NSPopUpButton *popup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(142,y,96,26) pullsDown:NO];
+            [popup addItemsWithTitles:options];
+            NSInteger index=(NSInteger)std::lround([val doubleValue]-info.min);
+            [popup selectItemAtIndex:std::clamp<NSInteger>(index,0,(NSInteger)options.count-1)];
+            popup.tag=p;popup.target=self;popup.action=@selector(choiceChanged:);
+            [popup setAccessibilityLabel:parameterName(p)];
+            [_inspector addSubview:popup];y+=48;
+            continue;
+        }
         NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(142,y,96,25)];
         field.stringValue=[val description];field.tag=p;field.target=self;field.action=@selector(changed:);
         [_inspector addSubview:field];
@@ -1623,7 +1659,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.26    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.27    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
