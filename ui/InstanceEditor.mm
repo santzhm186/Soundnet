@@ -317,6 +317,7 @@ static NSString *autosaveFilePath() {
 @property NSPoint lastPoint;
 @property(strong) NSDictionary *dragStart;
 @property(strong) NSTimer *timer;
+@property(strong) dispatch_queue_t autosaveQueue;
 @property(strong) NSPanel *clipPanel;
 @property(strong) SNNoteRollView *clipRoll;
 @property uint64_t clipUID;
@@ -336,6 +337,7 @@ static NSString *autosaveFilePath() {
 -(void)clipAudition:(id)sender;
 -(void)refreshClipFields;
 -(void)autosave;
+-(void)flushAutosave;
 -(void)restoreAutosave:(id)sender;
 -(NSMutableDictionary *)node:(uint64_t)uid;
 -(BOOL)isSelected:(uint64_t)uid;
@@ -472,9 +474,19 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)autosave {
     if(getenv("SOUNDNET_NO_AUTOSAVE"))return;
+    // Coalesce rapid edits and keep JSON serialization/file I/O off the main thread.
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(flushAutosave) object:nil];
+    [self performSelector:@selector(flushAutosave) withObject:nil afterDelay:0.75];
+}
+-(void)flushAutosave {
+    if(getenv("SOUNDNET_NO_AUTOSAVE"))return;
     NSString *path=autosaveFilePath();if(!path.length)return;
-    NSData *data=[NSJSONSerialization dataWithJSONObject:_document options:0 error:nil];
-    if(data)[data writeToFile:path atomically:YES];
+    if(!_autosaveQueue)_autosaveQueue=dispatch_queue_create("com.soundnet.autosave",DISPATCH_QUEUE_SERIAL);
+    NSDictionary *snapshot=copyJSON(_document);
+    dispatch_async(_autosaveQueue, ^{
+        NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+        if(data)[data writeToFile:path atomically:YES];
+    });
 }
 -(void)restoreAutosave:(id)sender {
     NSString *path=autosaveFilePath();
@@ -1840,7 +1852,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.73    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.74    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
