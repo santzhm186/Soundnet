@@ -1,4 +1,4 @@
-Soundnet 2.20 · 输入 → 节点处理 → 输出
+Soundnet 2.21 · 输入 → 节点处理 → 输出
 
 右键画布，可以插入所有类型的节点。同一种节点可以添加多个，每个实例拥有自己的 ID、参数、素材和运行状态。选中节点后在右侧编辑；拖输出圆点到输入圆点建立连接。Shift 点击可增减选择，Shift 拖动空白处可框选；拖动任一选中节点会整体移动。Command+C / Command+V 复制粘贴节点和内部连线，Command+X 剪切，Command+A 全选，Delete 删除；选中连线后按 Delete 可单独删除连线。方向键微调位置，按住 Shift 每次移动 10 点。工具条「复制」「粘贴」「查找」「吸附」提供对应操作；吸附按 20 点网格对齐。
 
@@ -18,6 +18,7 @@ Soundnet 2.20 · 输入 → 节点处理 → 输出
 限幅器：Threshold 为开始限幅电平（-60–0 dB），Ceiling 为输出上限（-12–0 dB），Release 为恢复秒数，Gain 为输入增益。放在压缩器与音频输出之间，限制最终峰值。打开 examples/master-limiter.json 可试听。可在右侧勾选「旁通」。
 合唱：Rate 为 0.05–8 Hz，Depth 为调制深度 0–1，Mix 为干湿比，Delay 为 1–30 ms 基础延迟。左右声道相位差 LFO，可增加立体声宽度。
 颤音：Rate 0.1–20 Hz，Depth 0–1，Stereo 左右相位差，Mix 干湿比。位深破碎：Bits 1–16，Rate 500–48000 Hz，Mix 干湿比。打开 examples/tremolo-crush.json 可试听。
+相位器：Rate 0.05–8 Hz，Depth 0–1，Feedback 0–0.9，Mix 干湿比；四级全通滤波产生扫频相位效果。
 音阶量化：接在 Note 信号之后。Root 0–11 为调性（0=C），Scale 0 大调 1 自然小调 2 多利亚 3 大调五声 4 半音，Mode 0 最近音 1 向上 2 向下。按住音符时改参数会重新量化；旁通时原样传递。打开 examples/scale-quantizer.json 可试听。
 
 在 Logic 中

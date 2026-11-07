@@ -20,7 +20,7 @@ inline constexpr int AudioClipNode=32, CompressorNode=33, LimiterNode=34, Chorus
 // MIDI scale quantizer added in 2.11.
 inline constexpr int QuantizeNode=36;
 // Modulation and lo-fi processors added in 2.13.
-inline constexpr int TremoloNode=37, BitcrusherNode=38;
+inline constexpr int TremoloNode=37, BitcrusherNode=38, PhaserNode=39;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
@@ -38,6 +38,7 @@ inline constexpr int ChorusRate=1170, ChorusDepth=1171, ChorusMix=1172, ChorusDe
 inline constexpr int QuantizeRoot=1180, QuantizeScale=1181, QuantizeMode=1182;
 inline constexpr int TremoloRate=1190, TremoloDepth=1191, TremoloMix=1192, TremoloStereo=1193;
 inline constexpr int CrushBits=1200, CrushRate=1201, CrushMix=1202;
+inline constexpr int PhaserRate=1210, PhaserDepth=1211, PhaserFeedback=1212, PhaserMix=1213;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -95,6 +96,10 @@ inline constexpr ParamInfo tremoloStereoInfo{"Stereo",0,1,0,""};
 inline constexpr ParamInfo crushBitsInfo   {"Bits",1,16,8,"bit"};
 inline constexpr ParamInfo crushRateInfo   {"Rate",500,48000,8000,"Hz"};
 inline constexpr ParamInfo crushMixInfo    {"Mix",0,1,1,""};
+inline constexpr ParamInfo phaserRateInfo  {"Rate",.05f,8,.5f,"Hz"};
+inline constexpr ParamInfo phaserDepthInfo {"Depth",0,1,.7f,""};
+inline constexpr ParamInfo phaserFeedbackInfo{"Feedback",0,.9f,.3f,""};
+inline constexpr ParamInfo phaserMixInfo   {"Mix",0,1,.5f,""};
 
 struct NodeMeta {
     int type;
@@ -134,6 +139,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {QuantizeNode,"音阶量化","处理",true,true},
         {TremoloNode,"颤音","处理",true,true},
         {BitcrusherNode,"位深破碎","处理",true,true},
+        {PhaserNode,"相位器","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -160,7 +166,7 @@ inline const char* nodeCategory(int type) {
 inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
-        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,TremoloNode,BitcrusherNode,
+        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,TremoloNode,BitcrusherNode,PhaserNode,
         StartNode,StopNode,WaitNode,CountNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
@@ -219,6 +225,10 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case CrushBits:return &crushBitsInfo;
         case CrushRate:return &crushRateInfo;
         case CrushMix:return &crushMixInfo;
+        case PhaserRate:return &phaserRateInfo;
+        case PhaserDepth:return &phaserDepthInfo;
+        case PhaserFeedback:return &phaserFeedbackInfo;
+        case PhaserMix:return &phaserMixInfo;
         default:return nullptr;
     }
 }
@@ -235,6 +245,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==QuantizeNode) return p>=QuantizeRoot && p<=QuantizeMode;
     if(type==TremoloNode) return p>=TremoloRate && p<=TremoloStereo;
     if(type==BitcrusherNode) return p>=CrushBits && p<=CrushMix;
+    if(type==PhaserNode) return p>=PhaserRate && p<=PhaserMix;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -265,6 +276,7 @@ inline std::vector<int> nodeParamList(int type) {
         case QuantizeNode:return {QuantizeRoot,QuantizeScale,QuantizeMode};
         case TremoloNode:return {TremoloRate,TremoloDepth,TremoloMix,TremoloStereo};
         case BitcrusherNode:return {CrushBits,CrushRate,CrushMix};
+        case PhaserNode:return {PhaserRate,PhaserDepth,PhaserFeedback,PhaserMix};
         default:return {};
     }
 }
