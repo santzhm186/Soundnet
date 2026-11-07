@@ -40,6 +40,8 @@ int main() {
     midiClip.clip.events={{0,0x90,67,110},{.5,0x80,67,0}};midiGraph.nodes.push_back(midiClip);
     GraphNode midiOut;midiOut.id=3;midiOut.type=MidiOutNode;midiGraph.nodes.push_back(midiOut);
     edge(midiGraph,1,2,1);edge(midiGraph,2,3);
+    GraphNode midiClock;midiClock.id=4;midiClock.type=ClockNode;midiClock.parameters[ClockBPM]=90;
+    midiGraph.nodes.push_back(midiClock);
     std::vector<size_t> midiOrder;assert(graphOrder(midiGraph,midiOrder));
     offline::Result midiResult;
     assert(offline::render(midiGraph,2,48000,midiResult,why));
@@ -49,7 +51,8 @@ int main() {
     std::string midiPath="build/tests-offline/export.mid";
     std::vector<smf::TimedEvent> timed;
     for(const auto& e:midiResult.midi)timed.push_back({e.seconds,e.status,e.a,e.b});
-    assert(smf::write(midiPath,timed,2,why));
+    assert(midiResult.bpm==90);
+    assert(smf::write(midiPath,timed,2,midiResult.bpm,why));
     std::ifstream in(midiPath,std::ios::binary);std::string midiBytes((std::istreambuf_iterator<char>(in)),{});
     assert(midiBytes.rfind("MThd",0)==0);
     MidiClip roundTrip;roundTrip=smf::parse(reinterpret_cast<const uint8_t*>(midiBytes.data()),midiBytes.size());

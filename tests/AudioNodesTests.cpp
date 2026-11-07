@@ -44,6 +44,8 @@ int main() {
         assert(!validGraphParam(CompressorNode,AudioClipGain));
         assert(validGraphParam(LimiterNode,LimiterCeiling));
         assert(!validGraphParam(LimiterNode,CompThreshold));
+        assert(validGraphParam(ChorusNode,ChorusDepth));
+        assert(!validGraphParam(ChorusNode,LimiterGain));
         graph.nodes[0].parameters[FilterCutoff]=1000;
         assert(!graphOrder(graph,order));
         graph.nodes[0].parameters.erase(FilterCutoff);
@@ -259,6 +261,25 @@ int main() {
         assert(dry>limited*1.05f);
         puts("limiter clamps peaks and bypass restores level");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, bypass and type-scoped validation.");
+    // Chorus mixes a modulated delay and is silent at zero mix.
+    {
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+        add(graph,2,ChorusNode,{{ChorusRate,.8f},{ChorusDepth,.5f},{ChorusMix,1},{ChorusDelay,12}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,69,127);
+        std::vector<float> left(24000),right(24000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,4800,20000)>.005);
+        graph.nodes[2].parameters[ChorusMix]=0;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        assert(rms(left,4800,20000)>.005);
+        puts("chorus renders modulated delay and honors dry mix");
+    }
+    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, bypass and type-scoped validation.");
 
 }

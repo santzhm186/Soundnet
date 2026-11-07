@@ -96,6 +96,13 @@ int main() { @autoreleasepool {
     NSMutableDictionary *badAsset=[badNode[@"asset"] mutableCopy];
     badAsset[@"channels"]=@3;badNode[@"asset"]=badAsset;badChannels[@"nodes"]=@[badNode];
     assert(!triassets::decodeGraph(badChannels,samplerGraph,&graphWhy));
+    tri::GraphSpec chorusGraph;
+    NSDictionary *chorusDocument=@{@"version":@3,@"nodes":@[
+        @{@"id":@1,@"type":@(tri::ChorusNode),@"x":@0,@"y":@0,
+          @"parameters":@{@"1170":@.5,@"1171":@.4,@"1172":@.3,@"1173":@12}}],@"edges":@[]};
+    assert(triassets::decodeGraph(chorusDocument,chorusGraph,&graphWhy));
+    assert(chorusGraph.nodes.size()==1 && chorusGraph.nodes[0].type==tri::ChorusNode);
+    puts("chorus JSON decodes");
     tri::GraphSpec clipGraph;
     NSDictionary *clipDocument=@{@"version":@3,@"nodes":@[
         @{@"id":@1,@"type":@(tri::AudioClipNode),@"x":@0,@"y":@0,@"parameters":@{@"1140":@.8},
@@ -126,5 +133,5 @@ int main() { @autoreleasepool {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         puts("audio file import round-trips through a graph asset");
     }
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter and real Core ML pitch predictions.");
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter, chorus and real Core ML pitch predictions.");
 } }

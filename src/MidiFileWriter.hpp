@@ -8,20 +8,21 @@
 
 namespace tri::smf {
 // A small, dependency-free standard MIDI writer for the graph's live MIDI output.
-// Times are seconds from the start of the export; the file uses 480 PPQ at 120 BPM.
+// Times are seconds from the start of the export; the file uses 480 PPQ.
 struct TimedEvent {
     double seconds;
     uint8_t status, key, value;
 };
 
 inline bool write(const std::string& path, const std::vector<TimedEvent>& input,
-                  double duration, std::string& why) {
+                  double duration, double bpm, std::string& why) {
     if (path.empty()) { why = "MIDI 输出路径为空。"; return false; }
     if (!(duration > 0) || duration > 120) { why = "MIDI 导出时长需在 0–120 秒之间。"; return false; }
     if (input.size() > 65535) { why = "MIDI 事件过多。"; return false; }
+    if (!(bpm >= 20) || bpm > 400) { why = "MIDI 导出速度需在 20–400 BPM 之间。"; return false; }
 
     constexpr uint16_t ppq = 480;
-    constexpr double ticksPerSecond = 960.0; // 120 BPM
+    const double ticksPerSecond = ppq * bpm / 60.0;
     const auto endTick = uint64_t(std::llround(duration * ticksPerSecond));
     if (endTick > 0x0fffffffULL) { why = "MIDI 导出时长过长。"; return false; }
 
@@ -41,8 +42,9 @@ inline bool write(const std::string& path, const std::vector<TimedEvent>& input,
         while (n) byte(bytes[--n]);
     };
 
-    // Tempo meta event: 500000 µs per quarter note = 120 BPM.
-    vlq(0); byte(0xff); byte(0x51); byte(0x03); byte(0x07); byte(0xa1); byte(0x20);
+    const uint32_t microseconds = uint32_t(std::llround(60000000.0 / bpm));
+    vlq(0); byte(0xff); byte(0x51); byte(0x03);
+    byte(uint8_t(microseconds >> 16)); byte(uint8_t(microseconds >> 8)); byte(uint8_t(microseconds));
 
     uint64_t previous = 0;
     for (const TimedEvent& e : events) {

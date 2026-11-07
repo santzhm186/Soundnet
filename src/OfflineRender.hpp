@@ -16,6 +16,7 @@ struct Result {
     std::vector<MidiMessage> midi;
     double rate=48000;
     double peak=0;
+    double bpm=120;
 };
 struct MidiCapture {
     Result* result=nullptr;
@@ -35,7 +36,9 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     if(!(seconds>.05)||seconds>120){why="导出时长需在 0.05–120 秒之间。";return false;}
     if(rate<8000||rate>192000){why="导出采样率需在 8–192 kHz 之间。";return false;}
     bool hasHardware=false,hasGraphOutput=false,hasDaw=false;
+    double bpm=120;
     for(const GraphNode& node:graph.nodes) {
+        if(node.type==ClockNode) bpm=graphParamValue(node,ClockBPM);
         if(node.type==HardwareOutputNode)hasHardware=true;
         if(node.type==OutputNode)hasGraphOutput=true;
         if(node.type==DawOutputNode)hasDaw=true;
@@ -59,6 +62,7 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     size_t total=size_t(std::ceil(seconds*rate));
     if(total==0||total>size_t(120*192000)){why="导出时长超出范围。";return false;}
     result.rate=rate;
+    result.bpm=bpm;
     result.left.assign(total,0);
     result.right.assign(total,0);
     result.midi.clear();
