@@ -168,6 +168,8 @@ int main() {
         assert(rms(left,24000,48000)<.005);
         for(float sample:left)assert(std::isfinite(sample));
         assert(validGraphParam(SamplerNode,SamplerXfade));
+        GraphSpec bad=graph;bad.nodes[sampler].parameters[SamplerStart]=.8f;bad.nodes[sampler].parameters[SamplerEnd]=.2f;
+        std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
         puts("sampler plays, loops and releases a note");
     }
 
@@ -247,6 +249,8 @@ int main() {
         assert(rms(left,2400,20000)>.3); // 20 ms crossfade must not swallow a 100 ms loop
         for(float sample:left)assert(std::isfinite(sample));
         assert(validGraphParam(AudioClipNode,AudioClipXfade));
+        GraphSpec bad=graph;bad.nodes[clip].parameters[AudioClipStart]=.9f;bad.nodes[clip].parameters[AudioClipEnd]=.1f;
+        std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
         graph.nodes[1].parameters[TriggerPulse]=1;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
