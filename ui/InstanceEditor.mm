@@ -1852,7 +1852,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.74    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.75    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

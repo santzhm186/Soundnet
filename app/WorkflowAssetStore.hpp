@@ -11,10 +11,38 @@ struct PreparedAssets {
     NoteModel model{};
     GraphSpec graph;
 
-    bool load(NSDictionary *input) {
+    static bool sameNodeAssets(NSDictionary *next,NSDictionary *previous) {
+        if(![next isKindOfClass:NSDictionary.class] || ![previous isKindOfClass:NSDictionary.class])return false;
+        NSArray *nextNodes=next[@"nodes"],*previousNodes=previous[@"nodes"];
+        if(![nextNodes isKindOfClass:NSArray.class] || ![previousNodes isKindOfClass:NSArray.class] ||
+           nextNodes.count!=previousNodes.count)return false;
+        NSMutableDictionary *byID=[NSMutableDictionary new];
+        for(NSDictionary *node in previousNodes)if([node isKindOfClass:NSDictionary.class] && node[@"id"])
+            byID[node[@"id"]]=node;
+        for(NSDictionary *node in nextNodes) {
+            if(![node isKindOfClass:NSDictionary.class])return false;
+            NSDictionary *old=byID[node[@"id"]];
+            if(!old || ![node[@"type"] isEqual:old[@"type"]])return false;
+            id a=node[@"asset"],b=old[@"asset"];
+            if(!(a==b || [a isEqual:b]))return false;
+        }
+        return true;
+    }
+    static void reuseNodeAssets(const GraphSpec& previous,GraphSpec& next) {
+        for(auto& node:next.nodes) {
+            for(const auto& old:previous.nodes)if(old.id==node.id) {
+                node.clip=old.clip;node.model=old.model;node.sample=old.sample;break;
+            }
+        }
+    }
+    bool load(NSDictionary *input,NSDictionary *previousGraph=nil,const GraphSpec *previous=nil) {
         if (![input isKindOfClass:NSDictionary.class] ||
             !triassets::decode(input,clip,model,nullptr)) return false;
-        if(input[@"graph"] && !triassets::decodeGraph(input[@"graph"],graph,nullptr))return false;
+        if(input[@"graph"]) {
+            bool reuse=previousGraph && previous && sameNodeAssets(input[@"graph"],previousGraph);
+            if(!triassets::decodeGraph(input[@"graph"],graph,nullptr,!reuse))return false;
+            if(reuse)reuseNodeAssets(*previous,graph);
+        }
         dictionary = CFBridgingRelease(CFPropertyListCreateDeepCopy(nullptr,
             (__bridge CFDictionaryRef)input,kCFPropertyListImmutable));
         return dictionary != nil;
@@ -23,6 +51,7 @@ struct PreparedAssets {
 
 struct WorkflowAssetStore {
     NSDictionary *current = @{};
+    GraphSpec lastGraph;
     void apply(const PreparedAssets& next, Engine& engine) {
         auto changed = [&](NSString *key) {
             id previous = current[key], replacement = next.dictionary[key];
@@ -38,8 +67,9 @@ struct WorkflowAssetStore {
     }
     bool replace(NSDictionary *input, Engine& engine) {
         PreparedAssets next;
-        if (!next.load(input)) return false;
+        if (!next.load(input,current[@"graph"],&lastGraph)) return false;
         apply(next,engine);
+        lastGraph=next.graph;
         return true;
     }
 };

@@ -22,6 +22,10 @@ echo "== compile AssetImportTests"
 "${cxx[@]}" -fobjc-arc tests/AssetImportTests.mm src/WorkflowAssets.mm \
   -framework Foundation -framework CoreML -framework AVFoundation -o "$build/AssetImportTests"
 
+echo "== compile AssetStoreTests"
+"${cxx[@]}" -fobjc-arc -I. tests/AssetStoreTests.mm src/WorkflowAssets.mm \
+  -framework Foundation -framework CoreML -framework AVFoundation -o "$build/AssetStoreTests"
+
 echo "== compile ClipEditorTests"
 "${cxx[@]}" -fobjc-arc -I. tests/ClipEditorTests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
   -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
@@ -38,6 +42,9 @@ test -s "$build/render-audition.wav"
 
 echo "== run AssetImportTests"
 "$build/AssetImportTests"
+
+echo "== run AssetStoreTests"
+"$build/AssetStoreTests"
 
 echo "== run ClipEditorTests"
 "$build/ClipEditorTests"
