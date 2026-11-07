@@ -145,13 +145,17 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     tri::GraphSpec next;
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::ArrangerNode) ||
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::NoiseNode) ||
            !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
            !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
             return fail(why,@"节点的实例 ID、类型或坐标无效。");
         tri::GraphNode node;
         node.id=[obj[@"id"] unsignedLongLongValue];node.type=[obj[@"type"] intValue];
         node.x=[obj[@"x"] floatValue];node.y=[obj[@"y"] floatValue];
+        if(obj[@"bypass"]) {
+            if(![obj[@"bypass"] isKindOfClass:NSNumber.class])return fail(why,@"节点旁通值无效。");
+            node.bypass=[obj[@"bypass"] boolValue];
+        }
         for(id key in obj[@"parameters"]) {
             if(![key isKindOfClass:NSString.class])return fail(why,@"参数标识无效。");
             NSScanner *scan=[NSScanner scannerWithString:key];int pid=0;

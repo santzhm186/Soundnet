@@ -5,21 +5,14 @@
 
 namespace {
 NSArray *catalog() {
-    return @[
-        @[@1,@"本地 MIDI",@"输入"],@[@15,@"DAW MIDI",@"输入"],@[@16,@"MIDI Clip",@"输入"],
-        @[@6,@"硬件音频输入",@"输入"],@[@22,@"DAW 音频输入",@"输入"],
-        @[@11,@"和弦输入",@"输入"],@[@12,@"和声走向",@"输入"],
-        @[@13,@"节奏速度",@"输入"],@[@21,@"DAW 时钟",@"输入"],
-        @[@3,@"振荡器",@"处理"],@[@2,@"ARP",@"处理"],@[@(tri::ArrangerNode),@"三声部编排器",@"处理"],@[@14,@"力度自动化",@"处理"],
-        @[@17,@"音符模型",@"处理"],@[@7,@"混音器",@"处理"],@[@8,@"EQ",@"处理"],@[@9,@"Delay",@"处理"],
-        @[@23,@"开始触发器",@"逻辑"],@[@24,@"停止触发器",@"逻辑"],@[@25,@"等待",@"逻辑"],@[@26,@"次数条件",@"逻辑"],
-        @[@19,@"硬件音频输出",@"输出"],@[@20,@"DAW 音频输出",@"输出"],@[@18,@"MIDI 输出",@"输出"]];
+    NSMutableArray *rows=[NSMutableArray new];
+    for(int type:tri::nodeCatalog()) {
+        const tri::NodeMeta *meta=tri::nodeMeta(type);
+        if(meta)[rows addObject:@[@(type),@(meta->title),@(meta->category)]];
+    }
+    return rows;
 }
-NSString *title(int type) {
-    if(type==10)return @"音频输出";
-    for(NSArray *row in catalog())if([row[0] intValue]==type)return row[1];
-    return @"节点";
-}
+NSString *title(int type) { return @(tri::nodeTitle(type)); }
 NSArray<NSString *> *voiceNames() { return @[@"高声部", @"中声部", @"低声部"]; }
 struct VoiceControls { int lower,upper,texture; };
 constexpr VoiceControls voiceControls[]={
@@ -50,25 +43,7 @@ NSMutableDictionary *copyJSON(id value) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
     return [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
 }
-std::vector<int> controls(int type) {
-    using namespace tri;
-    switch(type) {
-        case Osc1Node:return {Wave1,Level1,Tune1,Attack,Decay,Sustain,Release};
-        case ArpNode:return {ArpOn,tri::Pattern,ArpRepeat,Gate};
-        case ChordNode:return {ChordRun,ChordRoot,ChordQuality};
-        case ProgressNode:return {ProgressRun,ProgressLength,ProgressBars};
-        case ClipNode:return {ClipRun,ClipLoop};
-        case ClockNode:return {ClockBPM};
-        case VelocityNode:return {VelocityMin,VelocityMax,VelocityRate,VelocityShape};
-        case EQNode:return {EQLow,EQMid,EQHigh};
-        case DelayNode:return {DelayTime,DelayFeedback,DelayMix};
-        case OutputNode:case HardwareOutputNode:case DawOutputNode:return {Master};
-        case WaitNode:return {WaitSeconds};
-        case CountNode:return {TriggerCount};
-        case ArrangerNode:return {ArrHighMin,ArrHighMax,ArrHighTexture,ArrMidMin,ArrMidMax,ArrMidTexture,ArrLowMin,ArrLowMax,ArrLowTexture};
-        default:return {};
-    }
-}
+std::vector<int> controls(int type) { return tri::nodeParamList(type); }
 NSString *parameterName(int p) {
     switch(p) {
         case tri::TriggerCount:return @"收到 X 次后触发";
@@ -76,10 +51,12 @@ NSString *parameterName(int p) {
         case tri::ClockBPM:return @"BPM";
         case tri::ClipRun:return @"播放  0 / 1";
         case tri::ClipLoop:return @"循环  0 / 1";
-        default:return @(tri::params[p].name);
+        default:return @(tri::graphParamInfo(p).name);
     }
 }
 }
+
+namespace { NSRect nodeRect(NSDictionary *node); }
 
 @class SNInstanceEditor;
 @interface SNInstanceCanvas : NSView
@@ -102,6 +79,13 @@ NSString *parameterName(int p) {
 @property(strong) NSView *inspector;
 @property(strong) NSTextField *status;
 @property uint64_t selected;
+@property(strong) NSMutableSet<NSNumber *> *selection;
+@property NSInteger selectedEdge;
+@property(strong) NSDictionary *clipboard;
+@property BOOL snap;
+@property BOOL boxSelecting;
+@property NSPoint boxOrigin;
+@property NSPoint boxCurrent;
 @property double zoom;
 @property NSPoint origin;
 @property NSPoint menuPoint;
@@ -113,6 +97,20 @@ NSString *parameterName(int p) {
 @property(strong) NSDictionary *dragStart;
 @property(strong) NSTimer *timer;
 -(NSMutableDictionary *)node:(uint64_t)uid;
+-(BOOL)isSelected:(uint64_t)uid;
+-(NSArray<NSNumber *> *)selectedIDs;
+-(NSArray<NSNumber *> *)activeIDs;
+-(void)selectOnly:(uint64_t)uid;
+-(void)toggleSelection:(uint64_t)uid;
+-(void)copy:(id)sender;
+-(void)paste:(id)sender;
+-(void)cut:(id)sender;
+-(void)selectAll:(id)sender;
+-(void)selectNone:(id)sender;
+-(void)deleteEdge:(NSInteger)index;
+-(void)pruneSelection;
+-(void)snap:(id)sender;
+-(void)search:(id)sender;
 -(void)inspect;
 -(void)commit:(NSDictionary *)previous;
 -(void)insert:(NSMenuItem *)sender;
@@ -127,6 +125,28 @@ NSString *parameterName(int p) {
     for(NSMutableDictionary *node in _document[@"nodes"])if([node[@"id"] unsignedLongLongValue]==uid)return node;
     return nil;
 }
+-(BOOL)isSelected:(uint64_t)uid { return [_selection containsObject:@(uid)]; }
+-(NSArray<NSNumber *> *)selectedIDs {
+    return [_selection.allObjects sortedArrayUsingComparator:^NSComparisonResult(NSNumber *a,NSNumber *b){
+        unsigned long long x=a.unsignedLongLongValue,y=b.unsignedLongLongValue;
+        return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;
+    }];
+}
+-(void)selectOnly:(uint64_t)uid {
+    [_selection removeAllObjects];
+    if(uid)[_selection addObject:@(uid)];
+    _selected=uid;_selectedEdge=-1;[self inspect];
+}
+-(void)toggleSelection:(uint64_t)uid {
+    NSNumber *key=@(uid);
+    if([_selection containsObject:key]) {
+        [_selection removeObject:key];
+        if(_selected==uid)_selected=_selection.count?[[self selectedIDs].lastObject unsignedLongLongValue]:0;
+    } else {
+        [_selection addObject:key];_selected=uid;
+    }
+    _selectedEdge=-1;[self inspect];
+}
 -(void)message:(NSString *)text {_status.stringValue=text ?: @"";}
 -(void)commit:(NSDictionary *)previous {
     tri::GraphSpec graph;NSString *why=nil;
@@ -135,10 +155,22 @@ NSString *parameterName(int p) {
     } else {
         if(previous && ![previous isEqual:_document]) {
             [_history addObject:copyJSON(previous)];[_future removeAllObjects];
+            while(_history.count>64)[_history removeObjectAtIndex:0];
         }
         [self message:[NSString stringWithFormat:@"%lu 个独立节点 · %lu 条连接",(unsigned long)[_document[@"nodes"] count],(unsigned long)[_document[@"edges"] count]]];
     }
+    [self pruneSelection];
     _canvas.needsDisplay=YES;
+}
+-(void)pruneSelection {
+    if(!_selection)_selection=[NSMutableSet new];
+    NSMutableSet *alive=[NSMutableSet new];
+    for(NSDictionary *node in _document[@"nodes"])if([_selection containsObject:node[@"id"]])[alive addObject:node[@"id"]];
+    _selection=alive;
+    if(_selected && [self node:_selected] && ![_selection containsObject:@(_selected)])[_selection addObject:@(_selected)];
+    if(_selected && ![_selection containsObject:@(_selected)])
+        _selected=_selection.count?[[self selectedIDs].lastObject unsignedLongLongValue]:0;
+    if(_selectedEdge>=(NSInteger)[(NSArray *)_document[@"edges"] count])_selectedEdge=-1;
 }
 -(NSButton *)button:(NSString *)text frame:(NSRect)frame action:(SEL)action parent:(NSView *)parent {
     NSButton *b=[NSButton buttonWithTitle:text target:self action:action];b.frame=frame;[parent addSubview:b];return b;
@@ -153,34 +185,148 @@ NSString *parameterName(int p) {
     if(type==tri::Osc1Node)parameters[[@(tri::Level1) stringValue]]=@.66;
     NSMutableDictionary *node=[@{@"id":@(next),@"type":@(type),@"x":@(_menuPoint.x),@"y":@(_menuPoint.y),@"parameters":parameters} mutableCopy];
     [_document[@"nodes"] addObject:node];_selected=next;
+    [_selection removeAllObjects];[_selection addObject:@(next)];
     [self commit:previous];[self inspect];
 }
+-(NSArray<NSNumber *> *)activeIDs {
+    if(_selection.count)return [self selectedIDs];
+    return _selected?@[@(_selected)]:@[];
+}
 -(void)remove:(id)sender {
+    NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
     NSDictionary *previous=copyJSON(_document);
-    NSMutableDictionary *node=[self node:_selected];if(!node)return;
-    [_document[@"nodes"] removeObject:node];
+    NSSet *removed=[NSSet setWithArray:ids];
+    NSMutableArray *remaining=[NSMutableArray array];
+    for(NSDictionary *node in _document[@"nodes"])if(![removed containsObject:node[@"id"]])[remaining addObject:node];
+    _document[@"nodes"]=remaining;
     NSIndexSet *indices=[_document[@"edges"] indexesOfObjectsPassingTest:^BOOL(NSDictionary *edge,NSUInteger,BOOL*){
-        return [edge[@"source"] unsignedLongLongValue]==self.selected || [edge[@"target"] unsignedLongLongValue]==self.selected;
+        return [removed containsObject:edge[@"source"]] || [removed containsObject:edge[@"target"]];
     }];
-    [_document[@"edges"] removeObjectsAtIndexes:indices];_selected=0;
+    [_document[@"edges"] removeObjectsAtIndexes:indices];
+    [_selection removeAllObjects];_selected=0;_selectedEdge=-1;
     [self commit:previous];[self inspect];
 }
 -(void)disconnect:(id)sender {
-    if(![self node:_selected])return;
+    NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
     NSDictionary *previous=copyJSON(_document);
+    NSSet *removed=[NSSet setWithArray:ids];
     NSIndexSet *indices=[_document[@"edges"] indexesOfObjectsPassingTest:^BOOL(NSDictionary *edge,NSUInteger,BOOL*){
-        return [edge[@"source"] unsignedLongLongValue]==self.selected || [edge[@"target"] unsignedLongLongValue]==self.selected;
+        return [removed containsObject:edge[@"source"]] || [removed containsObject:edge[@"target"]];
     }];
-    [_document[@"edges"] removeObjectsAtIndexes:indices];[self commit:previous];
+    [_document[@"edges"] removeObjectsAtIndexes:indices];_selectedEdge=-1;
+    [self commit:previous];
 }
 -(void)duplicate:(id)sender {
+    NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
     NSDictionary *previous=copyJSON(_document);
-    NSMutableDictionary *original=[self node:_selected];if(!original)return;
     uint64_t next=1;
     for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
-    NSMutableDictionary *copy=copyJSON(original);copy[@"id"]=@(next);
-    copy[@"x"]=@([copy[@"x"] doubleValue]+35);copy[@"y"]=@([copy[@"y"] doubleValue]+45);
-    [_document[@"nodes"] addObject:copy];_selected=next;[self commit:previous];[self inspect];
+    NSMutableDictionary<NSNumber *,NSNumber *> *mapping=[NSMutableDictionary new];
+    NSMutableArray *copies=[NSMutableArray new];
+    for(NSNumber *key in ids) {
+        NSDictionary *original=[self node:key.unsignedLongLongValue];if(!original)continue;
+        NSMutableDictionary *copy=copyJSON(original);
+        copy[@"id"]=@(next++);mapping[key]=copy[@"id"];
+        copy[@"x"]=@([copy[@"x"] doubleValue]+35);copy[@"y"]=@([copy[@"y"] doubleValue]+45);
+        [copies addObject:copy];
+    }
+    if(!copies.count)return;
+    NSMutableArray *edges=[NSMutableArray new];
+    for(NSDictionary *edge in _document[@"edges"]) {
+        NSNumber *source=mapping[edge[@"source"]],*target=mapping[edge[@"target"]];
+        if(!source || !target)continue;
+        NSMutableDictionary *copy=copyJSON(edge);copy[@"source"]=source;copy[@"target"]=target;
+        [edges addObject:copy];
+    }
+    [_document[@"nodes"] addObjectsFromArray:copies];
+    [_document[@"edges"] addObjectsFromArray:edges];
+    [_selection removeAllObjects];
+    for(NSDictionary *copy in copies){[_selection addObject:copy[@"id"]];_selected=[copy[@"id"] unsignedLongLongValue];}
+    _selectedEdge=-1;[self commit:previous];[self inspect];
+}
+-(void)copy:(id)sender {
+    NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count){[self message:@"没有可复制的节点。"];return;}
+    NSSet *wanted=[NSSet setWithArray:ids];
+    NSMutableArray *nodes=[NSMutableArray new],*edges=[NSMutableArray new];
+    for(NSNumber *key in ids) { NSDictionary *node=[self node:key.unsignedLongLongValue]; if(node)[nodes addObject:copyJSON(node)]; }
+    for(NSDictionary *edge in _document[@"edges"])
+        if([wanted containsObject:edge[@"source"]] && [wanted containsObject:edge[@"target"]])[edges addObject:copyJSON(edge)];
+    _clipboard=@{@"nodes":nodes,@"edges":edges};
+    [self message:[NSString stringWithFormat:@"已复制 %lu 个节点。",(unsigned long)nodes.count]];
+}
+-(void)cut:(id)sender {
+    NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
+    [self copy:nil];[self remove:nil];[self message:[NSString stringWithFormat:@"已剪切 %lu 个节点。",(unsigned long)ids.count]];
+}
+-(void)paste:(id)sender {
+    NSDictionary *source=_clipboard;
+    if(!source){[self message:@"剪贴板为空。"];return;}
+    NSDictionary *previous=copyJSON(_document);
+    uint64_t next=1;
+    for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
+    NSMutableDictionary<NSNumber *,NSNumber *> *mapping=[NSMutableDictionary new];
+    NSMutableArray *copies=[NSMutableArray new];
+    for(NSDictionary *node in source[@"nodes"]) {
+        if(![node isKindOfClass:[NSDictionary class]] || !node[@"id"])continue;
+        NSMutableDictionary *copy=copyJSON(node);
+        copy[@"id"]=@(next++);mapping[node[@"id"]]=copy[@"id"];
+        copy[@"x"]=@([copy[@"x"] doubleValue]+35);copy[@"y"]=@([copy[@"y"] doubleValue]+45);
+        [copies addObject:copy];
+    }
+    if(!copies.count)return;
+    NSMutableArray *edges=[NSMutableArray new];
+    for(NSDictionary *edge in source[@"edges"]) {
+        NSNumber *a=mapping[edge[@"source"]],*b=mapping[edge[@"target"]];
+        if(!a || !b)continue;
+        NSMutableDictionary *copy=copyJSON(edge);copy[@"source"]=a;copy[@"target"]=b;
+        [edges addObject:copy];
+    }
+    [_document[@"nodes"] addObjectsFromArray:copies];
+    [_document[@"edges"] addObjectsFromArray:edges];
+    [_selection removeAllObjects];
+    for(NSDictionary *copy in copies){[_selection addObject:copy[@"id"]];_selected=[copy[@"id"] unsignedLongLongValue];}
+    _selectedEdge=-1;[self commit:previous];[self inspect];
+    [self message:[NSString stringWithFormat:@"已粘贴 %lu 个节点。",(unsigned long)copies.count]];
+}
+-(void)selectAll:(id)sender {
+    [_selection removeAllObjects];_selected=0;
+    for(NSDictionary *node in _document[@"nodes"]){[_selection addObject:node[@"id"]];_selected=[node[@"id"] unsignedLongLongValue];}
+    _selectedEdge=-1;[self inspect];_canvas.needsDisplay=YES;
+}
+-(void)selectNone:(id)sender {
+    [_selection removeAllObjects];_selected=0;_selectedEdge=-1;[self inspect];_canvas.needsDisplay=YES;
+}
+-(void)deleteEdge:(NSInteger)index {
+    if(index<0 || index>=(NSInteger)[(NSArray *)_document[@"edges"] count])return;
+    NSDictionary *previous=copyJSON(_document);
+    [_document[@"edges"] removeObjectAtIndex:index];_selectedEdge=-1;
+    [self commit:previous];
+}
+-(void)snap:(id)sender {
+    _snap=!_snap;
+    if([sender isKindOfClass:[NSButton class]])((NSButton *)sender).state=_snap?NSControlStateValueOn:NSControlStateValueOff;
+    [self message:_snap?@"吸附已开启（20 点网格）。":@"吸附已关闭。"];
+}
+-(void)search:(id)sender {
+    NSAlert *alert=[NSAlert new];alert.messageText=@"查找节点";alert.informativeText=@"输入节点名称或编号。";
+    [alert addButtonWithTitle:@"查找"];[alert addButtonWithTitle:@"取消"];
+    NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(0,0,240,24)];
+    field.placeholderString=@"例如 滤波器、混响、27";alert.accessoryView=field;
+    if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSString *needle=[field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+    if(!needle.length)return;
+    NSDictionary *found=nil;
+    for(NSDictionary *node in _document[@"nodes"]) {
+        int type=[node[@"type"] intValue];
+        NSString *labelText=[NSString stringWithFormat:@"%@ %@",title(type),node[@"id"]].lowercaseString;
+        if([[node[@"id"] stringValue] isEqualToString:needle] || [labelText containsString:needle]){found=node;break;}
+    }
+    if(!found){[self message:@"没有找到匹配的节点。"];return;}
+    [self selectOnly:[found[@"id"] unsignedLongLongValue]];
+    NSRect r=nodeRect(found);
+    _origin=NSMakePoint(_canvas.bounds.size.width/2-(NSMidX(r))*_zoom,_canvas.bounds.size.height/2-(NSMidY(r))*_zoom);
+    _canvas.needsDisplay=YES;
+    [self message:[NSString stringWithFormat:@"已定位 %@ #%@",title([found[@"type"] intValue]),found[@"id"]]];
 }
 -(void)undo:(id)sender {[self historyFrom:_history to:_future];}
 -(void)redo:(id)sender {[self historyFrom:_future to:_history];}
@@ -189,15 +335,16 @@ NSString *parameterName(int p) {
     NSDictionary *next=from.lastObject;
     if(_assetsWrite(@{@"graph":next})) {
         [to addObject:copyJSON(_document)];_document=copyJSON(next);[from removeLastObject];
-        [self inspect];_canvas.needsDisplay=YES;
+        [self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
     }
 }
 -(void)changed:(NSTextField *)field {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     int p=(int)field.tag;double value=field.doubleValue;
     NSScanner *scan=[NSScanner scannerWithString:field.stringValue];
+    const auto& info=tri::graphParamInfo(p);
     if(![scan scanDouble:&value] || !scan.isAtEnd || !std::isfinite(value) ||
-        value<tri::params[p].min || value>tri::params[p].max) { [self message:@"参数超出范围。"];return; }
+        value<info.min || value>info.max) { [self message:@"参数超出范围。"];return; }
     NSDictionary *previous=copyJSON(_document);
     node[@"parameters"][[@(p) stringValue]]=@(value);
     [self commit:previous];[self.window makeFirstResponder:_canvas];
@@ -208,6 +355,13 @@ NSString *parameterName(int p) {
     NSString *key=[@(tri::TriggerPulse) stringValue];
     node[@"parameters"][key]=@(([node[@"parameters"][key] intValue]+1)%1000000);
     [self commit:previous];
+}
+-(void)bypassChanged:(NSButton *)sender {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    NSDictionary *previous=copyJSON(_document);
+    if(sender.state==NSControlStateValueOn)node[@"bypass"]=@YES;
+    else [node removeObjectForKey:@"bypass"];
+    [self commit:previous];[self inspect];
 }
 -(void)panic:(id)sender {
     NSDictionary *previous=copyJSON(_document);
@@ -323,6 +477,15 @@ NSString *parameterName(int p) {
 }
 -(void)inspect {
     for(NSView *view in _inspector.subviews.copy)[view removeFromSuperview];
+    if(_selection.count>1) {
+        [self label:[NSString stringWithFormat:@"已选择 %lu 个节点",(unsigned long)_selection.count] y:12];
+        [self label:@"Shift 点击增减选择，Shift 拖动框选。拖动任一节点可整体移动。" y:40];
+        [self button:@"复制节点" frame:NSMakeRect(12,78,105,28) action:@selector(duplicate:) parent:_inspector];
+        [self button:@"删除节点" frame:NSMakeRect(132,78,105,28) action:@selector(remove:) parent:_inspector];
+        [self button:@"断开连线" frame:NSMakeRect(12,112,105,28) action:@selector(disconnect:) parent:_inspector];
+        [self button:@"取消选择" frame:NSMakeRect(132,112,105,28) action:@selector(selectNone:) parent:_inspector];
+        return;
+    }
     NSMutableDictionary *node=[self node:_selected];
     if(!node){[self label:@"右键画布插入节点。拖动输出端口接到输入端口。" y:12];return;}
     int type=[node[@"type"] intValue];
@@ -330,11 +493,17 @@ NSString *parameterName(int p) {
     [self button:@"复制节点" frame:NSMakeRect(12,54,105,28) action:@selector(duplicate:) parent:_inspector];
     [self button:@"删除节点" frame:NSMakeRect(132,54,105,28) action:@selector(remove:) parent:_inspector];
     double y=96;
+    const tri::NodeMeta *meta=tri::nodeMeta(type);
+    if(meta && meta->bypassable) {
+        NSButton *bypass=[NSButton checkboxWithTitle:@"旁通此节点（保留连线）" target:self action:@selector(bypassChanged:)];
+        bypass.frame=NSMakeRect(12,y,230,28);bypass.state=node[@"bypass"] ? NSControlStateValueOn : NSControlStateValueOff;
+        [_inspector addSubview:bypass];y+=38;
+    }
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
     else for(int p:controls(type)) {
         [self label:parameterName(p) y:y];
         NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(142,y,96,25)];
-        id val=node[@"parameters"][[@(p) stringValue]] ?: @(tri::params[p].def);
+        id val=node[@"parameters"][[@(p) stringValue]] ?: @(tri::graphParamInfo(p).def);
         field.stringValue=[val description];field.tag=p;field.target=self;field.action=@selector(changed:);
         [_inspector addSubview:field];y+=48;
     }
@@ -359,6 +528,9 @@ NSString *parameterName(int p) {
         button.frame=NSMakeRect(12,y,230,28);button.state=_inputRead();[_inspector addSubview:button];y+=42;
     }
     if(type==tri::Osc1Node){[self label:@"Wave  0 正弦  1 方波  2 锯齿  3 三角" y:y];y+=50;}
+    if(type==tri::FilterNode){[self label:@"Type  0 低通  1 高通  2 带通\nCutoff 20–20000 Hz，Resonance 为 Q 值。" y:y];y+=62;}
+    if(type==tri::ReverbNode){[self label:@"Mix 干湿比，Size 空间大小，Damping 高频吸收，Width 立体声宽度。" y:y];y+=62;}
+    if(type==tri::NoiseNode){[self label:@"Type  0 白噪声  1 粉红噪声。" y:y];y+=50;}
     if(type==tri::ArpNode){[self label:@"Rhythm  0 直拍  1 Bossa Nova  2 Reggae  3 Disco  4 十六分" y:y];y+=70;}
     if(type==tri::DawClockNode){[self label:@"跟随 DAW 的 BPM、走带和定位。独立版可接收外部 MIDI Clock。" y:y];y+=70;}
     if(type==tri::DawOutputNode || type==tri::DawAudioNode){[self label:@"在 DAW 插件中连接对应音频总线。" y:y];y+=50;}
@@ -385,6 +557,7 @@ NSString *parameterName(int p) {
         tri::GraphSpec graph;NSString *why=nil;
         if(!file || !triassets::decodeGraph(file,graph,&why)){[self message:why ?: @"无效的工作流。"];return;}
         NSDictionary *previous=copyJSON(self.document);self.document=copyJSON(file);
+        [self.selection removeAllObjects];self.selected=0;self.selectedEdge=-1;
         [self commit:previous];[self fit:nil];[self inspect];
     }];
 }
@@ -455,7 +628,7 @@ NSString *parameterName(int p) {
 -(void)tick {
     NSDictionary *remote=_assetsRead ? _assetsRead()[@"graph"] : nil;
     if(remote && ![remote isEqual:_document] && !_moving && !_wireSource) {
-        _document=copyJSON(remote);[self inspect];_canvas.needsDisplay=YES;
+        _document=copyJSON(remote);[self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
     }
 }
 @end
@@ -469,6 +642,23 @@ NSRect nodeRect(NSDictionary *node) {
 NSPoint jack(NSDictionary *node,bool out,int port) {
     NSRect r=nodeRect(node);
     return NSMakePoint(out?NSMaxX(r):NSMinX(r),NSMinY(r)+47+24*port);
+}
+double curveX(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
+    double u=1-t;return u*u*u*a.x+3*u*u*t*c1.x+3*u*t*t*c2.x+t*t*t*b.x;
+}
+double curveY(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
+    double u=1-t;return u*u*u*a.y+3*u*u*t*c1.y+3*u*t*t*c2.y+t*t*t*b.y;
+}
+bool nearEdge(NSDictionary *edge,NSDictionary *a,NSDictionary *b,NSPoint point,double tolerance) {
+    if(!a || !b)return false;
+    int port=[edge[@"port"] intValue],out=[edge[@"sourcePort"] intValue];
+    NSPoint from=jack(a,true,out),to=jack(b,false,port);
+    NSPoint c1=NSMakePoint(from.x+70,from.y),c2=NSMakePoint(to.x-70,to.y);
+    for(int i=0;i<=32;++i) {
+        double t=i/32.0;
+        if(std::hypot(curveX(from,c1,c2,to,t)-point.x,curveY(from,c1,c2,to,t)-point.y)<tolerance)return true;
+    }
+    return false;
 }
 void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     [text drawInRect:rect withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size],
@@ -485,20 +675,25 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     NSBezierPath *clip=[NSBezierPath bezierPathWithRect:self.bounds];[clip addClip];
     NSAffineTransform *transform=[NSAffineTransform transform];
     [transform translateXBy:editor.origin.x yBy:editor.origin.y];[transform scaleBy:editor.zoom];[transform concat];
+    NSInteger edgeIndex=0;
     for(NSDictionary *edge in editor.document[@"edges"]) {
         NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
         int port=[edge[@"port"] intValue],out=[edge[@"sourcePort"] intValue];
         NSPoint from=jack(a,true,out),to=jack(b,false,port);
         NSBezierPath *path=[NSBezierPath new];[path moveToPoint:from];
         [path curveToPoint:to controlPoint1:NSMakePoint(from.x+70,from.y) controlPoint2:NSMakePoint(to.x-70,to.y)];
-        [signalColor(tri::outputType([a[@"type"] intValue],out))setStroke];path.lineWidth=2;[path stroke];
+        BOOL chosen=(edgeIndex==editor.selectedEdge);
+        [chosen?NSColor.whiteColor:signalColor(tri::outputType([a[@"type"] intValue],out)) setStroke];
+        path.lineWidth=chosen?3:2;[path stroke];
+        ++edgeIndex;
     }
     for(NSDictionary *node in editor.document[@"nodes"]) {
-        int type=[node[@"type"] intValue];NSRect r=nodeRect(node);
-        [[NSColor colorWithWhite:.18 alpha:1]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
-        [[node[@"id"] unsignedLongLongValue]==editor.selected?NSColor.whiteColor:[NSColor colorWithWhite:.4 alpha:1] setStroke];
+        int type=[node[@"type"] intValue];NSRect r=nodeRect(node);BOOL bypassed=[node[@"bypass"] boolValue];
+        [[NSColor colorWithWhite:bypassed?.13:.18 alpha:1]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
+        [[editor isSelected:[node[@"id"] unsignedLongLongValue]]?NSColor.whiteColor:[NSColor colorWithWhite:.4 alpha:1] setStroke];
         [[NSBezierPath bezierPathWithRect:r]stroke];
         drawText([NSString stringWithFormat:@"%@ #%@",title(type),node[@"id"]],NSMakeRect(r.origin.x+9,r.origin.y+8,160,28),NSColor.whiteColor);
+        if(bypassed)drawText(@"旁通",NSMakeRect(NSMaxX(r)-46,r.origin.y+8,40,20),NSColor.systemOrangeColor,10);
         auto inputs=tri::inputTypes(type);
         for(int p=0;p<(int)inputs.size();++p) {
             NSPoint at=jack(node,false,p);[signalColor(inputs[p])setFill];
@@ -512,6 +707,12 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
             drawText(outputName(type,p),NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
         }
+    }
+    if(editor.boxSelecting) {
+        NSRect box=NSMakeRect(std::min(editor.boxOrigin.x,editor.boxCurrent.x),std::min(editor.boxOrigin.y,editor.boxCurrent.y),
+                              std::fabs(editor.boxCurrent.x-editor.boxOrigin.x),std::fabs(editor.boxCurrent.y-editor.boxOrigin.y));
+        NSBezierPath *path=[NSBezierPath bezierPathWithRect:box];[path setLineDash:(CGFloat[]){6,4} count:2 phase:0];
+        path.lineWidth=1.5;[NSColor.whiteColor setStroke];[path stroke];
     }
     [NSGraphicsContext restoreGraphicsState];
 }
@@ -528,16 +729,23 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         }
     }
     [menu addItem:[NSMenuItem separatorItem]];
-    for(NSArray *item in @[@[@"复制选中节点",@"duplicate:"],@[@"断开选中节点",@"disconnect:"],@[@"删除选中节点",@"remove:"]]) {
-        NSMenuItem *action=[menu addItemWithTitle:item[0] action:NSSelectorFromString(item[1]) keyEquivalent:@""];
-        action.target=editor;action.enabled=[editor node:editor.selected]!=nil;
+    BOOL hasSelection=[editor activeIDs].count>0;
+    for(NSArray *item in @[@[@"复制到剪贴板",@"copy:",@"c"],@[@"剪切",@"cut:",@"x"],@[@"粘贴节点",@"paste:",@"v"],
+                           @[@"复制并偏移",@"duplicate:",@""],@[@"断开选中节点",@"disconnect:",@""],@[@"删除选中节点",@"remove:",@""]]) {
+        NSMenuItem *action=[menu addItemWithTitle:item[0] action:NSSelectorFromString(item[1]) keyEquivalent:item[2]];
+        action.target=editor;
+        action.enabled=[item[1] isEqualToString:@"paste:"]?editor.clipboard!=nil:hasSelection;
     }
+    [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *all=[menu addItemWithTitle:@"选择全部" action:@selector(selectAll:) keyEquivalent:@"a"];
+    all.target=editor;all.enabled=[(NSArray *)editor.document[@"nodes"] count]>0;
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }
 -(void)mouseDown:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;[self.window makeFirstResponder:self];
     NSPoint view=[self convertPoint:event.locationInWindow fromView:nil],point=[editor world:view];
     editor.lastPoint=view;editor.dragStart=copyJSON(editor.document);
+    BOOL additive=(event.modifierFlags&(NSEventModifierFlagShift|NSEventModifierFlagCommand))!=0;
     for(NSDictionary *node in [editor.document[@"nodes"] reverseObjectEnumerator]) {
         int type=[node[@"type"] intValue];
         int outputs=tri::outputCount(type);
@@ -548,24 +756,65 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
             }
         }
         if(NSPointInRect(point,nodeRect(node))) {
-            editor.selected=[node[@"id"] unsignedLongLongValue];editor.moving=editor.selected;
-            [editor inspect];self.needsDisplay=YES;return;
+            uint64_t uid=[node[@"id"] unsignedLongLongValue];
+            editor.moving=0;
+            if(additive) {
+                [editor toggleSelection:uid];
+                if([editor isSelected:uid])editor.moving=uid;
+            } else {
+                if(![editor isSelected:uid])[editor selectOnly:uid];
+                else {editor.selected=uid;[editor inspect];}
+                editor.moving=uid;
+            }
+            self.needsDisplay=YES;return;
         }
     }
-    editor.panning=YES;
+    NSInteger index=0;
+    for(NSDictionary *edge in editor.document[@"edges"]) {
+        NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
+        if(nearEdge(edge,a,b,point,7/editor.zoom)) {
+            [editor selectNone:nil];editor.selectedEdge=index;
+            [editor message:@"已选中连线，按 Delete 删除。"];
+            self.needsDisplay=YES;return;
+        }
+        ++index;
+    }
+    if(additive) {
+        editor.boxSelecting=YES;editor.boxOrigin=point;editor.boxCurrent=point;
+        self.needsDisplay=YES;return;
+    }
+    [editor selectNone:nil];editor.panning=YES;
 }
 -(void)mouseDragged:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
     NSPoint view=[self convertPoint:event.locationInWindow fromView:nil];
+    if(editor.boxSelecting) {
+        editor.boxCurrent=[editor world:view];self.needsDisplay=YES;return;
+    }
     double dx=view.x-editor.lastPoint.x,dy=view.y-editor.lastPoint.y;
     if(editor.moving) {
-        NSMutableDictionary *node=[editor node:editor.moving];
-        node[@"x"]=@([node[@"x"] doubleValue]+dx/editor.zoom);node[@"y"]=@([node[@"y"] doubleValue]+dy/editor.zoom);
+        NSArray<NSNumber *> *ids=[editor activeIDs];
+        for(NSNumber *key in ids) {
+            NSMutableDictionary *node=[editor node:key.unsignedLongLongValue];if(!node)continue;
+            double x=[node[@"x"] doubleValue]+dx/editor.zoom,y=[node[@"y"] doubleValue]+dy/editor.zoom;
+            if(editor.snap){x=std::round(x/20)*20;y=std::round(y/20)*20;}
+            node[@"x"]=@(x);node[@"y"]=@(y);
+        }
     } else if(editor.panning)editor.origin=NSMakePoint(editor.origin.x+dx,editor.origin.y+dy);
     editor.lastPoint=view;self.needsDisplay=YES;
 }
 -(void)mouseUp:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
+    if(editor.boxSelecting) {
+        NSRect box=NSMakeRect(std::min(editor.boxOrigin.x,editor.boxCurrent.x),std::min(editor.boxOrigin.y,editor.boxCurrent.y),
+                              std::fabs(editor.boxCurrent.x-editor.boxOrigin.x),std::fabs(editor.boxCurrent.y-editor.boxOrigin.y));
+        for(NSDictionary *node in editor.document[@"nodes"])
+            if(NSIntersectsRect(box,nodeRect(node))) {
+                [editor.selection addObject:node[@"id"]];editor.selected=[node[@"id"] unsignedLongLongValue];
+            }
+        editor.boxSelecting=NO;editor.selectedEdge=-1;
+        [editor inspect];self.needsDisplay=YES;return;
+    }
     if(editor.wireSource) {
         NSPoint point=[editor world:[self convertPoint:event.locationInWindow fromView:nil]];
         for(NSDictionary *node in editor.document[@"nodes"]) {
@@ -579,12 +828,14 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
                 }];
                 if(inputs[p]!=tri::Signal::Trigger)[editor.document[@"edges"] removeObjectsAtIndexes:existing];
                 [editor.document[@"edges"] addObject:[@{@"source":@(editor.wireSource),@"target":@(uid),@"port":@(p),@"sourcePort":@(editor.wirePort)}mutableCopy]];
-                [editor commit:editor.dragStart];editor.wireSource=0;return;
+                [editor commit:editor.dragStart];editor.wireSource=0;editor.selectedEdge=-1;
+                self.needsDisplay=YES;return;
             }
         }
     }
     if(editor.moving)[editor commit:editor.dragStart];
     editor.wireSource=0;editor.moving=0;editor.panning=NO;
+    self.needsDisplay=YES;
 }
 -(void)scrollWheel:(NSEvent *)event {
     if(event.modifierFlags&NSEventModifierFlagCommand) _editor.zoom=std::clamp(_editor.zoom*std::exp(-event.scrollingDeltaY*.02),.05,3.);
@@ -592,7 +843,34 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     self.needsDisplay=YES;
 }
 -(void)keyDown:(NSEvent *)event {
-    if(event.keyCode==51 || event.keyCode==117)[_editor remove:nil];else [super keyDown:event];
+    SNInstanceEditor *editor=_editor;
+    if(event.modifierFlags&NSEventModifierFlagCommand) {
+        NSString *key=event.charactersIgnoringModifiers.lowercaseString;
+        if([key isEqualToString:@"c"]){[editor copy:nil];return;}
+        if([key isEqualToString:@"v"]){[editor paste:nil];return;}
+        if([key isEqualToString:@"x"]){[editor cut:nil];return;}
+        if([key isEqualToString:@"a"]){[editor selectAll:nil];return;}
+    }
+    if(event.keyCode==51 || event.keyCode==117) {
+        if(editor.selectedEdge>=0)[editor deleteEdge:editor.selectedEdge];
+        else [editor remove:nil];
+        return;
+    }
+    if(event.keyCode==53){[editor selectNone:nil];return;}
+    if(event.keyCode>=123 && event.keyCode<=126) {
+        double step=(event.modifierFlags&NSEventModifierFlagShift)?10:1;
+        double dx=event.keyCode==123?-step:event.keyCode==124?step:0;
+        double dy=event.keyCode==126?-step:event.keyCode==125?step:0;
+        NSDictionary *previous=copyJSON(editor.document);
+        NSArray<NSNumber *> *ids=[editor activeIDs];
+        if(!ids.count)return;
+        for(NSNumber *key in ids) {
+            NSMutableDictionary *node=[editor node:key.unsignedLongLongValue];if(!node)continue;
+            node[@"x"]=@([node[@"x"] doubleValue]+dx);node[@"y"]=@([node[@"y"] doubleValue]+dy);
+        }
+        [editor commit:previous];self.needsDisplay=YES;return;
+    }
+    [super keyDown:event];
 }
 @end
 
@@ -627,6 +905,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     editor.read=read;editor.write=write;editor.midi=midi;editor.inputRead=inputRead;editor.inputWrite=inputWrite;
     editor.assetsRead=assetsRead;editor.assetsWrite=assetsWrite;
     editor.history=[NSMutableArray new];editor.future=[NSMutableArray new];editor.zoom=1;editor.origin=NSMakePoint(20,20);
+    editor.selection=[NSMutableSet new];editor.selectedEdge=-1;editor.snap=NO;
     [editor button:@"打开" frame:NSMakeRect(12,10,65,28) action:@selector(open:) parent:editor];
     [editor button:@"保存" frame:NSMakeRect(82,10,65,28) action:@selector(save:) parent:editor];
     [editor button:@"撤销" frame:NSMakeRect(152,10,65,28) action:@selector(undo:) parent:editor];
@@ -634,15 +913,20 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor button:@"适配" frame:NSMakeRect(292,10,65,28) action:@selector(fit:) parent:editor];
     [editor button:@"清空" frame:NSMakeRect(362,10,65,28) action:@selector(blank:) parent:editor];
     [editor button:@"停音" frame:NSMakeRect(432,10,65,28) action:@selector(panic:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.1    输入 → 处理 → 输出"];
-    heading.frame=NSMakeRect(520,15,600,25);[editor addSubview:heading];
+    [editor button:@"复制" frame:NSMakeRect(502,10,65,28) action:@selector(copy:) parent:editor];
+    [editor button:@"粘贴" frame:NSMakeRect(572,10,65,28) action:@selector(paste:) parent:editor];
+    [editor button:@"查找" frame:NSMakeRect(642,10,65,28) action:@selector(search:) parent:editor];
+    NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
+    [snapButton setButtonType:NSButtonTypePushOnPushOff];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.2    输入 → 处理 → 输出"];
+    heading.frame=NSMakeRect(790,15,340,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
     NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(878,48,260,505)];
     scroll.hasVerticalScroller=YES;editor.inspectorScroll=scroll;
     editor.inspector=[[SNFlippedView alloc]initWithFrame:NSMakeRect(0,0,260,520)];
     scroll.documentView=editor.inspector;[editor addSubview:scroll];
-    editor.status=[NSTextField labelWithString:@"右键插入节点 · 音符 / 音频 / 时钟 / 触发信号"];
+    editor.status=[NSTextField labelWithString:@"右键插入节点 · Shift 点选/框选 · Delete 删除 · Cmd+C/V 复制粘贴"];
     editor.status.frame=NSMakeRect(12,558,1120,22);[editor addSubview:editor.status];
     SNPiano *piano=[[SNPiano alloc]initWithFrame:NSMakeRect(12,590,1120,55)];piano.send=midi;[editor addSubview:piano];
     NSDictionary *assets=assetsRead?assetsRead():nil;

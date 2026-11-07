@@ -1,12 +1,11 @@
 #pragma once
-#include "LegacyEngine.hpp"
+#include "NodeRegistry.hpp"
 #include <string>
 #include <map>
 #include <set>
 
 namespace tri {
 using InstanceID=uint64_t;
-inline constexpr int HardwareOutputNode=19, DawOutputNode=20, DawClockNode=21, DawAudioNode=22;
 struct GraphNode {
     InstanceID id=0;
     int type=0;
@@ -14,22 +13,17 @@ struct GraphNode {
     std::map<int,float> parameters;
     MidiClip clip;
     NoteModel model;
+    bool bypass=false;
 };
 struct GraphEdge { InstanceID source=0,target=0; int port=0,sourcePort=0; };
 struct GraphSpec { std::vector<GraphNode> nodes; std::vector<GraphEdge> edges; };
-inline constexpr int StartNode=23, StopNode=24, WaitNode=25, CountNode=26, ArrangerNode=27;
 // These IDs are stored on graph instances, outside the AU's global parameter list.
-enum ArrangerParam {
-    ArrHighMin=1024, ArrHighMax, ArrHighTexture,
-    ArrMidMin, ArrMidMax, ArrMidTexture,
-    ArrLowMin, ArrLowMax, ArrLowTexture
-};
 static_assert(int(ParamCount) <= int(ArrHighMin));
 enum class ArrangerTexture { Highest, Middle, Lowest, Chord };
 inline constexpr bool arrangerParam(int p) { return p>=ArrHighMin && p<=ArrLowTexture; }
 inline constexpr bool validGraphParam(int type,int p) {
     if(type==ArrangerNode) return arrangerParam(p);
-    return p>=0 && p<ParamCount && !routeParam(p);
+    return nodeAcceptsParam(type,p);
 }
 inline const ParamInfo& graphParamInfo(int p) {
     static constexpr ParamInfo voiceParams[] = {
@@ -37,7 +31,9 @@ inline const ParamInfo& graphParamInfo(int p) {
         {"Middle Minimum",0,127,55,"MIDI"}, {"Middle Maximum",0,127,71,"MIDI"}, {"Middle Texture",0,3,1,""},
         {"Low Minimum",0,127,36,"MIDI"}, {"Low Maximum",0,127,54,"MIDI"}, {"Low Texture",0,3,2,""}
     };
-    return arrangerParam(p) ? voiceParams[p-ArrHighMin] : params[p];
+    if(arrangerParam(p)) return voiceParams[p-ArrHighMin];
+    if(const ParamInfo* info=nodeParamInfo(p)) return *info;
+    return params[p];
 }
 inline float graphParamValue(const GraphNode& node,int p) {
     auto it=node.parameters.find(p);
@@ -56,7 +52,8 @@ inline Signal outputType(int type,int port=0) {
     if(type>=StartNode && type<=CountNode)return Signal::Trigger;
     if (noteSource(type)) return Signal::Notes;
     if(type==ClockNode || type==DawClockNode) return Signal::Clock;
-    if(type==Osc1Node || type==InputNode || type==DawAudioNode || type==MixNode || type==EQNode || type==DelayNode) return Signal::Audio;
+    if(type==Osc1Node || type==InputNode || type==DawAudioNode || type==MixNode || type==EQNode || type==DelayNode ||
+       type==FilterNode || type==ReverbNode || type==NoiseNode) return Signal::Audio;
     return Signal::None;
 }
 inline int outputCount(int type) {
@@ -71,14 +68,15 @@ inline std::vector<Signal> inputTypes(int type) {
     if(type>=StartNode && type<=CountNode)return {Signal::Trigger};
     if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node || type==ArrangerNode) return {Signal::Notes};
     if(type==MixNode) return {Signal::Audio,Signal::Audio,Signal::Audio,Signal::Audio};
-    if(type==EQNode || type==DelayNode || type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};
+    if(type==EQNode || type==DelayNode || type==FilterNode || type==ReverbNode ||
+       type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};
     return {};
 }
 inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order) {
     std::map<InstanceID,size_t> index;
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
-        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>ArrangerNode || n.type==Osc2Node || n.type==Osc3Node) return false;
+        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>NoiseNode || n.type==Osc2Node || n.type==Osc3Node) return false;
         for(auto [p,v]:n.parameters) {
             if(!validGraphParam(n.type,p)) return false;
             const auto& info=graphParamInfo(p);

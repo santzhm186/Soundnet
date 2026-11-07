@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.1**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.2**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,14 +8,14 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.0 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.2 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
 | 分类 | 可插入的节点 |
 | --- | --- |
 | 输入 | 本地 MIDI、DAW MIDI、MIDI Clip、硬件音频输入、DAW 音频输入、和弦输入、和声走向、节奏速度、DAW 时钟 |
-| 处理 | 三声部编排器、振荡器、ARP、力度自动化、音符模型、混音器、EQ、Delay |
+| 处理 | 三声部编排器、振荡器、ARP、力度自动化、音符模型、混音器、EQ、Delay、滤波器、混响、噪声 |
 | 逻辑 | 开始触发器、停止触发器、等待、次数条件 |
 | 输出 | 硬件音频输出、DAW 音频输出、MIDI 输出 |
 
@@ -58,9 +58,11 @@ flowchart LR
 
 - 右键画布，从输入、处理、逻辑、输出分类插入节点。
 - 拖动节点移动位置，拖输出圆点到输入圆点建立连接。
-- 选择节点，在右侧编辑该实例。右键可复制、断开或删除选中节点。复制会生成新 ID，并复制参数和素材。
+- 选择节点，在右侧编辑该实例。Shift 点击增减选择，Shift 拖动空白处框选；拖动任一选中节点会整体移动。
+- Cmd+C / Cmd+V 复制粘贴节点及其内部连线，Cmd+X 剪切，Cmd+A 全选，Delete 删除；选中连线后按 Delete 可单独删除连线。方向键微调位置，按住 Shift 每次移动 10 点。
+- 工具条「吸附」开启 20 点网格，拖动节点时自动对齐。「查找」可按名称或编号定位节点。
 - 拖空白处平移，滚轮移动画布，Command + 滚轮缩放。「适配」显示整张图。
-- 「撤销」「重做」支持节点、参数、连线和素材编辑。
+- 「撤销」「重做」支持节点、参数、连线和素材编辑，保留最近 64 步。
 - 「停音」停止当前播放与音符。独立版也可使用 Command + .。
 
 可以从以下线路开始组合。
@@ -70,6 +72,8 @@ flowchart LR
 | 演奏合成音色 | 本地 MIDI → 振荡器 → 硬件音频输出 |
 | 在 Logic 中演奏 | DAW MIDI → ARP → 振荡器 → DAW 音频输出 |
 | 处理外部声音 | 硬件音频输入 → EQ → Delay → 硬件音频输出 |
+| 滤波与空间 | 振荡器 → 滤波器 → 混响 → 音频输出 |
+| 噪声纹理 | 噪声 → 滤波器 → 混音器 → 音频输出 |
 | 用模型驱动其他乐器 | MIDI Clip → 音符模型 → MIDI 输出 |
 | 条件控制 | Clip 循环完成 → 次数条件 → 停止触发器 → Clip |
 
@@ -91,7 +95,11 @@ flowchart LR
 
 **振荡器与效果**
 
-每个振荡器拥有自己的波形、音高、电平和 A/D/S/R 包络。Wave 0、1、2、3 分别对应正弦、方波、锯齿、三角波。音频处理提供四路混音、三段 EQ 和立体声 Delay，可添加多个实例串联或并联。
+每个振荡器拥有自己的波形、音高、电平和 A/D/S/R 包络。Wave 0、1、2、3 分别对应正弦、方波、锯齿、三角波。音频处理提供四路混音、三段 EQ、立体声 Delay、状态变量滤波器和 Freeverb 混响。
+
+滤波器支持低通、高通、带通三种模式，可调截止频率、共振和驱动；混响可调干湿比、空间大小、阻尼和立体声宽度；噪声节点提供白噪声和粉红噪声。EQ、Delay、滤波器、混响、噪声和三个音频输出都支持旁通：旁通只跳过处理，保留原有连线，适合对比效果或暂时让某个音源静音。
+
+打开[滤波与混响示例](examples/filter-reverb-noise.json)，可听到振荡器经过滤波和混响，并与粉红噪声混合。
 
 **ARP、和弦与力度**
 
@@ -130,7 +138,7 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 
 ## 保存与兼容
 
-「保存」导出版本 3 JSON，包含实例 ID、类型、位置、每实例参数、素材和连线。「打开」支持旧版工作流，并转换成独立实例。
+「保存」导出版本 3 JSON，包含实例 ID、类型、位置、每实例参数、旁通状态、素材和连线。「打开」支持旧版工作流，并转换成独立实例。
 
 独立版退出时记住当前图，AU 随宿主工程保存。实例参数通过工作流编辑器修改并随图保存；逐实例 DAW 参数自动化待实现。旧 AU 参数 ID 继续用于旧音色兼容。
 
@@ -149,25 +157,24 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 ## 验证与源码
 
 ```sh
-mkdir -p build/tests
-xcrun clang++ -std=c++17 -O2 tests/InstanceGraphTests.cpp -o build/tests/instance-tests
-build/tests/instance-tests
-xcrun clang++ -std=c++17 -O2 tests/ArrangerTests.cpp -o build/tests/arranger-tests
-build/tests/arranger-tests
+./scripts/test-all.sh build/tests
 auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
 ```
 
-已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、独立 Clip、三次循环停止、延迟启动，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
+已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 旁通，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
 
 | 路径 | 内容 |
 | --- | --- |
 | `src/GraphSpec.hpp` | 实例、端口类型、连接与依赖验证 |
 | `src/InstanceGraph.hpp` | 实例运行时、执行计划、音频与触发调度 |
+| `src/NodeRegistry.hpp` | 节点标题、分类、参数表与菜单顺序 |
+| `src/DspNodes.hpp` | 滤波器、混响与噪声 DSP |
 | `src/Engine.hpp` | 实例图与旧引擎的入口 |
 | `src/LegacyEngine.hpp` | 复用的 DSP 与旧音色兼容 |
 | `ui/InstanceEditor.mm` | 原生节点画布与实例编辑 |
 | `app/`、`au/` | 独立版和 Audio Unit 宿主接口 |
 | `examples/`、`tests/`、`tools/` | 示例、引擎与原生集成验证 |
+| `scripts/test-all.sh` | 编译并运行全部引擎、素材与渲染测试 |
 
 更多操作见 [中文使用说明](docs/使用说明.txt)。Apple AudioUnitSDK 第三方源码与 Apache 2.0 许可证位于 `au/vendor/`。

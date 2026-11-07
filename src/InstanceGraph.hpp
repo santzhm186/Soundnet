@@ -1,4 +1,5 @@
 #pragma once
+#include "DspNodes.hpp"
 #include "VoiceArranger.hpp"
 #include <memory>
 
@@ -45,6 +46,7 @@ class InstanceGraph {
         int type;
         uint64_t generation;
         std::unique_ptr<LegacyEngine> engine;
+        std::unique_ptr<AudioProcessor> processor;
         std::unique_ptr<ArrangerState> arranger;
         std::array<float,quantum> left{},right{},inputL{},inputR{};
         Notes incoming{};
@@ -67,6 +69,11 @@ class InstanceGraph {
         Runtime(const GraphNode& node,double rate,uint64_t gen):type(node.type),generation(gen) {
             if(type==ArrangerNode) {
                 arranger=std::make_unique<ArrangerState>();
+                return;
+            }
+            if(auto audio=makeAudioProcessor(type)) {
+                processor=std::move(audio);
+                processor->prepare(rate);
                 return;
             }
             auto pulse=node.parameters.find(TriggerPulse);
@@ -105,6 +112,11 @@ class InstanceGraph {
             engine->setRouting(route);
         }
         void configure(const GraphNode& node) {
+            if(processor) {
+                for(int p:nodeParamList(type))processor->set(p,graphParamValue(node,p));
+                saved=node;configured=true;
+                return;
+            }
             if(engine) {
                 for(int p=0;p<ParamCount;++p) {
                     if(routeParam(p))continue;
@@ -131,7 +143,7 @@ class InstanceGraph {
         std::array<ArrangerVoice,3> voices;
         float gain=1,bpm=112,wait=1;
         int pulse=0,count=4;
-        bool hostClock=false;
+        bool hostClock=false,bypass=false;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
     };
@@ -233,6 +245,7 @@ public:
                                  ArrangerTexture(int(graphParamValue(n,p+2)))};
             }
             entry.hostClock=n.type==DawClockNode;
+            entry.bypass=n.bypass;
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -257,7 +270,10 @@ public:
     void disable() {active.store(false,std::memory_order_release);}
     void prepare(double sampleRate) {
         rate=sampleRate;
-        for(auto& pair:controlNodes) if(pair.second->engine)pair.second->engine->prepare(rate);
+        for(auto& pair:controlNodes) {
+            if(pair.second->engine)pair.second->engine->prepare(rate);
+            if(pair.second->processor)pair.second->processor->prepare(rate);
+        }
         reset();
     }
     void setHostTempo(double tempo) {bpm=tempo;}
@@ -276,6 +292,7 @@ public:
             if(n.type==MidiOutNode && output)for(int k=0;k<2048;++k)
                 if(n.incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
             if(n.engine)n.engine->reset();
+            if(n.processor)n.processor->reset();
             n.clear();n.incoming={};
             if(n.arranger) {
                 for(auto& port:n.arranger->otherVoices)port.clear();
@@ -319,6 +336,21 @@ public:
                 int noteSource=entry.inputs[0];
                 auto* source=noteSource>=0?entries[noteSource].state.get():nullptr;
                 auto* noteInput=source ? &source->notePort(entry.noteSourcePort) : nullptr;
+                if(type==NoiseNode) {
+                    if(!entry.bypass && node.processor)
+                        node.processor->render(nullptr,nullptr,node.left.data(),node.right.data(),n);
+                    continue;
+                }
+                if(type==FilterNode || type==ReverbNode) {
+                    if(source)for(int i=0;i<n;++i){node.inputL[i]=source->left[i];node.inputR[i]=source->right[i];}
+                    else for(int i=0;i<n;++i){node.inputL[i]=0;node.inputR[i]=0;}
+                    if(entry.bypass) {
+                        for(int i=0;i<n;++i){node.left[i]=node.inputL[i];node.right[i]=node.inputR[i];}
+                    } else if(node.processor) {
+                        node.processor->render(node.inputL.data(),node.inputR.data(),node.left.data(),node.right.data(),n);
+                    }
+                    continue;
+                }
                 if(type==ArrangerNode) {
                     renderArranger(entry,source,noteInput,planChanged && offset==0);
                     continue;
@@ -347,7 +379,7 @@ public:
                 }
                 if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) {
                     bool sends=type==OutputNode || (hosted?type==DawOutputNode:type==HardwareOutputNode);
-                    if(source && sends)for(int i=0;i<n;++i){node.left[i]=source->left[i]*entry.gain;node.right[i]=source->right[i]*entry.gain;}
+                    if(source && sends && !entry.bypass)for(int i=0;i<n;++i){node.left[i]=source->left[i]*entry.gain;node.right[i]=source->right[i]*entry.gain;}
                     continue;
                 }
                 if(type==MixNode) {
@@ -367,7 +399,11 @@ public:
                     else node.engine->clearHostTransport();
                 }
                 if(type==EQNode || type==DelayNode) {
-                    node.engine->render(source?source->left.data():nullptr,source?source->right.data():nullptr,node.left.data(),node.right.data(),n);
+                    if(entry.bypass) {
+                        if(source)for(int i=0;i<n;++i){node.left[i]=source->left[i];node.right[i]=source->right[i];}
+                    } else {
+                        node.engine->render(source?source->left.data():nullptr,source?source->right.data():nullptr,node.left.data(),node.right.data(),n);
+                    }
                     continue;
                 }
                 auto deliver=[&](Event e) {

@@ -40,5 +40,23 @@ int main() { @autoreleasepool {
         try { tri::smf::parse(multi.data(),n); } catch (...) { failed=true; }
         assert(failed);
     }
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability and real Core ML pitch predictions.");
+    tri::GraphSpec bypassGraph;NSString *graphWhy=nil;
+    NSDictionary *filterDocument=@{@"version":@3,@"nodes":@[
+        @{@"id":@1,@"type":@(tri::FilterNode),@"x":@0,@"y":@0,@"bypass":@YES,
+          @"parameters":@{@"1100":@0,@"1101":@8000}}],@"edges":@[]};
+    assert(triassets::decodeGraph(filterDocument,bypassGraph,&graphWhy));
+    assert(bypassGraph.nodes.size()==1 && bypassGraph.nodes[0].bypass);
+    NSMutableDictionary *badBypass=[filterDocument mutableCopy];
+    badBypass[@"nodes"]=@[@{@"id":@1,@"type":@(tri::FilterNode),@"x":@0,@"y":@0,@"bypass":@"yes",
+                            @"parameters":@{}}];
+    assert(!triassets::decodeGraph(badBypass,bypassGraph,&graphWhy));
+    tri::GraphSpec noiseGraph;
+    assert(triassets::decodeGraph(@{@"version":@3,@"nodes":@[@{@"id":@1,@"type":@(tri::NoiseNode),@"x":@0,@"y":@0,
+        @"parameters":@{@"1120":@.3}}],@"edges":@[]},noiseGraph,&graphWhy));
+    NSDictionary *example=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/filter-reverb-noise.json"] options:0 error:nil];
+    tri::GraphSpec exampleGraph;
+    assert(triassets::decodeGraph(example,exampleGraph,&graphWhy));
+    assert(exampleGraph.nodes.size()==7 && exampleGraph.edges.size()==6);
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph and real Core ML pitch predictions.");
 } }

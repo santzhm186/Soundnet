@@ -11,6 +11,11 @@
 - (void)commit:(NSDictionary *)previous;
 - (void)fit:(id)sender;
 - (void)inspect;
+- (void)selectAll:(id)sender;
+- (void)copy:(id)sender;
+- (void)paste:(id)sender;
+- (void)remove:(id)sender;
+- (NSArray *)activeIDs;
 @end
 
 int main() {
@@ -43,6 +48,17 @@ int main() {
         assert([assets[@"graph"][@"nodes"] count]==26);
         [editor undo:nil];
         assert([assets[@"graph"][@"nodes"] count]==25);
+        [editor redo:nil];
+        assert([assets[@"graph"][@"nodes"] count]==26);
+        [editor selectAll:nil];
+        assert([[editor activeIDs] count]==26);
+        [editor copy:nil];
+        [editor paste:nil];
+        assert([assets[@"graph"][@"nodes"] count]==52);
+        [editor remove:nil];
+        assert([assets[@"graph"][@"nodes"] count]==26);
+        [editor undo:nil];
+        assert([assets[@"graph"][@"nodes"] count]==52);
         [editor redo:nil];
         assert([assets[@"graph"][@"nodes"] count]==26);
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
