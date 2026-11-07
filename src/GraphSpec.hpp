@@ -73,7 +73,8 @@ inline std::vector<Signal> inputTypes(int type) {
     if(type>=StartNode && type<=CountNode)return {Signal::Trigger};
     if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node || type==ArrangerNode || type==SamplerNode || type==QuantizeNode) return {Signal::Notes};
     if(type==AudioClipNode)return {Signal::Trigger};
-    if(type==CompressorNode || type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode || type==PhaserNode)return {Signal::Audio};
+    if(type==CompressorNode)return {Signal::Audio,Signal::Audio};
+    if(type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode || type==PhaserNode)return {Signal::Audio};
     if(type==MixNode) return {Signal::Audio,Signal::Audio,Signal::Audio,Signal::Audio};
     if(type==EQNode || type==DelayNode || type==FilterNode || type==ReverbNode ||
        type==CompressorNode || type==LimiterNode || type==ChorusNode || type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};

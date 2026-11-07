@@ -19,6 +19,8 @@ public:
     virtual void reset()=0;
     virtual void set(int param,float value)=0;
     virtual void render(const float* inL,const float* inR,float* outL,float* outR,int frames)=0;
+    // Optional detector input for processors such as the compressor.
+    virtual void setSidechain(const float*,const float*,int) {}
 };
 
 class FilterProcessor final : public AudioProcessor {
@@ -197,10 +199,12 @@ class CompressorProcessor final : public AudioProcessor {
     std::atomic<float> threshold_{-18},ratio_{4},attack_{.01f},release_{.15f},makeup_{1},mix_{1};
     double rate_=48000;
     float gain_=1;
+    const float* sideL_=nullptr;const float* sideR_=nullptr;
     static float clamp(float v,float lo,float hi) {return std::max(lo,std::min(hi,v));}
 public:
     void prepare(double sampleRate) override {rate_=sampleRate>0?sampleRate:48000;reset();}
-    void reset() override {gain_=1;}
+    void reset() override {gain_=1;sideL_=sideR_=nullptr;}
+    void setSidechain(const float* l,const float* r,int) override {sideL_=l;sideR_=r;}
     void set(int param,float value) override {
         if(param==CompThreshold)threshold_.store(clamp(value,-60,0));
         else if(param==CompRatio)ratio_.store(clamp(value,1,20));
@@ -217,7 +221,9 @@ public:
         float gain=gain_;
         for(int i=0;i<frames;++i) {
             const float l=inL?inL[i]:0.0f,r=inR?inR[i]:0.0f;
-            const float peak=std::max(std::fabs(l),std::fabs(r));
+            const float detector=sideL_ ? std::max(std::fabs(sideL_[i]),std::fabs(sideR_?sideR_[i]:0.0f))
+                                         : std::max(std::fabs(l),std::fabs(r));
+            const float peak=detector;
             float target=1.0f;
             if(peak>threshold && peak>1.0e-9f)
                 target=(threshold+(peak-threshold)/ratio)/peak;

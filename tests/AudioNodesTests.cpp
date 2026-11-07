@@ -290,6 +290,30 @@ int main() {
         assert(compressed<dry*.8);
         puts("compressor reduces gain and honors dry mix");
     }
+    // A sidechain detector makes the compressor duck the main signal.
+    {
+        auto build=[](bool sidechain){
+            GraphSpec graph;
+            add(graph,10,MidiNode);
+            add(graph,1,Osc1Node,{{Wave1,0},{Level1,.005f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+            add(graph,2,CompressorNode,{{CompThreshold,-40},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
+            add(graph,4,NoiseNode,{{NoiseLevel,.5f},{NoiseType,0}});
+            add(graph,3,OutputNode,{{Master,1}});
+            connect(graph,10,1);connect(graph,1,2,0);connect(graph,2,3);
+            if(sidechain)connect(graph,4,2,1);
+            return graph;
+        };
+        GraphSpec side=build(true),dry=build(false);
+        Engine a;assert(a.setGraph(side));a.prepare(48000);a.midi(0x90,69,127);
+        std::vector<float> left(24000),right(24000);
+        a.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double ducked=rms(left,4800,20000);
+        Engine b;assert(b.setGraph(dry));b.prepare(48000);b.midi(0x90,69,127);
+        b.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double plain=rms(left,4800,20000);
+        assert(ducked<plain*.8);
+        puts("compressor sidechain ducks the main signal");
+    }
     // A hard ceiling catches peaks above the limiter threshold; bypass exposes them again.
     {
         GraphSpec graph;

@@ -83,7 +83,7 @@ class InstanceGraph {
         std::unique_ptr<SamplerState> sampler;
         std::unique_ptr<AudioClipState> audioClip;
         std::unique_ptr<QuantizeState> quantizer;
-        std::array<float,quantum> left{},right{},inputL{},inputR{};
+        std::array<float,quantum> left{},right{},inputL{},inputR{},sidechainL{},sidechainR{};
         Notes incoming{};
         GraphNode saved;
         bool configured=false;
@@ -713,6 +713,13 @@ public:
                 if(type==FilterNode || type==ReverbNode || type==CompressorNode || type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode || type==PhaserNode) {
                     if(source)for(int i=0;i<n;++i){node.inputL[i]=source->left[i];node.inputR[i]=source->right[i];}
                     else for(int i=0;i<n;++i){node.inputL[i]=0;node.inputR[i]=0;}
+                    if(type==CompressorNode && node.processor) {
+                        const int sideIndex=entry.inputs[1];
+                        auto* side=sideIndex>=0 ? entries[sideIndex].state.get() : nullptr;
+                        if(side) for(int i=0;i<n;++i){node.sidechainL[i]=side->left[i];node.sidechainR[i]=side->right[i];}
+                        node.processor->setSidechain(side?node.sidechainL.data():nullptr,
+                                                     side?node.sidechainR.data():nullptr,n);
+                    }
                     if(entry.bypass) {
                         for(int i=0;i<n;++i){node.left[i]=node.inputL[i];node.right[i]=node.inputR[i];}
                     } else if(node.processor) {
