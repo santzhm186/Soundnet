@@ -155,6 +155,7 @@ static NSString *autosaveFilePath() {
 @interface SNNoteRollView : NSView
 @property(nonatomic,strong) NSMutableArray<NSMutableDictionary *> *notes;
 @property(nonatomic) double lengthBeats;
+@property(nonatomic) double grid;
 @property(nonatomic) NSInteger selectedIndex;
 @property(copy) void (^selectionChanged)(void);
 - (void)deleteSelected;
@@ -162,11 +163,14 @@ static NSString *autosaveFilePath() {
 
 @implementation SNNoteRollView {
     BOOL _dragging, _resizing;
+    double _grid;
     NSPoint _dragPoint;
     double _dragStartBeat, _dragLength;
     int _dragStartPitch;
 }
 - (BOOL)isFlipped { return YES; }
+- (double)grid { return _grid>0?_grid:.25; }
+- (void)setGrid:(double)grid { _grid=grid>0?grid:.25; [self setNeedsDisplay:YES]; }
 - (void)setLengthBeats:(double)lengthBeats {
     _lengthBeats=std::max(.5,std::min(64.0,lengthBeats));
     [self setNeedsDisplay:YES];
@@ -205,7 +209,7 @@ static NSString *autosaveFilePath() {
         if(pitch%12==0){NSString *name=pitchName(pitch);NSDictionary *attrs=@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:9 weight:NSFontWeightRegular],NSForegroundColorAttributeName:[NSColor colorWithWhite:.65 alpha:1]};[name drawAtPoint:NSMakePoint(4,y+1) withAttributes:attrs];}
     }
     [[NSColor colorWithWhite:.16 alpha:1] setFill];NSRectFill(NSMakeRect(0,0,left,NSHeight(self.bounds)));
-    for(double beat=0;beat<=_lengthBeats+1e-6;beat+=.25) {
+    for(double beat=0;beat<=_lengthBeats+1e-6;beat+=[self grid]) {
         double x=left+beat*bw;
         bool whole=std::fabs(beat-std::round(beat))<1e-6;
         [[NSColor colorWithWhite:whole?.30:.20 alpha:1] setStroke];
@@ -237,7 +241,7 @@ static NSString *autosaveFilePath() {
         _dragLength=[_notes[(NSUInteger)hit][@"length"] doubleValue];
         _dragStartPitch=[_notes[(NSUInteger)hit][@"pitch"] intValue];
     } else if(p.x>=[self left] && p.y>=[self top]) {
-        double beat=std::max(0.0,std::min(_lengthBeats-.25,snapBeat([self beatAt:p])));
+        double beat=std::max(0.0,std::min(_lengthBeats-.25,snapBeat([self beatAt:p],[self grid])));
         if(beat>=_lengthBeats)return;
         NSMutableDictionary *note=[@{@"pitch":@([self pitchAt:p]),@"start":@(beat),
             @"length":@(std::min(1.0,std::max(.25,_lengthBeats-beat))),@"velocity":@100} mutableCopy];
@@ -254,9 +258,9 @@ static NSString *autosaveFilePath() {
     double beat=[self beatAt:p];
     if(_resizing) {
         double start=[note[@"start"] doubleValue];
-        note[@"length"]=@(std::max(.25,std::min(_lengthBeats-start,snapBeat(beat-start))));
+        note[@"length"]=@(std::max([self grid],std::min(_lengthBeats-start,snapBeat(beat-start,[self grid]))));
     } else {
-        double start=std::max(0.0,std::min(_lengthBeats-.25,snapBeat(_dragStartBeat+beat-[self beatAt:_dragPoint])));
+        double start=std::max(0.0,std::min(_lengthBeats-[self grid],snapBeat(_dragStartBeat+beat-[self beatAt:_dragPoint],[self grid])));
         int pitch=std::max(48,std::min(84,_dragStartPitch-int(std::round((p.y-_dragPoint.y)/[self rowHeight]))));
         note[@"start"]=@(start);note[@"pitch"]=@(pitch);
     }
@@ -326,6 +330,8 @@ static NSString *autosaveFilePath() {
 -(void)clipLengthChanged:(id)sender;
 -(void)clipNoteLengthChanged:(id)sender;
 -(void)clipVelocityChanged:(id)sender;
+-(void)clipGridChanged:(id)sender;
+-(void)clipQuantize:(id)sender;
 -(void)refreshClipFields;
 -(void)autosave;
 -(void)restoreAutosave:(id)sender;
@@ -810,11 +816,11 @@ std::vector<ParamPreset> presetsFor(int type) {
         [notes addObject:[@{@"pitch":@(pitch),@"start":@(start),
             @"length":@(std::max(.25,length-start)),@"velocity":@(entry.second.second)} mutableCopy]];
     }
-    NSPanel *panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,760,568)
+    NSPanel *panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,840,568)
         styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable
         backing:NSBackingStoreBuffered defer:NO];
     panel.title=[NSString stringWithFormat:@"编辑 MIDI Clip · %@",asset[@"name"] ?: @"新片段"];
-    SNNoteRollView *roll=[[SNNoteRollView alloc]initWithFrame:NSMakeRect(0,64,760,504)];
+    SNNoteRollView *roll=[[SNNoteRollView alloc]initWithFrame:NSMakeRect(0,64,840,504)];
     roll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     roll.notes=notes;roll.lengthBeats=length;roll.selectedIndex=notes.count?0:-1;
     [panel.contentView addSubview:roll];
@@ -835,13 +841,21 @@ std::vector<ParamPreset> presetsFor(int type) {
     velocityField.target=self;velocityField.action=@selector(clipVelocityChanged:);
     [panel.contentView addSubview:velocityField];
     NSButton *deleteButton=[NSButton buttonWithTitle:@"删除音符" target:self action:@selector(clipDelete:)];
-    deleteButton.frame=NSMakeRect(414,14,92,30);[panel.contentView addSubview:deleteButton];
+    deleteButton.frame=NSMakeRect(406,14,80,30);[panel.contentView addSubview:deleteButton];
+    NSTextField *gridLabel=[NSTextField labelWithString:@"网格"];
+    gridLabel.frame=NSMakeRect(494,18,30,22);[panel.contentView addSubview:gridLabel];
+    NSPopUpButton *gridPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(526,14,58,26) pullsDown:NO];
+    for(NSString *title in @[@"1/4",@"1/8",@"1/16",@"1/32"])[gridPopup addItemWithTitle:title];
+    [gridPopup selectItemAtIndex:2];gridPopup.tag=3;gridPopup.target=self;gridPopup.action=@selector(clipGridChanged:);
+    [panel.contentView addSubview:gridPopup];
+    NSButton *quantize=[NSButton buttonWithTitle:@"量化" target:self action:@selector(clipQuantize:)];
+    quantize.frame=NSMakeRect(590,14,60,30);[panel.contentView addSubview:quantize];
     NSButton *cancel=[NSButton buttonWithTitle:@"取消" target:self action:@selector(clipCancel:)];
-    cancel.frame=NSMakeRect(590,14,70,30);[panel.contentView addSubview:cancel];
+    cancel.frame=NSMakeRect(658,14,66,30);[panel.contentView addSubview:cancel];
     NSButton *apply=[NSButton buttonWithTitle:@"应用" target:self action:@selector(clipApply:)];
-    apply.frame=NSMakeRect(668,14,78,30);apply.keyEquivalent=@"\r";[panel.contentView addSubview:apply];
-    NSTextField *hint=[NSTextField labelWithString:@"单击空白添加 · 拖动移动 · 拖右边缘改长度 · 右键/Delete 删除"];
-    hint.frame=NSMakeRect(12,38,740,18);hint.font=[NSFont systemFontOfSize:10];
+    apply.frame=NSMakeRect(730,14,92,30);apply.keyEquivalent=@"\r";[panel.contentView addSubview:apply];
+    NSTextField *hint=[NSTextField labelWithString:@"单击空白添加 · 拖动移动 · 拖右边缘改长度 · 右键/Delete 删除 · 量化按网格对齐"];
+    hint.frame=NSMakeRect(12,38,810,18);hint.font=[NSFont systemFontOfSize:10];
     hint.textColor=[NSColor secondaryLabelColor];[panel.contentView addSubview:hint];
     __weak SNInstanceEditor *weakSelf=self;
     roll.selectionChanged=^{ [weakSelf refreshClipFields]; };
@@ -849,6 +863,28 @@ std::vector<ParamPreset> presetsFor(int type) {
     self.clipLengthField=clipField;self.clipNoteLengthField=noteField;self.clipVelocityField=velocityField;
     [self refreshClipFields];
     [self.window beginSheet:panel completionHandler:^(NSModalResponse response){(void)response;}];
+}
+-(void)clipGridChanged:(id)sender {
+    NSPopUpButton *popup=(NSPopUpButton *)sender;
+    NSArray<NSNumber*> *divisions=@[@4,@8,@16,@32];
+    if(popup.indexOfSelectedItem<0)return;
+    _clipRoll.grid=4.0/divisions[(NSUInteger)popup.indexOfSelectedItem].doubleValue;
+    [self refreshClipFields];
+}
+-(void)clipQuantize:(id)sender {
+    (void)sender;
+    double grid=_clipRoll.grid;
+    for(NSMutableDictionary *note in _clipRoll.notes) {
+        double start=[note[@"start"] doubleValue];
+        double length=[note[@"length"] doubleValue];
+        start=std::round(start/grid)*grid;
+        start=std::max(0.0,std::min(_clipRoll.lengthBeats-grid,start));
+        length=std::max(grid,std::round(length/grid)*grid);
+        length=std::max(grid,std::min(_clipRoll.lengthBeats-start,length));
+        note[@"start"]=@(start);note[@"length"]=@(length);
+    }
+    [_clipRoll setNeedsDisplay:YES];
+    [self refreshClipFields];
 }
 -(void)clipApply:(id)sender {
     NSMutableDictionary *node=[self node:_clipUID]; if(!node||!_clipRoll){[self message:@"节点已不存在"];return;}
