@@ -1,5 +1,6 @@
 #import "WorkflowAssets.h"
 #import <CoreML/CoreML.h>
+#import <AVFoundation/AVFoundation.h>
 #include "StandardMidiFile.hpp"
 #include "AudioFile.hpp"
 #include <climits>
@@ -237,6 +238,50 @@ bool validate(NSDictionary *assets, NSString **why) {
     tri::NoteModel model;
     return decode(assets,clip,model,why);
 }
+
+bool decodeCompressedAudio(NSURL *url, tri::AudioSample& sample, NSString **why) {
+    NSError *error=nil;
+    AVAudioFile *file=[[AVAudioFile alloc] initForReading:url
+        commonFormat:AVAudioPCMFormatFloat32 interleaved:NO error:&error];
+    if(!file) { fail(why,error.localizedDescription ?: @"无法解码音频文件。"); return false; }
+    AVAudioFormat *format=file.processingFormat;
+    const double rate=format.sampleRate;
+    const int channels=std::min(2,int(format.channelCount));
+    if(!(rate>=1000 && rate<=384000) || channels<1) {
+        fail(why,@"音频采样率需在 1–384 kHz 之间。");return false;
+    }
+    if(file.length<=0) {fail(why,@"音频文件没有采样。");return false;}
+    const AVAudioFrameCount chunk=4096;
+    AVAudioPCMBuffer *buffer=[[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:chunk];
+    if(!buffer) {fail(why,@"无法分配音频解码缓冲区。");return false;}
+    std::vector<float> samples;
+    while(true) {
+        NSError *readError=nil;
+        @autoreleasepool {
+            BOOL ok=[file readIntoBuffer:buffer error:&readError];
+            if(!ok) {
+                if(readError) {fail(why,readError.localizedDescription);return false;}
+                break;
+            }
+            const AVAudioFrameCount frames=buffer.frameLength;
+            if(!frames) break;
+            if(samples.size()/size_t(channels)+size_t(frames)>tri::audiofile::maxSamples) {
+                fail(why,@"音频过长；导入上限约为 4M 个采样点。");return false;
+            }
+            float *const *data=buffer.floatChannelData;
+            if(!data || !data[0]) {fail(why,@"音频解码结果为空。");return false;}
+            for(AVAudioFrameCount i=0;i<frames;++i) {
+                samples.push_back(data[0][i]);
+                samples.push_back(channels>1 && data[1] ? data[1][i] : data[0][i]);
+            }
+        }
+    }
+    if(samples.empty()) {fail(why,@"音频文件没有采样。");return false;}
+    sample.name=url.lastPathComponent.UTF8String ?: "";
+    sample.rate=rate;sample.channels=channels;sample.samples=std::move(samples);
+    return sample.valid();
+}
+
 NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
     if (!url.isFileURL || !url.lastPathComponent.length || url.lastPathComponent.length>256) {
         fail(why,@"请选择本机文件。"); return nil;
@@ -255,11 +300,14 @@ NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
             NSData *data=readLimited(url,tri::audiofile::maxFileBytes,why);
             if (!data) return nil;
             tri::AudioSample sample;
-            std::string error;
-            if (!tri::audiofile::parse(static_cast<const uint8_t *>(data.bytes),data.length,sample,error)) {
-                fail(why,[NSString stringWithUTF8String:error.c_str()]);
-                return nil;
-            }
+            NSString *suffix=url.pathExtension.lowercaseString;
+            if ([@[@"wav",@"aif",@"aiff",@"aifc"] containsObject:suffix]) {
+                std::string error;
+                if (!tri::audiofile::parse(static_cast<const uint8_t *>(data.bytes),data.length,sample,error)) {
+                    fail(why,[NSString stringWithUTF8String:error.c_str()]);
+                    return nil;
+                }
+            } else if (!decodeCompressedAudio(url,sample,why)) return nil;
             sample.name=[name UTF8String] ?: "";
             NSData *pcm=[NSData dataWithBytes:sample.samples.data()
                                         length:sample.samples.size()*sizeof(float)];

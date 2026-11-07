@@ -507,7 +507,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     int nodeType=[node[@"type"] intValue];
     BOOL clip=nodeType==tri::ClipNode,audio=nodeType==tri::SamplerNode || nodeType==tri::AudioClipNode;
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=!clip && !audio;
-    NSArray *extensions=clip?@[@"mid",@"midi"]:audio?@[@"wav",@"aif",@"aiff",@"aifc"]:
+    NSArray *extensions=clip?@[@"mid",@"midi"]:audio?@[@"wav",@"aif",@"aiff",@"aifc",@"mp3",@"m4a",@"aac",@"caf",@"flac"]:
         @[@"mlmodel",@"mlmodelc",@"mlpackage",@"json"];
     NSMutableArray *types=[NSMutableArray new];
     for(NSString *ext in extensions) {
@@ -644,7 +644,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         [self label:node[@"asset"][@"name"] ?: @"未载入素材" y:y];y+=46;
     }
     if(type==tri::SamplerNode || type==tri::AudioClipNode) {
-        [self button:@"载入音频（WAV / AIFF）…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
+        [self button:@"载入音频（WAV / AIFF / MP3 / M4A / AAC / CAF / FLAC）…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
         NSDictionary *asset=node[@"asset"];
         if(asset[@"name"]) {
             [self label:asset[@"name"] y:y];y+=24;
@@ -1175,7 +1175,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.17    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.18    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

@@ -19,7 +19,7 @@ echo "== compile RenderAudition"
 
 echo "== compile AssetImportTests"
 "${cxx[@]}" -fobjc-arc tests/AssetImportTests.mm src/WorkflowAssets.mm \
-  -framework Foundation -framework CoreML -o "$build/AssetImportTests"
+  -framework Foundation -framework CoreML -framework AVFoundation -o "$build/AssetImportTests"
 
 for name in "${tests[@]}"; do
   echo "== run $name"

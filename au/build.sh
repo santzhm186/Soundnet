@@ -18,10 +18,10 @@ for path in "$src"/vendor/src/AudioUnitSDK/*.cpp; do
   fi
   objects+=("$object")
 done
-xcrun clang++ "${common[@]}" "${auflags[@]}" -fobjc-arc "$src/TernaryAU.mm" "$src/../src/WorkflowAssets.mm" "${objects[@]}" -bundle -framework AudioUnit -framework AudioToolbox -framework CoreFoundation -framework CoreAudio -framework CoreMIDI -framework Foundation -framework CoreML -o "$bundle/MacOS/Soundnet"
+xcrun clang++ "${common[@]}" "${auflags[@]}" -fobjc-arc "$src/TernaryAU.mm" "$src/../src/WorkflowAssets.mm" "${objects[@]}" -bundle -framework AudioUnit -framework AudioToolbox -framework AVFoundation -framework CoreFoundation -framework CoreAudio -framework CoreMIDI -framework Foundation -framework CoreML -o "$bundle/MacOS/Soundnet"
 cp "$src/Info.plist" "$bundle/Info.plist"
 cp "$src/vendor/LICENSE.txt" "$bundle/Resources/AudioUnitSDK-LICENSE.txt"
-xcrun clang++ "${common[@]}" -std=c++17 -fobjc-arc -DSNInstanceEditor=SNAUInstanceEditor -DSNInstanceCanvas=SNAUInstanceCanvas -DSNPiano=SNAUPiano -DSNFlippedView=SNAUFlippedView -DTRNKnob=TRNAUKnob -DTRNKeys=TRNAUKeys -DTRNEditor=TRNAUEditor -DTRIWorkflowCanvas=TRIAUWorkflowCanvas "$src/EditorFactory.mm" "$src/../src/WorkflowAssets.mm" "$src/../ui/InstanceEditor.mm" -bundle -framework Cocoa -framework UniformTypeIdentifiers -framework QuartzCore -framework CoreML -framework AudioToolbox -o "$view/MacOS/TernaryView"
+xcrun clang++ "${common[@]}" -std=c++17 -fobjc-arc -DSNInstanceEditor=SNAUInstanceEditor -DSNInstanceCanvas=SNAUInstanceCanvas -DSNPiano=SNAUPiano -DSNFlippedView=SNAUFlippedView -DTRNKnob=TRNAUKnob -DTRNKeys=TRNAUKeys -DTRNEditor=TRNAUEditor -DTRIWorkflowCanvas=TRIAUWorkflowCanvas "$src/EditorFactory.mm" "$src/../src/WorkflowAssets.mm" "$src/../ui/InstanceEditor.mm" -bundle -framework Cocoa -framework UniformTypeIdentifiers -framework QuartzCore -framework CoreML -framework AudioToolbox -framework AVFoundation -o "$view/MacOS/TernaryView"
 cp "$src/ViewInfo.plist" "$view/Info.plist"
 /usr/bin/codesign --force --sign - "$view/.."
 /usr/bin/codesign --force --sign - "$bundle/.."
