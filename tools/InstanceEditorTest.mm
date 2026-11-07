@@ -71,7 +71,7 @@ int main() {
         assert([assets[@"graph"][@"nodes"] count]==27);
         NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
             [NSPredicate predicateWithFormat:@"type == %d", tri::SamplerNode]] firstObject];
-        assert(samplerNode && [samplerNode[@"parameters"] count]==7);
+        assert(samplerNode && [samplerNode[@"parameters"] count]==9);
         std::vector<float> wave(4800), waveR(4800);
         for (size_t i=0; i<wave.size(); ++i) wave[i]=waveR[i]=0.2f*std::sin(2*M_PI*440*i/48000.0);
         std::string why;
