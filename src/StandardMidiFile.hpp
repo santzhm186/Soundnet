@@ -144,4 +144,41 @@ inline MidiClip parse(const uint8_t *bytes, size_t size) {
             if (keys[ch][key].sounding) emit(endTick,0x80|ch,key,0);
     return clip;
 }
+
+inline void appendVlq(std::vector<uint8_t>& out,uint32_t value) {
+    uint8_t buffer[4];int count=0;
+    buffer[count++]=uint8_t(value&127);
+    while((value>>=7))buffer[count++]=uint8_t((value&127)|128);
+    while(count--)out.push_back(buffer[count]);
+}
+inline std::vector<uint8_t> encodeClip(const MidiClip& clip) {
+    if(!(clip.lengthBeats>0) || clip.lengthBeats>double(maxBeats))
+        throw std::runtime_error("Clip 长度需在 0–65536 拍之间。");
+    if(clip.events.size()>maxEvents)throw std::runtime_error("Clip 事件过多。");
+    constexpr uint16_t ppq=480;
+    std::vector<ClipEvent> events=clip.events;
+    std::stable_sort(events.begin(),events.end(),[](const ClipEvent& a,const ClipEvent& b){
+        uint64_t ta=uint64_t(std::llround(a.beat*ppq)),tb=uint64_t(std::llround(b.beat*ppq));
+        if(ta!=tb)return ta<tb;
+        return (a.status&0xf0)==0x80 && (b.status&0xf0)!=0x80;
+    });
+    std::vector<uint8_t> track;
+    track.insert(track.end(),{0x00,0xff,0x51,0x03,0x07,0xa1,0x20});
+    uint64_t tick=0;
+    for(const ClipEvent& e:events) {
+        if((e.status&0xf0)<0x80 || (e.status&0xf0)>0xe0 || e.data1>127 || e.data2>127)
+            throw std::runtime_error("Clip 含有不支持的 MIDI 事件。");
+        const uint64_t next=std::max(tick,uint64_t(std::llround(std::clamp(e.beat,0.0,double(maxBeats))*ppq)));
+        appendVlq(track,uint32_t(next-tick));tick=next;
+        track.push_back(e.status);track.push_back(e.data1);track.push_back(e.data2);
+    }
+    const uint64_t end=uint64_t(std::llround(clip.lengthBeats*ppq));
+    appendVlq(track,uint32_t(std::max(tick,end)-tick));
+    track.insert(track.end(),{0xff,0x2f,0x00});
+    if(track.size()>0xffffffffu)throw std::runtime_error("Clip 数据过大。");
+    std::vector<uint8_t> out={'M','T','h','d',0,0,0,6,0,0,0,1,uint8_t(ppq>>8),uint8_t(ppq&255)};
+    out.insert(out.end(),{'M','T','r','k',uint8_t(track.size()>>24),uint8_t(track.size()>>16),uint8_t(track.size()>>8),uint8_t(track.size()&255)});
+    out.insert(out.end(),track.begin(),track.end());
+    return out;
+}
 } // namespace tri::smf

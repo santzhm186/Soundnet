@@ -139,5 +139,17 @@ int main() { @autoreleasepool {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         puts("audio file import round-trips through a graph asset");
     }
+    {
+        tri::MidiClip edit;
+        edit.lengthBeats=4;
+        edit.events.push_back({0.5,0x90,60,110});
+        edit.events.push_back({2.0,0x80,60,0});
+        NSDictionary *encoded=triassets::encodeClipAsset(@"Clip",edit,&why);
+        assert(encoded && [encoded[@"notes"] intValue]==1 && [encoded[@"beats"] doubleValue]==4);
+        tri::MidiClip round; tri::NoteModel dummyModel;
+        assert(triassets::decode(@{@"clip":encoded},round,dummyModel,&why));
+        assert(round.lengthBeats==4 && round.events.size()==2 && round.events[0].data1==60);
+        puts("MIDI clip assets encode and decode");
+    }
     puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter, chorus, scale quantizer and real Core ML pitch predictions.");
 } }

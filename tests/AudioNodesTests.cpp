@@ -1,4 +1,5 @@
 #include "../src/Engine.hpp"
+#include "../src/StandardMidiFile.hpp"
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -412,6 +413,16 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, pitch/reverse, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
+        {
+        tri::MidiClip clip;clip.lengthBeats=4;
+        clip.events={{0,0x90,60,100},{1,0x80,60,0},{2,0x90,64,90},{3.5,0x80,64,0}};
+        auto bytes=tri::smf::encodeClip(clip);
+        auto round=tri::smf::parse(bytes.data(),bytes.size());
+        assert(std::abs(round.lengthBeats-4)<1e-9);
+        assert(round.events.size()==4);
+        assert((round.events[0].status&0xf0)==0x90 && round.events[0].data1==60);
+    }
+    puts("MIDI clips round-trip through the encoder");
+puts("PASS: filter, reverb, noise, sampler, audio clip, pitch/reverse, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
 
 }

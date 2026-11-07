@@ -21,6 +21,11 @@ echo "== compile AssetImportTests"
 "${cxx[@]}" -fobjc-arc tests/AssetImportTests.mm src/WorkflowAssets.mm \
   -framework Foundation -framework CoreML -framework AVFoundation -o "$build/AssetImportTests"
 
+echo "== compile ClipEditorTests"
+"${cxx[@]}" -fobjc-arc -I. tests/ClipEditorTests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
+  -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
+  -framework AVFoundation -o "$build/ClipEditorTests"
+
 for name in "${tests[@]}"; do
   echo "== run $name"
   "$build/$name"
@@ -32,5 +37,8 @@ test -s "$build/render-audition.wav"
 
 echo "== run AssetImportTests"
 "$build/AssetImportTests"
+
+echo "== run ClipEditorTests"
+"$build/ClipEditorTests"
 
 echo "PASS: all Soundnet tests"

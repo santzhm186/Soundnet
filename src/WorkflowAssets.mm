@@ -282,6 +282,21 @@ bool decodeCompressedAudio(NSURL *url, tri::AudioSample& sample, NSString **why)
     return sample.valid();
 }
 
+
+NSDictionary *encodeClipAsset(NSString *name, const tri::MidiClip& clip, NSString **why) {
+    try {
+        std::vector<uint8_t> bytes=tri::smf::encodeClip(clip);
+        NSData *data=[NSData dataWithBytes:bytes.data() length:bytes.size()];
+        size_t notes=std::count_if(clip.events.begin(),clip.events.end(),[](const tri::ClipEvent& e){
+            return (e.status&0xf0)==0x90 && e.data2>0;
+        });
+        return @{@"name":name ?: @"Clip",@"smf":[data base64EncodedStringWithOptions:0],
+                 @"beats":@(clip.lengthBeats),@"notes":@(notes)};
+    } catch(const std::exception& error) {
+        fail(why,[NSString stringWithUTF8String:error.what()]);
+        return nil;
+    }
+}
 NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
     if (!url.isFileURL || !url.lastPathComponent.length || url.lastPathComponent.length>256) {
         fail(why,@"请选择本机文件。"); return nil;

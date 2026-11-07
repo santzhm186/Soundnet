@@ -4,6 +4,7 @@
 #import "../src/OfflineRender.hpp"
 #import "../src/WavFile.hpp"
 #import "../src/MidiFileWriter.hpp"
+#include "../src/StandardMidiFile.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cmath>
 
@@ -111,6 +112,136 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 }
 @end
 
+static double snapBeat(double value, double grid=0.25) { return std::round(value/grid)*grid; }
+
+@interface SNNoteRollView : NSView
+@property(nonatomic,strong) NSMutableArray<NSMutableDictionary *> *notes;
+@property(nonatomic) double lengthBeats;
+@property(nonatomic) NSInteger selectedIndex;
+@property(copy) void (^selectionChanged)(void);
+- (void)deleteSelected;
+@end
+
+@implementation SNNoteRollView {
+    BOOL _dragging, _resizing;
+    NSPoint _dragPoint;
+    double _dragStartBeat, _dragLength;
+    int _dragStartPitch;
+}
+- (BOOL)isFlipped { return YES; }
+- (void)setLengthBeats:(double)lengthBeats {
+    _lengthBeats=std::max(.5,std::min(64.0,lengthBeats));
+    [self setNeedsDisplay:YES];
+}
+- (double)left { return 48; }
+- (double)top { return 24; }
+- (double)rowHeight { return 12; }
+- (double)beatWidth { return std::max(6.0,(NSWidth(self.bounds)-[self left]-8)/std::max(.5,_lengthBeats)); }
+- (int)pitchAt:(NSPoint)p {
+    int pitch=84-int(std::floor((p.y-[self top])/[self rowHeight]));
+    return std::max(48,std::min(84,pitch));
+}
+- (double)beatAt:(NSPoint)p { return (p.x-[self left])/[self beatWidth]; }
+- (NSRect)rectForNote:(NSDictionary *)note {
+    double start=[note[@"start"] doubleValue],length=[note[@"length"] doubleValue];
+    int pitch=[note[@"pitch"] intValue];
+    return NSMakeRect([self left]+start*[self beatWidth],
+                      [self top]+(84-pitch)*[self rowHeight]+1,
+                      std::max(5.0,length*[self beatWidth]),[self rowHeight]-2);
+}
+- (NSInteger)noteAt:(NSPoint)p {
+    for(NSInteger i=(NSInteger)_notes.count-1;i>=0;--i)
+        if(NSPointInRect(p,[self rectForNote:_notes[(NSUInteger)i]]))return i;
+    return -1;
+}
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    [[NSColor colorWithWhite:.10 alpha:1] setFill];NSRectFill(self.bounds);
+    double bw=[self beatWidth],left=[self left],top=[self top],row=[self rowHeight];
+    static bool black[12]={false,true,false,true,false,false,true,false,true,false,true,false};
+    for(int pitch=48;pitch<=84;++pitch) {
+        double y=top+(84-pitch)*row;
+        if(black[pitch%12]){[[NSColor colorWithWhite:.135 alpha:1] setFill];NSRectFill(NSMakeRect(left,y,NSWidth(self.bounds)-left-4,row));}
+        [[NSColor colorWithWhite:.20 alpha:1] setStroke];
+        [NSBezierPath strokeLineFromPoint:NSMakePoint(left,y+.5) toPoint:NSMakePoint(NSMaxX(self.bounds)-4,y+.5)];
+        if(pitch%12==0){NSString *name=pitchName(pitch);NSDictionary *attrs=@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:9 weight:NSFontWeightRegular],NSForegroundColorAttributeName:[NSColor colorWithWhite:.65 alpha:1]};[name drawAtPoint:NSMakePoint(4,y+1) withAttributes:attrs];}
+    }
+    [[NSColor colorWithWhite:.16 alpha:1] setFill];NSRectFill(NSMakeRect(0,0,left,NSHeight(self.bounds)));
+    for(double beat=0;beat<=_lengthBeats+1e-6;beat+=.25) {
+        double x=left+beat*bw;
+        bool whole=std::fabs(beat-std::round(beat))<1e-6;
+        [[NSColor colorWithWhite:whole?.30:.20 alpha:1] setStroke];
+        [NSBezierPath strokeLineFromPoint:NSMakePoint(x,top) toPoint:NSMakePoint(x,NSHeight(self.bounds)-2)];
+        if(whole){NSString *label=[NSString stringWithFormat:@"%.0f",beat];[label drawAtPoint:NSMakePoint(x+3,4) withAttributes:@{NSFontAttributeName:[NSFont monospacedSystemFontOfSize:9 weight:NSFontWeightRegular],NSForegroundColorAttributeName:[NSColor colorWithWhite:.6 alpha:1]}];}
+    }
+    for(NSUInteger i=0;i<_notes.count;++i) {
+        NSRect rect=[self rectForNote:_notes[i]];
+        bool selected=NSInteger(i)==_selectedIndex;
+        [[NSColor colorWithCalibratedRed:.92 green:.62 blue:.30 alpha:.92] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:3 yRadius:3] fill];
+        [[NSColor colorWithWhite:selected?1:.55 alpha:selected?1:.7] setStroke];
+        NSBezierPath *border=[NSBezierPath bezierPathWithRoundedRect:rect xRadius:3 yRadius:3];
+        [border setLineWidth:selected?2:1];[border stroke];
+    }
+    [[NSColor colorWithWhite:.28 alpha:1] setStroke];
+    NSBezierPath *frame=[NSBezierPath bezierPathWithRect:NSInsetRect(self.bounds,.5,.5)];
+    [frame stroke];
+}
+- (void)mouseDown:(NSEvent *)event {
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger hit=[self noteAt:p];
+    if(hit>=0) {
+        _selectedIndex=hit;
+        if(_selectionChanged)_selectionChanged();
+        NSRect rect=[self rectForNote:_notes[(NSUInteger)hit]];
+        _dragging=YES;_resizing=p.x>=NSMaxX(rect)-6;
+        _dragPoint=p;_dragStartBeat=[_notes[(NSUInteger)hit][@"start"] doubleValue];
+        _dragLength=[_notes[(NSUInteger)hit][@"length"] doubleValue];
+        _dragStartPitch=[_notes[(NSUInteger)hit][@"pitch"] intValue];
+    } else if(p.x>=[self left] && p.y>=[self top]) {
+        double beat=std::max(0.0,std::min(_lengthBeats-.25,snapBeat([self beatAt:p])));
+        if(beat>=_lengthBeats)return;
+        NSMutableDictionary *note=[@{@"pitch":@([self pitchAt:p]),@"start":@(beat),
+            @"length":@(std::min(1.0,std::max(.25,_lengthBeats-beat))),@"velocity":@100} mutableCopy];
+        [_notes addObject:note];_selectedIndex=(NSInteger)_notes.count-1;
+        if(_selectionChanged)_selectionChanged();
+    }
+    [self setNeedsDisplay:YES];
+    [self.window makeFirstResponder:self];
+}
+- (void)mouseDragged:(NSEvent *)event {
+    if(!_dragging || _selectedIndex<0 || _selectedIndex>=(NSInteger)_notes.count)return;
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    NSMutableDictionary *note=_notes[(NSUInteger)_selectedIndex];
+    double beat=[self beatAt:p];
+    if(_resizing) {
+        double start=[note[@"start"] doubleValue];
+        note[@"length"]=@(std::max(.25,std::min(_lengthBeats-start,snapBeat(beat-start))));
+    } else {
+        double start=std::max(0.0,std::min(_lengthBeats-.25,snapBeat(_dragStartBeat+beat-[self beatAt:_dragPoint])));
+        int pitch=std::max(48,std::min(84,_dragStartPitch-int(std::round((p.y-_dragPoint.y)/[self rowHeight]))));
+        note[@"start"]=@(start);note[@"pitch"]=@(pitch);
+    }
+    [self setNeedsDisplay:YES];
+}
+- (void)mouseUp:(NSEvent *)event { (void)event;_dragging=NO;_resizing=NO; }
+- (void)rightMouseDown:(NSEvent *)event {
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger hit=[self noteAt:p];
+    if(hit>=0){[_notes removeObjectAtIndex:(NSUInteger)hit];_selectedIndex=-1;if(_selectionChanged)_selectionChanged();[self setNeedsDisplay:YES];}
+}
+- (void)keyDown:(NSEvent *)event {
+    if(event.keyCode==51 || event.keyCode==117)[self deleteSelected];
+    else [super keyDown:event];
+}
+- (void)deleteSelected {
+    if(_selectedIndex<0 || _selectedIndex>=(NSInteger)_notes.count)return;
+    [_notes removeObjectAtIndex:(NSUInteger)_selectedIndex];
+    _selectedIndex=-1;if(_selectionChanged)_selectionChanged();
+    [self setNeedsDisplay:YES];
+}
+@end
+
 @interface SNInstanceEditor : NSView <NSTextFieldDelegate>
 @property(copy) TRIRead read;
 @property(copy) TRIWrite write;
@@ -144,6 +275,20 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 @property NSPoint lastPoint;
 @property(strong) NSDictionary *dragStart;
 @property(strong) NSTimer *timer;
+@property(strong) NSPanel *clipPanel;
+@property(strong) SNNoteRollView *clipRoll;
+@property uint64_t clipUID;
+@property(strong) NSTextField *clipLengthField;
+@property(strong) NSTextField *clipNoteLengthField;
+@property(strong) NSTextField *clipVelocityField;
+-(void)editClip:(id)sender;
+-(void)clipApply:(id)sender;
+-(void)clipCancel:(id)sender;
+-(void)clipDelete:(id)sender;
+-(void)clipLengthChanged:(id)sender;
+-(void)clipNoteLengthChanged:(id)sender;
+-(void)clipVelocityChanged:(id)sender;
+-(void)refreshClipFields;
 -(NSMutableDictionary *)node:(uint64_t)uid;
 -(BOOL)isSelected:(uint64_t)uid;
 -(NSArray<NSNumber *> *)selectedIDs;
@@ -543,6 +688,138 @@ std::vector<ParamPreset> presetsFor(int type) {
     }
     [self commit:previous];[self inspect];
 }
+-(void)refreshClipFields {
+    if(!_clipRoll)return;
+    NSInteger index=_clipRoll.selectedIndex;
+    if(index>=0 && index<(NSInteger)_clipRoll.notes.count) {
+        NSDictionary *note=_clipRoll.notes[(NSUInteger)index];
+        _clipNoteLengthField.stringValue=[NSString stringWithFormat:@"%.2f",[note[@"length"] doubleValue]];
+        _clipVelocityField.stringValue=[NSString stringWithFormat:@"%d",[note[@"velocity"] intValue]];
+        _clipNoteLengthField.enabled=YES;_clipVelocityField.enabled=YES;
+    } else {
+        _clipNoteLengthField.stringValue=@"";_clipVelocityField.stringValue=@"";
+        _clipNoteLengthField.enabled=NO;_clipVelocityField.enabled=NO;
+    }
+    _clipLengthField.stringValue=[NSString stringWithFormat:@"%.2f",_clipRoll.lengthBeats];
+}
+-(void)editClip:(id)sender {
+    NSMutableDictionary *node=[self node:_selected]; if(!node)return;
+    tri::MidiClip clip; bool have=false;
+    NSDictionary *asset=[node[@"asset"] isKindOfClass:NSDictionary.class] ? node[@"asset"] : nil;
+    if([asset[@"smf"] isKindOfClass:NSString.class]) {
+        NSData *data=[[NSData alloc]initWithBase64EncodedString:asset[@"smf"] options:0];
+        if(data) try { clip=tri::smf::parse(static_cast<const uint8_t *>(data.bytes),data.length); have=true; } catch(...) {}
+    }
+    double length=have && clip.lengthBeats>0 ? clip.lengthBeats : [asset[@"beats"] doubleValue];
+    if(!(length>0))length=4;
+    NSMutableArray<NSMutableDictionary *> *notes=[NSMutableArray array];
+    std::map<int,std::pair<double,int>> active;
+    for(const auto &e:clip.events) {
+        int channel=e.status&15, key=channel*128+e.data1;
+        if((e.status&0xf0)==0x90 && e.data2>0) {
+            active[key]={e.beat,e.data2};
+        } else if((e.status&0xf0)==0x80 || (e.status&0xf0)==0x90) {
+            auto it=active.find(key);if(it==active.end())continue;
+            double start=it->second.first;
+            double duration=std::max(.25,e.beat-start);
+            [notes addObject:[@{@"pitch":@(e.data1),@"start":@(start),@"length":@(duration),
+                @"velocity":@(it->second.second)} mutableCopy]];
+            active.erase(it);
+        }
+    }
+    for(const auto &entry:active) {
+        int pitch=entry.first%128;
+        double start=entry.second.first;
+        [notes addObject:[@{@"pitch":@(pitch),@"start":@(start),
+            @"length":@(std::max(.25,length-start)),@"velocity":@(entry.second.second)} mutableCopy]];
+    }
+    NSPanel *panel=[[NSPanel alloc]initWithContentRect:NSMakeRect(0,0,760,568)
+        styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable
+        backing:NSBackingStoreBuffered defer:NO];
+    panel.title=[NSString stringWithFormat:@"编辑 MIDI Clip · %@",asset[@"name"] ?: @"新片段"];
+    SNNoteRollView *roll=[[SNNoteRollView alloc]initWithFrame:NSMakeRect(0,64,760,504)];
+    roll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+    roll.notes=notes;roll.lengthBeats=length;roll.selectedIndex=notes.count?0:-1;
+    [panel.contentView addSubview:roll];
+    NSTextField *clipLabel=[NSTextField labelWithString:@"总长度（拍）"];
+    clipLabel.frame=NSMakeRect(12,18,92,22);[panel.contentView addSubview:clipLabel];
+    NSTextField *clipField=[[NSTextField alloc]initWithFrame:NSMakeRect(104,16,64,24)];
+    clipField.stringValue=[NSString stringWithFormat:@"%.2f",length];
+    clipField.target=self;clipField.action=@selector(clipLengthChanged:);
+    [panel.contentView addSubview:clipField];
+    NSTextField *noteLabel=[NSTextField labelWithString:@"音符长度"];
+    noteLabel.frame=NSMakeRect(184,18,64,22);[panel.contentView addSubview:noteLabel];
+    NSTextField *noteField=[[NSTextField alloc]initWithFrame:NSMakeRect(248,16,58,24)];
+    noteField.target=self;noteField.action=@selector(clipNoteLengthChanged:);
+    [panel.contentView addSubview:noteField];
+    NSTextField *velocityLabel=[NSTextField labelWithString:@"力度"];
+    velocityLabel.frame=NSMakeRect(318,18,34,22);[panel.contentView addSubview:velocityLabel];
+    NSTextField *velocityField=[[NSTextField alloc]initWithFrame:NSMakeRect(352,16,48,24)];
+    velocityField.target=self;velocityField.action=@selector(clipVelocityChanged:);
+    [panel.contentView addSubview:velocityField];
+    NSButton *deleteButton=[NSButton buttonWithTitle:@"删除音符" target:self action:@selector(clipDelete:)];
+    deleteButton.frame=NSMakeRect(414,14,92,30);[panel.contentView addSubview:deleteButton];
+    NSButton *cancel=[NSButton buttonWithTitle:@"取消" target:self action:@selector(clipCancel:)];
+    cancel.frame=NSMakeRect(590,14,70,30);[panel.contentView addSubview:cancel];
+    NSButton *apply=[NSButton buttonWithTitle:@"应用" target:self action:@selector(clipApply:)];
+    apply.frame=NSMakeRect(668,14,78,30);apply.keyEquivalent=@"\r";[panel.contentView addSubview:apply];
+    NSTextField *hint=[NSTextField labelWithString:@"单击空白添加 · 拖动移动 · 拖右边缘改长度 · 右键/Delete 删除"];
+    hint.frame=NSMakeRect(12,38,740,18);hint.font=[NSFont systemFontOfSize:10];
+    hint.textColor=[NSColor secondaryLabelColor];[panel.contentView addSubview:hint];
+    __weak SNInstanceEditor *weakSelf=self;
+    roll.selectionChanged=^{ [weakSelf refreshClipFields]; };
+    self.clipPanel=panel;self.clipRoll=roll;self.clipUID=_selected;
+    self.clipLengthField=clipField;self.clipNoteLengthField=noteField;self.clipVelocityField=velocityField;
+    [self refreshClipFields];
+    [self.window beginSheet:panel completionHandler:^(NSModalResponse response){(void)response;}];
+}
+-(void)clipApply:(id)sender {
+    NSMutableDictionary *node=[self node:_clipUID]; if(!node||!_clipRoll){[self message:@"节点已不存在"];return;}
+    if(!_clipRoll.notes.count){[self message:@"请先添加至少一个音符"];return;}
+    NSDictionary *previous=copyJSON(_document);
+    tri::MidiClip clip;clip.lengthBeats=_clipRoll.lengthBeats;
+    NSArray<NSDictionary *> *sorted=[_clipRoll.notes sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        return [a[@"start"] doubleValue]<[b[@"start"] doubleValue]?NSOrderedAscending:
+               [a[@"start"] doubleValue]>[b[@"start"] doubleValue]?NSOrderedDescending:NSOrderedSame;
+    }];
+    for(NSDictionary *note in sorted) {
+        double start=[note[@"start"] doubleValue],length=std::max(.25,[note[@"length"] doubleValue]);
+        int pitch=std::max(0,std::min(127,[note[@"pitch"] intValue]));
+        int velocity=std::max(1,std::min(127,[note[@"velocity"] intValue]));
+        clip.events.push_back({start,0x90,uint8_t(pitch),uint8_t(velocity)});
+        clip.events.push_back({start+length,0x80,uint8_t(pitch),0});
+        clip.lengthBeats=std::max(clip.lengthBeats,start+length);
+    }
+    NSString *why=nil;
+    NSDictionary *asset=triassets::encodeClipAsset(node[@"asset"][@"name"] ?: @"Clip",clip,&why);
+    if(!asset){[self message:why ?: @"无法编码 MIDI Clip"];return;}
+    node[@"asset"]=asset;
+    [self commit:previous];
+    [self inspect];
+    [self.window endSheet:_clipPanel];
+    self.clipPanel=nil;self.clipRoll=nil;self.clipLengthField=nil;self.clipNoteLengthField=nil;self.clipVelocityField=nil;
+}
+-(void)clipCancel:(id)sender {
+    [self.window endSheet:_clipPanel];
+    self.clipPanel=nil;self.clipRoll=nil;self.clipLengthField=nil;self.clipNoteLengthField=nil;self.clipVelocityField=nil;
+}
+-(void)clipDelete:(id)sender { [_clipRoll deleteSelected]; [self refreshClipFields]; }
+-(void)clipLengthChanged:(id)sender {
+    _clipRoll.lengthBeats=[_clipLengthField doubleValue];
+    [self refreshClipFields];
+}
+-(void)clipNoteLengthChanged:(id)sender {
+    NSInteger index=_clipRoll.selectedIndex;
+    if(index<0||index>=(NSInteger)_clipRoll.notes.count)return;
+    _clipRoll.notes[(NSUInteger)index][@"length"]=@(std::max(.25,[_clipNoteLengthField doubleValue]));
+    [_clipRoll setNeedsDisplay:YES];[self refreshClipFields];
+}
+-(void)clipVelocityChanged:(id)sender {
+    NSInteger index=_clipRoll.selectedIndex;
+    if(index<0||index>=(NSInteger)_clipRoll.notes.count)return;
+    _clipRoll.notes[(NSUInteger)index][@"velocity"]=@(std::max(1,std::min(127,[_clipVelocityField intValue])));
+    [_clipRoll setNeedsDisplay:YES];[self refreshClipFields];
+}
 -(void)import:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     uint64_t uid=_selected;
@@ -694,7 +971,10 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::WaitNode){[self label:@"收到开始或停止信号后，等待指定秒数再转发。可排队等待多个信号。" y:y];y+=65;}
     if(type==tri::CountNode){[self label:@"每收到 X 个信号后输出一次，再开始下一轮计数。可连接 Clip 的循环完成端口。" y:y];y+=65;}
     if(type==tri::ClipNode || type==tri::ModelNode) {
-        [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=42;
+        [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=40;
+        if(type==tri::ClipNode) {
+            [self button:@"编辑音符…" frame:NSMakeRect(12,y,225,30) action:@selector(editClip:) parent:_inspector];y+=40;
+        }
         [self label:node[@"asset"][@"name"] ?: @"未载入素材" y:y];y+=46;
     }
     if(type==tri::SamplerNode || type==tri::AudioClipNode) {
@@ -1301,7 +1581,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.21    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.22    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
