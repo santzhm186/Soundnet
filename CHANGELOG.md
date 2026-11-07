@@ -1,5 +1,9 @@
 # Soundnet 更新记录
 
+## 2.52
+- 修复发布节点时的并发数据竞争；MIDI 输入队列改为加锁快照。
+- 新增并发渲染/发布/panic/MIDI 测试；ASan/UBSan 流程覆盖该测试。
+
 ## 2.51
 - 新增 `scripts/test-sanitize.sh`，在 ASan/UBSan 下运行音频相关测试。
 

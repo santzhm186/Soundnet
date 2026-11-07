@@ -288,7 +288,10 @@ class InstanceGraph {
     std::atomic<bool> active{false},panicRequested{false};
     std::array<Event,eventCapacity> local{},daw{};
     int localCount=0,dawCount=0;
-    bool inputOverflow=false;
+    std::array<Event,eventCapacity> pendingLocal{},pendingDaw{};
+    int pendingLocalCount=0,pendingDawCount=0;
+    std::mutex midiLock;
+    std::atomic<bool> inputOverflow{false};
     void* outputContext=nullptr;
     void (*output)(void*,int,uint8_t,uint8_t,uint8_t)=nullptr;
     int outputBase=0;
@@ -681,6 +684,15 @@ class InstanceGraph {
         }
         state.retry=node.overflow || state.otherVoices[0].overflow || state.otherVoices[1].overflow;
     }
+    static bool sameEngineConfig(const GraphNode& a,const GraphNode& b) {
+        if(a.parameters!=b.parameters)return false;
+        if(a.clip.lengthBeats!=b.clip.lengthBeats || a.clip.events.size()!=b.clip.events.size())return false;
+        for(size_t i=0;i<a.clip.events.size();++i) {
+            const auto& x=a.clip.events[i];const auto& y=b.clip.events[i];
+            if(x.beat!=y.beat || x.status!=y.status || x.data1!=y.data1 || x.data2!=y.data2)return false;
+        }
+        return a.model.pitches==b.model.pitches;
+    }
 public:
     bool enabled() const {return active.load(std::memory_order_acquire);}
     void setHosted(bool v) {hosted=v;}
@@ -694,8 +706,10 @@ public:
         for(size_t i:order) {
             const auto& n=spec.nodes[i];
             auto old=controlNodes.find(n.id);
-            auto runtime=old!=controlNodes.end() && old->second->type==n.type ? old->second : std::make_shared<Runtime>(n,rate,nextGeneration++);
-            runtime->configure(n);
+            bool reuse=old!=controlNodes.end() && old->second->type==n.type;
+            if(reuse && (old->second->engine || old->second->processor) && !sameEngineConfig(old->second->saved,n))reuse=false;
+            auto runtime=reuse ? old->second : std::make_shared<Runtime>(n,rate,nextGeneration++);
+            if(!reuse)runtime->configure(n);
             Entry entry;
             entry.state=runtime;
             entry.gain=graphParamValue(n,Master);
@@ -782,10 +796,11 @@ public:
     void clearHostTransport() {transport=false;}
     void setMidiOutput(void* ctx,void (*fn)(void*,int,uint8_t,uint8_t,uint8_t)) {outputContext=ctx;output=fn;}
     void midi(bool fromDAW,uint8_t s,uint8_t a,uint8_t b) {
+        std::lock_guard<std::mutex> lock(midiLock);
         auto& count=fromDAW?dawCount:localCount;
         auto& queue=fromDAW?daw:local;
         if(count<eventCapacity)queue[count++]={0,s,a,b};
-        else inputOverflow=true;
+        else inputOverflow.store(true,std::memory_order_relaxed);
     }
     void reset() {
         for(auto& entry:plans.current().entries) {
@@ -804,7 +819,10 @@ public:
             }
             n.waitingSize=0;n.controlSize=0;n.count=0;
         }
-        localCount=dawCount=0;
+        {
+            std::lock_guard<std::mutex> lock(midiLock);
+            localCount=dawCount=0;
+        }
     }
     // Only the render thread is allowed to touch live node state. UI/MIDI
     // callers publish a request; the next render block performs the reset.
@@ -932,7 +950,15 @@ public:
         }
         renderingPlan=&plans.current();
         const auto& entries=renderingPlan->entries;
-        if(inputOverflow) {inputOverflow=false;reset();}
+        {
+            std::lock_guard<std::mutex> lock(midiLock);
+            pendingLocalCount=std::min(localCount,eventCapacity);
+            pendingDawCount=std::min(dawCount,eventCapacity);
+            std::copy_n(local.begin(),pendingLocalCount,pendingLocal.begin());
+            std::copy_n(daw.begin(),pendingDawCount,pendingDaw.begin());
+            localCount=dawCount=0;
+        }
+        if(inputOverflow.exchange(false,std::memory_order_relaxed))reset();
         for(int offset=0;offset<frames;offset+=quantum) {
             int n=std::min(quantum,frames-offset);
             outputBase=offset;
@@ -1110,8 +1136,8 @@ public:
                 };
                 if(type==MidiNode || type==DawMidiNode) {
                     if(offset==0) {
-                        auto& queue=type==MidiNode?local:daw;
-                        int count=type==MidiNode?localCount:dawCount;
+                        auto& queue=type==MidiNode?pendingLocal:pendingDaw;
+                        int count=type==MidiNode?pendingLocalCount:pendingDawCount;
                         for(int j=0;j<count;++j)node.engine->midi(queue[j].status,queue[j].a,queue[j].b);
                     }
                     renderSpan(0,n);
@@ -1152,7 +1178,7 @@ public:
             }
         }
         if(transport && playing)beat+=frames*(bpm>0?bpm:112)/(60*rate);
-        localCount=dawCount=0;renderingPlan=nullptr;renderingNode=nullptr;
+        renderingPlan=nullptr;renderingNode=nullptr;
     }
 };
 } // namespace tri
