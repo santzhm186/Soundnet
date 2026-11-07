@@ -80,6 +80,12 @@ int main() { @autoreleasepool {
     tri::GraphSpec clipExampleGraph;
     assert(triassets::decodeGraph(clipExample,clipExampleGraph,&graphWhy));
     assert(clipExampleGraph.nodes.size()==5 && clipExampleGraph.edges.size()==4);
+    NSDictionary *quantizeExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/scale-quantizer.json"] options:0 error:nil];
+    tri::GraphSpec quantizeGraph;
+    assert(triassets::decodeGraph(quantizeExample,quantizeGraph,&graphWhy));
+    assert(quantizeGraph.nodes.size()==5 && quantizeGraph.edges.size()==4);
+    assert(quantizeGraph.nodes[2].type==tri::QuantizeNode);
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};
@@ -133,5 +139,5 @@ int main() { @autoreleasepool {
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         puts("audio file import round-trips through a graph asset");
     }
-    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter, chorus and real Core ML pitch predictions.");
+    puts("PASS: SMF 0/1, pedal and rests, malformed files, JSON portability, example graph, sampler/audio-clip assets, compressor, limiter, chorus, scale quantizer and real Core ML pitch predictions.");
 } }

@@ -280,6 +280,47 @@ int main() {
         assert(rms(left,4800,20000)>.005);
         puts("chorus renders modulated delay and honors dry mix");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, bypass and type-scoped validation.");
+    // Scale quantizer transforms incoming notes and tracks note-off mapping.
+    {
+        struct Sent {uint8_t status,a,b;};
+        std::vector<Sent> sent;
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,QuantizeNode,{{QuantizeRoot,0},{QuantizeScale,0},{QuantizeMode,2}});
+        add(graph,2,MidiOutNode);
+        connect(graph,10,1);connect(graph,1,2);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
+        engine.midi(0x90,61,100);
+        std::vector<float> left(256),right(256);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool mappedOn=false;
+        for(const auto& event:sent)if(event.status==0x90 && event.a==60 && event.b==100)mappedOn=true;
+        assert(mappedOn);
+        sent.clear();
+        engine.midi(0x80,61,0);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool mappedOff=false;
+        for(const auto& event:sent)if(event.status==0x80 && event.a==60)mappedOff=true;
+        assert(mappedOff);
+        graph.nodes[1].bypass=true;
+        assert(engine.setGraph(graph));
+        sent.clear();
+        engine.midi(0x90,61,100);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool bypassedOn=false;
+        for(const auto& event:sent)if(event.status==0x90 && event.a==61)bypassedOn=true;
+        assert(bypassedOn);
+        sent.clear();
+        engine.midi(0x80,61,0);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        bool bypassedOff=false;
+        for(const auto& event:sent)if(event.status==0x80 && event.a==61)bypassedOff=true;
+        assert(bypassedOff);
+        assert(validGraphParam(QuantizeNode,QuantizeRoot));
+        assert(!validGraphParam(QuantizeNode,ChorusMix));
+        puts("scale quantizer maps held notes and releases the mapped pitch");
+    }
+    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, quantizer, bypass and type-scoped validation.");
 
 }

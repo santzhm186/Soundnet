@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.10**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.11**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,14 +8,14 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.10 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.11 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
 | 分类 | 可插入的节点 |
 | --- | --- |
 | 输入 | 本地 MIDI、DAW MIDI、MIDI Clip、硬件音频输入、DAW 音频输入、和弦输入、和声走向、节奏速度、DAW 时钟 |
-| 处理 | 三声部编排器、振荡器、采样器、音频片段、压缩器、限幅器、合唱、ARP、力度自动化、音符模型、混音器、EQ、Delay、滤波器、混响、噪声 |
+| 处理 | 三声部编排器、振荡器、采样器、音频片段、压缩器、限幅器、合唱、音阶量化、ARP、力度自动化、音符模型、混音器、EQ、Delay、滤波器、混响、噪声 |
 | 逻辑 | 开始触发器、停止触发器、等待、次数条件 |
 | 输出 | 硬件音频输出、DAW 音频输出、MIDI 输出 |
 
@@ -127,6 +127,8 @@ flowchart LR
 
 「合唱」是立体声调制延迟：Rate 为 0.05–8 Hz 的 LFO 速度，Depth 为 0–1 的调制深度，Mix 为 0–1 干湿比，Delay 为 1–30 ms 基础延迟。左右声道使用相位差 LFO，可给采样器、音频片段或合成器增加宽度。
 
+「音阶量化」接收 Note 输入，把音高吸附到指定调性：Root 0–11（C–B），Scale 0 大调 1 自然小调 2 多利亚 3 大调五声 4 半音，Mode 0 最近音 1 向上 2 向下。同一个输出音高由多个输入音符共享时会正确计数，最后一个释放才发出 Note Off；修改参数时仍按住的音符会重新量化。打开[音阶量化示例](examples/scale-quantizer.json)，开始触发器会播放经过小调量化的 Clip。
+
 打开[音频片段与压缩示例](examples/audio-clip-compressor.json)，点开始触发器即可听到循环片段经过压缩和补偿增益；[母带限幅示例](examples/master-limiter.json)在压缩器后串联限幅器，适合对比输出上限。
 
 打开[MIDI 输出示例](examples/clip-to-midi.json)，在「文件 → 导出 MIDI…」中可把 Clip 的音符录成 `.mid` 文件。
@@ -209,7 +211,7 @@ auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
 ```
 
-已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、拖入音频/MIDI、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 音频片段 / 压缩器 / 限幅器 / 合唱 / 旁通、WAV 与 AIFF 解码、16/24-bit 与 44.1/48/96 kHz 离线导出、实时录制、MIDI 输出捕获与 SMF 导出、命令行导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
+已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、拖入音频/MIDI、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 音频片段 / 压缩器 / 限幅器 / 合唱 / 音阶量化 / 旁通、WAV 与 AIFF 解码、16/24-bit 与 44.1/48/96 kHz 离线导出、实时录制、MIDI 输出捕获与 SMF 导出、命令行导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
 
 | 路径 | 内容 |
 | --- | --- |
@@ -217,6 +219,7 @@ auval -strict -v aumu Tern Trny -oop
 | `src/InstanceGraph.hpp` | 实例运行时、执行计划、音频与触发调度 |
 | `src/NodeRegistry.hpp` | 节点标题、分类、参数表与菜单顺序 |
 | `src/DspNodes.hpp` | 滤波器、混响、噪声、压缩器、限幅器与合唱 DSP |
+| `src/NodeRegistry.hpp` | 节点 ID、菜单、参数元数据与音阶量化 |
 | `src/AudioSample.hpp` | 内嵌采样数据与音高/时长描述 |
 | `src/AudioFile.hpp` | WAV/AIFF 解码与采样导入限制 |
 | `src/OfflineRender.hpp` | 无宿主的图渲染与 MIDI 捕获、导出输出重定向 |

@@ -17,6 +17,8 @@ inline constexpr int FilterNode=28, ReverbNode=29, NoiseNode=30;
 inline constexpr int SamplerNode=31;
 // Audio clip player and compressor added in 2.4.
 inline constexpr int AudioClipNode=32, CompressorNode=33, LimiterNode=34, ChorusNode=35;
+// MIDI scale quantizer added in 2.11.
+inline constexpr int QuantizeNode=36;
 inline constexpr int FilterType=1100, FilterCutoff=1101, FilterResonance=1102, FilterDrive=1103;
 inline constexpr int ReverbMix=1110, ReverbSize=1111, ReverbDamping=1112, ReverbWidth=1113;
 inline constexpr int NoiseLevel=1120, NoiseType=1121;
@@ -29,6 +31,7 @@ inline constexpr int CompThreshold=1150, CompRatio=1151, CompAttack=1152;
 inline constexpr int CompRelease=1153, CompMakeup=1154, CompMix=1155;
 inline constexpr int LimiterThreshold=1160, LimiterRelease=1161, LimiterCeiling=1162, LimiterGain=1163;
 inline constexpr int ChorusRate=1170, ChorusDepth=1171, ChorusMix=1172, ChorusDelay=1173;
+inline constexpr int QuantizeRoot=1180, QuantizeScale=1181, QuantizeMode=1182;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -72,6 +75,9 @@ inline constexpr ParamInfo chorusRateInfo  {"Rate",.05f,8,.6f,"Hz"};
 inline constexpr ParamInfo chorusDepthInfo {"Depth",0,1,.35f,""};
 inline constexpr ParamInfo chorusMixInfo   {"Mix",0,1,.35f,""};
 inline constexpr ParamInfo chorusDelayInfo {"Delay",1,30,12,"ms"};
+inline constexpr ParamInfo quantizeRootInfo {"Root",0,11,0,""};
+inline constexpr ParamInfo quantizeScaleInfo{"Scale",0,4,0,""};
+inline constexpr ParamInfo quantizeModeInfo {"Mode",0,2,0,""};
 
 struct NodeMeta {
     int type;
@@ -108,6 +114,7 @@ inline const NodeMeta* nodeMeta(int type) {
         {CompressorNode,"压缩器","处理",true,true},
         {LimiterNode,"限幅器","处理",true,true},
         {ChorusNode,"合唱","处理",true,true},
+        {QuantizeNode,"音阶量化","处理",true,true},
         {StartNode,"开始触发器","逻辑",true,false},
         {StopNode,"停止触发器","逻辑",true,false},
         {WaitNode,"等待","逻辑",true,false},
@@ -134,7 +141,7 @@ inline const char* nodeCategory(int type) {
 inline const std::vector<int>& nodeCatalog() {
     static const std::vector<int> catalog = {
         MidiNode,DawMidiNode,ClipNode,InputNode,DawAudioNode,ChordNode,ProgressNode,ClockNode,DawClockNode,
-        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,
+        Osc1Node,ArpNode,ArrangerNode,VelocityNode,ModelNode,MixNode,EQNode,DelayNode,FilterNode,ReverbNode,NoiseNode,SamplerNode,AudioClipNode,CompressorNode,LimiterNode,ChorusNode,QuantizeNode,
         StartNode,StopNode,WaitNode,CountNode,
         HardwareOutputNode,DawOutputNode,MidiOutNode
     };
@@ -179,6 +186,9 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case ChorusDepth:return &chorusDepthInfo;
         case ChorusMix:return &chorusMixInfo;
         case ChorusDelay:return &chorusDelayInfo;
+        case QuantizeRoot:return &quantizeRootInfo;
+        case QuantizeScale:return &quantizeScaleInfo;
+        case QuantizeMode:return &quantizeModeInfo;
         default:return nullptr;
     }
 }
@@ -192,6 +202,7 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==CompressorNode) return p>=CompThreshold && p<=CompMix;
     if(type==LimiterNode) return p>=LimiterThreshold && p<=LimiterGain;
     if(type==ChorusNode) return p>=ChorusRate && p<=ChorusDelay;
+    if(type==QuantizeNode) return p>=QuantizeRoot && p<=QuantizeMode;
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -219,6 +230,7 @@ inline std::vector<int> nodeParamList(int type) {
         case CompressorNode:return {CompThreshold,CompRatio,CompAttack,CompRelease,CompMakeup,CompMix};
         case LimiterNode:return {LimiterThreshold,LimiterRelease,LimiterCeiling,LimiterGain};
         case ChorusNode:return {ChorusRate,ChorusDepth,ChorusMix,ChorusDelay};
+        case QuantizeNode:return {QuantizeRoot,QuantizeScale,QuantizeMode};
         default:return {};
     }
 }
