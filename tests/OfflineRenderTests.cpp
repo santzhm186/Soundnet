@@ -52,12 +52,13 @@ int main() {
     std::vector<smf::TimedEvent> timed;
     for(const auto& e:midiResult.midi)timed.push_back({e.seconds,e.status,e.a,e.b});
     assert(midiResult.bpm==90);
-    assert(smf::write(midiPath,timed,2,midiResult.bpm,why));
+    assert(smf::writeMulti(midiPath,timed,2,midiResult.bpm,why));
     std::ifstream in(midiPath,std::ios::binary);std::string midiBytes((std::istreambuf_iterator<char>(in)),{});
     assert(midiBytes.rfind("MThd",0)==0);
+    assert(midiBytes.size()>14 && midiBytes[9]==1 && midiBytes[11]>=2);
     MidiClip roundTrip;roundTrip=smf::parse(reinterpret_cast<const uint8_t*>(midiBytes.data()),midiBytes.size());
     assert(!roundTrip.events.empty());
-    puts("MIDI output is captured and written as SMF");
+    puts("MIDI output is captured and written as a multi-track SMF");
 
     std::string path="build/tests-offline/export.wav";
     assert(wav::write(path,result.left,result.right,result.rate,why));
@@ -112,5 +113,5 @@ int main() {
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
     puts("invalid export durations are rejected");
-    puts("PASS: offline rendering, WAV/MIDI export, MIDI capture and output redirection.");
+    puts("PASS: offline rendering, WAV/multi-track MIDI export, MIDI capture and output redirection.");
 }

@@ -233,7 +233,7 @@ static int runExportMidi(const char *input,const char *output,double seconds) {
         std::vector<tri::smf::TimedEvent> events;
         events.reserve(rendered.midi.size());
         for(const auto& e:rendered.midi)events.push_back({e.seconds,e.status,e.a,e.b});
-        if(!tri::smf::write(output,events,seconds,rendered.bpm,failure)) {
+        if(!tri::smf::writeMulti(output,events,seconds,rendered.bpm,failure)) {
             std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
         }
         std::printf("PASS: exported %zu MIDI events over %.1f s to %s\n",events.size(),seconds,output);

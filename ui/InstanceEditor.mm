@@ -721,7 +721,7 @@ namespace { NSRect nodeRect(NSDictionary *node); }
             std::vector<tri::smf::TimedEvent> events;
             events.reserve(rendered.midi.size());
             for(const auto& e:rendered.midi)events.push_back({e.seconds,e.status,e.a,e.b});
-            if(!tri::smf::write(url.path.UTF8String,events,seconds,rendered.bpm,error)) {
+            if(!tri::smf::writeMulti(url.path.UTF8String,events,seconds,rendered.bpm,error)) {
                 NSString *text=[NSString stringWithUTF8String:error.c_str()];
                 dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
                 return;
@@ -1175,7 +1175,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.13    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.14    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
