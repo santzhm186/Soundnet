@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -14,12 +15,12 @@ inline void put32(std::vector<uint8_t>& bytes,uint32_t value) {
     bytes.push_back(uint8_t(value));bytes.push_back(uint8_t(value>>8));
     bytes.push_back(uint8_t(value>>16));bytes.push_back(uint8_t(value>>24));
 }
-// Writes interleaved stereo 16-bit PCM. Refuses empty or mismatched channels.
+// Writes interleaved stereo PCM (16/24-bit) or 32-bit float. Refuses empty or mismatched channels.
 inline bool write(const std::string& path,const std::vector<float>& left,
                   const std::vector<float>& right,double rate,std::string& why,int bits=16) {
     if(left.empty()||left.size()!=right.size()){why="没有可导出的音频。";return false;}
     if(rate<1000||rate>384000){why="采样率超出范围。";return false;}
-    if(bits!=16&&bits!=24){why="位深必须是 16 或 24。";return false;}
+    if(bits!=16&&bits!=24&&bits!=32){why="位深必须是 16、24 或 32（浮点）。";return false;}
     const uint32_t bytesPerSample=uint32_t(bits/8);
     const uint32_t blockAlign=2*bytesPerSample;
     if(left.size()>(0xffffffffu-44u)/blockAlign){why="音频过长。";return false;}
@@ -30,7 +31,8 @@ inline bool write(const std::string& path,const std::vector<float>& left,
     const char riff[]="RIFF";header.insert(header.end(),riff,riff+4);
     put32(header,36+dataBytes);
     const char wave[]="WAVEfmt ";header.insert(header.end(),wave,wave+8);
-    put32(header,16);put16(header,1);put16(header,2);
+    const uint16_t format=bits==32?3:1;
+    put32(header,16);put16(header,format);put16(header,2);
     const uint32_t sampleRate=uint32_t(std::lround(rate));
     put32(header,sampleRate);put32(header,sampleRate*blockAlign);
     put16(header,uint16_t(blockAlign));put16(header,uint16_t(bits));
@@ -48,11 +50,15 @@ inline bool write(const std::string& path,const std::vector<float>& left,
                 const int16_t value=int16_t(std::lround(sample*32767.f));
                 const uint16_t raw=uint16_t(value);
                 block.push_back(uint8_t(raw&0xff));block.push_back(uint8_t(raw>>8));
-            } else {
+            } else if(bits==24) {
                 const int32_t value=int32_t(std::lround(sample*8388607.f));
                 block.push_back(uint8_t(value&0xff));
                 block.push_back(uint8_t((value>>8)&0xff));
                 block.push_back(uint8_t((value>>16)&0xff));
+            } else {
+                uint32_t raw=0;std::memcpy(&raw,&sample,sizeof(raw));
+                block.push_back(uint8_t(raw&0xff));block.push_back(uint8_t((raw>>8)&0xff));
+                block.push_back(uint8_t((raw>>16)&0xff));block.push_back(uint8_t((raw>>24)&0xff));
             }
         }
         if(block.size()>=4096*blockAlign||i+1==left.size()) {

@@ -1301,14 +1301,14 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSTextField *bitsLabel=[NSTextField labelWithString:@"位深"];
     bitsLabel.frame=NSMakeRect(180,30,40,20);[accessory addSubview:bitsLabel];
     NSPopUpButton *bitsPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(222,26,70,26)];
-    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
+    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
     panel.accessoryView=accessory;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result!=NSModalResponseOK)return;
         double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
         const double rates[]={44100,48000,96000};
         double rate=rates[std::max(0,std::min(2,(int)ratePopup.indexOfSelectedItem))];
-        int bits=bitsPopup.indexOfSelectedItem==1?24:16;
+        NSNumber *bitValue=@[@16,@24,@32][bitsPopup.indexOfSelectedItem];int bits=bitValue.intValue;
         NSURL *url=panel.URL;NSDictionary *document=copyJSON(self.document);
         [self message:[NSString stringWithFormat:@"正在导出 %.1f 秒音频…",seconds]];
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -1350,14 +1350,14 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSTextField *bitsLabel=[NSTextField labelWithString:@"位深"];
     bitsLabel.frame=NSMakeRect(180,30,40,20);[accessory addSubview:bitsLabel];
     NSPopUpButton *bitsPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(222,26,70,26)];
-    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
+    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
     panel.accessoryView=accessory;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result!=NSModalResponseOK)return;
         double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
         const double rates[]={44100,48000,96000};
         double rate=rates[std::max(0,std::min(2,(int)ratePopup.indexOfSelectedItem))];
-        int bits=bitsPopup.indexOfSelectedItem==1?24:16;
+        NSNumber *bitValue=@[@16,@24,@32][bitsPopup.indexOfSelectedItem];int bits=bitValue.intValue;
         NSURL *folder=panel.URL;NSDictionary *document=copyJSON(self.document);
         [self message:[NSString stringWithFormat:@"正在导出 %.1f 秒分轨…",seconds]];
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -1852,7 +1852,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.76    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.77    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

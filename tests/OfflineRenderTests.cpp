@@ -91,6 +91,22 @@ int main() {
     assert(audiofile::parse(reinterpret_cast<const uint8_t*>(bytes24.data()),bytes24.size(),decoded24,why));
     assert(decoded24.frames()==48000 && decoded24.channels==2);
     puts("24-bit export round-trips through the WAV reader");
+    std::string path32="build/tests-offline/export32f.wav";
+    assert(wav::write(path32,result.left,result.right,result.rate,why,32));
+    std::string bytes32;
+    {
+        FILE *file=std::fopen(path32.c_str(),"rb");assert(file);
+        std::fseek(file,0,SEEK_END);long size=std::ftell(file);std::fseek(file,0,SEEK_SET);
+        bytes32.resize(size_t(size));assert(std::fread(bytes32.data(),1,bytes32.size(),file)==bytes32.size());
+        std::fclose(file);
+    }
+    assert(bytes32.rfind("RIFF",0)==0);
+    assert(uint8_t(bytes32[20])==3 && uint8_t(bytes32[21])==0);
+    assert(uint8_t(bytes32[34])==32 && uint8_t(bytes32[35])==0);
+    AudioSample decoded32;
+    assert(audiofile::parse(reinterpret_cast<const uint8_t*>(bytes32.data()),bytes32.size(),decoded32,why));
+    assert(decoded32.frames()==48000 && decoded32.channels==2);
+    puts("32-bit float export round-trips through the WAV reader");
 
     GraphSpec daw;
     GraphNode dawStart;dawStart.id=1;dawStart.type=StartNode;daw.nodes.push_back(dawStart);
