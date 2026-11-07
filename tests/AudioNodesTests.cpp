@@ -639,6 +639,10 @@ int main() {
         assert(discreteParam(EchoRepeats) && !discreteParam(EchoTime));
         GraphSpec bad=graph;bad.nodes[1].parameters[EchoRepeats]=2.5f;
         std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
+        GraphSpec huge;
+        for(int i=0;i<4100;++i){GraphNode n;n.id=InstanceID(i+1);n.type=Osc1Node;huge.nodes.push_back(n);}
+        std::vector<size_t> hugeOrder;assert(!graphOrder(huge,hugeOrder));
+        assert(tri::maxGraphNodes==4096);
         puts("note echo repeats with pitch and velocity feedback");
     }
         {

@@ -181,6 +181,8 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
             [v doubleValue]<=max && std::trunc([v doubleValue])==[v doubleValue];
     };
     tri::GraphSpec next;
+    if([document[@"nodes"] count]>tri::maxGraphNodes) { fail(why,@"节点数量超过上限。"); return false; }
+    if([document[@"edges"] count]>tri::maxGraphEdges) { fail(why,@"连线数量超过上限。"); return false; }
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
         if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::CommentNode) ||

@@ -102,8 +102,13 @@ inline bool graphFailure(std::string* why,const char* message) {
     return false;
 }
 
+inline constexpr size_t maxGraphNodes=4096;
+inline constexpr size_t maxGraphEdges=16384;
+
 inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::string* why=nullptr) {
     if(why)why->clear();
+    if(graph.nodes.size()>maxGraphNodes)return graphFailure(why,"节点数量超过上限。");
+    if(graph.edges.size()>maxGraphEdges)return graphFailure(why,"连线数量超过上限。");
     std::map<InstanceID,size_t> index;
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
