@@ -166,6 +166,45 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 -(NSPoint)world:(NSPoint)point;
 @end
 
+
+namespace {
+struct ParamPreset { const char *name; std::vector<std::pair<int,float>> values; };
+std::vector<ParamPreset> presetsFor(int type) {
+    switch(type) {
+        case tri::FilterNode: return {
+            {"低通 800 Hz",{{tri::FilterType,0},{tri::FilterCutoff,800},{tri::FilterResonance,.7f},{tri::FilterDrive,0}}},
+            {"高通 180 Hz",{{tri::FilterType,1},{tri::FilterCutoff,180},{tri::FilterResonance,.7f},{tri::FilterDrive,0}}},
+            {"带通 1.2 kHz",{{tri::FilterType,2},{tri::FilterCutoff,1200},{tri::FilterResonance,1.2f},{tri::FilterDrive,0}}} };
+        case tri::ReverbNode: return {
+            {"房间",{{tri::ReverbMix,.25f},{tri::ReverbSize,.55f},{tri::ReverbDamping,.5f},{tri::ReverbWidth,.8f}}},
+            {"大厅",{{tri::ReverbMix,.45f},{tri::ReverbSize,.9f},{tri::ReverbDamping,.3f},{tri::ReverbWidth,1}}} };
+        case tri::DelayNode: return {
+            {"短延迟",{{tri::DelayTime,140},{tri::DelayFeedback,.2f},{tri::DelayMix,.15f}}},
+            {"长回声",{{tri::DelayTime,420},{tri::DelayFeedback,.45f},{tri::DelayMix,.25f}}} };
+        case tri::CompressorNode: return {
+            {"轻压缩",{{tri::CompThreshold,-18},{tri::CompRatio,2},{tri::CompAttack,.01f},{tri::CompRelease,.15f},{tri::CompMakeup,1.1f},{tri::CompMix,1}}},
+            {"鼓总线",{{tri::CompThreshold,-24},{tri::CompRatio,4},{tri::CompAttack,.005f},{tri::CompRelease,.12f},{tri::CompMakeup,1.4f},{tri::CompMix,1}}},
+            {"限制",{{tri::CompThreshold,-6},{tri::CompRatio,20},{tri::CompAttack,.001f},{tri::CompRelease,.08f},{tri::CompMakeup,1},{tri::CompMix,1}}} };
+        case tri::LimiterNode: return {
+            {"轻柔",{{tri::LimiterThreshold,-6},{tri::LimiterRelease,.12f},{tri::LimiterCeiling,-.3f},{tri::LimiterGain,1}}},
+            {"砖墙",{{tri::LimiterThreshold,-3},{tri::LimiterRelease,.05f},{tri::LimiterCeiling,-.1f},{tri::LimiterGain,1}}} };
+        case tri::ChorusNode: return {
+            {"轻微",{{tri::ChorusRate,.8f},{tri::ChorusDepth,.35f},{tri::ChorusMix,.3f},{tri::ChorusDelay,12}}},
+            {"宽阔",{{tri::ChorusRate,2.5f},{tri::ChorusDepth,.6f},{tri::ChorusMix,.45f},{tri::ChorusDelay,20}}} };
+        case tri::TremoloNode: return {
+            {"慢速",{{tri::TremoloRate,2},{tri::TremoloDepth,.4f},{tri::TremoloMix,.8f},{tri::TremoloStereo,0}}},
+            {"快速",{{tri::TremoloRate,8},{tri::TremoloDepth,.6f},{tri::TremoloMix,1},{tri::TremoloStereo,1}}} };
+        case tri::BitcrusherNode: return {
+            {"8-bit",{{tri::CrushBits,8},{tri::CrushRate,12000},{tri::CrushMix,.8f}}},
+            {"破碎",{{tri::CrushBits,4},{tri::CrushRate,4000},{tri::CrushMix,1}}} };
+        case tri::QuantizeNode: return {
+            {"C 大调",{{tri::QuantizeRoot,0},{tri::QuantizeScale,0},{tri::QuantizeMode,0}}},
+            {"A 小调",{{tri::QuantizeRoot,9},{tri::QuantizeScale,1},{tri::QuantizeMode,0}}},
+            {"C 五声",{{tri::QuantizeRoot,0},{tri::QuantizeScale,3},{tri::QuantizeMode,0}}} };
+        default: return {};
+    }
+}
+}
 @implementation SNInstanceEditor
 -(void)drawRect:(NSRect)dirty {[NSColor.windowBackgroundColor setFill];NSRectFill(self.bounds);}
 -(BOOL)isFlipped{return YES;}
@@ -619,6 +658,18 @@ namespace { NSRect nodeRect(NSDictionary *node); }
         bypass.frame=NSMakeRect(12,y,230,28);bypass.state=node[@"bypass"] ? NSControlStateValueOn : NSControlStateValueOff;
         [_inspector addSubview:bypass];y+=38;
     }
+    auto presets=presetsFor(type);
+    if(!presets.empty()) {
+        [self label:@"预设" y:y];
+        NSPopUpButton *popup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(70,y-4,172,26) pullsDown:NO];
+        [popup addItemWithTitle:@"选择预设…"];
+        for(const auto& preset:presets)[popup addItemWithTitle:[NSString stringWithUTF8String:preset.name]];
+        popup.target=self;popup.action=@selector(applyPreset:);
+        [_inspector addSubview:popup];y+=38;
+    }
+    if(!controls(type).empty() || type==tri::ArrangerNode) {
+        [self button:@"恢复默认参数" frame:NSMakeRect(12,y,225,28) action:@selector(resetParams:) parent:_inspector];y+=38;
+    }
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
     else for(int p:controls(type)) {
         [self label:parameterName(p) y:y];
@@ -830,6 +881,25 @@ namespace { NSRect nodeRect(NSDictionary *node); }
             dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
         });
     }];
+}
+
+-(void)applyPreset:(NSPopUpButton *)popup {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    auto presets=presetsFor([node[@"type"] intValue]);
+    NSInteger index=popup.indexOfSelectedItem-1;
+    if(index<0 || index>=(NSInteger)presets.size())return;
+    NSDictionary *previous=copyJSON(_document);
+    for(const auto& item:presets[index].values)
+        node[@"parameters"][[@(item.first) stringValue]]=@(item.second);
+    [self commit:previous];[self inspect];
+    [self message:[NSString stringWithFormat:@"已应用预设：%s",presets[index].name]];
+}
+-(void)resetParams:(id)sender {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    NSDictionary *previous=copyJSON(_document);
+    for(int p:controls([node[@"type"] intValue]))
+        node[@"parameters"][[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
+    [self commit:previous];[self inspect];[self message:@"已恢复默认参数。"];
 }
 -(void)save:(id)sender {
     NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.json";
@@ -1227,7 +1297,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.19    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.20    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
