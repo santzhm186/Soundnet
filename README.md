@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.4**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.5**。
 
 **输入 → 节点处理 → 输出**
 
@@ -8,7 +8,7 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 每个节点实例拥有独立的 ID、参数、素材和运行状态。右键画布即可插入全部类型的节点，同类节点可重复添加。节点数量没有预设槽位上限，实际规模取决于可用内存与实时处理能力。
 
-![Soundnet 2.4 独立节点与逻辑触发工作流](docs/workflow.png)
+![Soundnet 2.5 独立节点与逻辑触发工作流](docs/workflow.png)
 
 ## 节点
 
@@ -64,6 +64,7 @@ flowchart LR
 - 拖空白处平移，滚轮移动画布，Command + 滚轮缩放。「适配」显示整张图。
 - 「撤销」「重做」支持节点、参数、连线和素材编辑，保留最近 64 步。
 - 「导出」把当前图离线渲染为 1–120 秒立体声 WAV。开始触发器会自动触发一次；只有 DAW 音频输出的图会自动改走硬件输出路径。没有开始触发器的图导出为静音；采样器还需要 Note 输入才能发声；音频片段需要开始触发器启动。
+- 「文件 → 导出 MIDI…」把图中的 MIDI 输出节点录成标准 MIDI 文件，方便继续在 DAW 或乐器中编辑。
 - 「停音」停止当前播放与音符。独立版也可使用 Command + .。
 
 可以从以下线路开始组合。
@@ -78,6 +79,7 @@ flowchart LR
 | 播放音频片段 | 开始触发器 → 音频片段 → 压缩器 → 硬件音频输出 |
 | 噪声纹理 | 噪声 → 滤波器 → 混音器 → 音频输出 |
 | 用模型驱动其他乐器 | MIDI Clip → 音符模型 → MIDI 输出 |
+| MIDI 导出 | 开始触发器 → MIDI Clip → MIDI 输出 |
 | 条件控制 | Clip 循环完成 → 次数条件 → 停止触发器 → Clip |
 
 ## 音乐与逻辑处理
@@ -120,6 +122,8 @@ flowchart LR
 
 打开[音频片段与压缩示例](examples/audio-clip-compressor.json)，点开始触发器即可听到循环片段经过压缩和补偿增益。
 
+打开[MIDI 输出示例](examples/clip-to-midi.json)，在「文件 → 导出 MIDI…」中可把 Clip 的音符录成 `.mid` 文件。
+
 **ARP、和弦与力度**
 
 ARP 提供直拍、Bossa Nova、Reggae、Disco、十六分音符节奏，支持每音重复 1–8 次。和弦与走向支持预制入口和手动输入，例如 `F#m7` 或 `Cmaj7 | Am7 | Dm7 | G7`。走向最多八个和弦。力度节点可按周期改变经过的新音符力度。
@@ -161,6 +165,8 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 
 「导出」只读取当前图，不依赖实时音频设备：工具条点击后选择 WAV 路径，即离线渲染所选时长并写出 16 位立体声文件。导出开始时会给图中的开始触发器发送一次脉冲；Clip、ARP 等由触发器启动的播放器会从头播放。只有 DAW 音频输出的图会自动把输出接到硬件输出路径，因此独立版和 AU 中的图都能导出。采样器节点需要上游 Note 输入，没有音符来源时导出为静音；音频片段需要开始触发器才会发声。
 
+「文件 → 导出 MIDI…」使用同一套离线渲染，捕获 MIDI 输出节点发出的音符和控制器事件，并写成标准 MIDI 文件。文件采用 480 PPQ、120 BPM 的时间基准；导出时长仍为 1–120 秒，实际速度由目标工程决定。
+
 独立版退出时记住当前图，AU 随宿主工程保存。实例参数通过工作流编辑器修改并随图保存；逐实例 DAW 参数自动化待实现。旧 AU 参数 ID 继续用于旧音色兼容。
 
 ## 构建与安装
@@ -179,10 +185,11 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 
 ```sh
 build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8
+build/release/Soundnet.app/Contents/MacOS/Soundnet --export-midi examples/three-loops-then-wait.json out.mid 8
 build/release/Soundnet.app/Contents/MacOS/Soundnet --self-test
 ```
 
-`--export` 与界面导出使用同一套离线渲染逻辑，适合脚本化验证或批量生成音频。
+`--export` 和 `--export-midi` 与界面导出使用同一套离线渲染逻辑，适合脚本化验证或批量生成音频与 MIDI。
 
 ## 验证与源码
 
@@ -193,7 +200,7 @@ auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
 ```
 
-已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 音频片段 / 压缩器 / 旁通、WAV 与 AIFF 解码、离线 WAV 导出、命令行导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
+已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 音频片段 / 压缩器 / 旁通、WAV 与 AIFF 解码、离线 WAV 导出、MIDI 输出捕获与 SMF 导出、命令行导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
 
 | 路径 | 内容 |
 | --- | --- |
@@ -203,7 +210,8 @@ auval -strict -v aumu Tern Trny -oop
 | `src/DspNodes.hpp` | 滤波器、混响、噪声与压缩器 DSP |
 | `src/AudioSample.hpp` | 内嵌采样数据与音高/时长描述 |
 | `src/AudioFile.hpp` | WAV/AIFF 解码与采样导入限制 |
-| `src/OfflineRender.hpp` | 无宿主的图渲染与导出输出重定向 |
+| `src/OfflineRender.hpp` | 无宿主的图渲染与 MIDI 捕获、导出输出重定向 |
+| `src/MidiFileWriter.hpp` | 标准 MIDI 文件写入 |
 | `src/WavFile.hpp` | 16 位立体声 WAV 写入 |
 | `src/Engine.hpp` | 实例图与旧引擎的入口 |
 | `src/LegacyEngine.hpp` | 复用的 DSP 与旧音色兼容 |

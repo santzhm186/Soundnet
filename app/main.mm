@@ -3,6 +3,7 @@
 #include "../src/WorkflowAssets.h"
 #include "../src/OfflineRender.hpp"
 #include "../src/WavFile.hpp"
+#include "../src/MidiFileWriter.hpp"
 #include <map>
 #include <algorithm>
 #include <cstdio>
@@ -54,6 +55,14 @@
     [app addItem:[NSMenuItem separatorItem]];
     [app addItemWithTitle:@"隐藏 Soundnet" action:@selector(hide:) keyEquivalent:@"h"];
     [app addItemWithTitle:@"退出 Soundnet" action:@selector(terminate:) keyEquivalent:@"q"];
+    NSMenuItem *fileItem=[bar addItemWithTitle:@"文件" action:nil keyEquivalent:@""];
+    NSMenu *file=[[NSMenu alloc] initWithTitle:@"文件"];
+    fileItem.submenu=file;
+    [file addItemWithTitle:@"打开…" action:@selector(open:) keyEquivalent:@"o"];
+    [file addItemWithTitle:@"保存…" action:@selector(save:) keyEquivalent:@"s"];
+    [file addItem:[NSMenuItem separatorItem]];
+    [file addItemWithTitle:@"导出音频…" action:@selector(exportWav:) keyEquivalent:@""];
+    [file addItemWithTitle:@"导出 MIDI…" action:@selector(exportMidi:) keyEquivalent:@""];
     NSMenuItem *editItem=[bar addItemWithTitle:@"编辑" action:nil keyEquivalent:@""];
     NSMenu *edit=[[NSMenu alloc] initWithTitle:@"编辑"];
     editItem.submenu=edit;
@@ -158,6 +167,36 @@ static int runExport(const char *input,const char *output,double seconds) {
     return 0;
 }
 
+static int runExportMidi(const char *input,const char *output,double seconds) {
+    @autoreleasepool {
+        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
+        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
+        NSError *error=nil;
+        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
+        if(![object isKindOfClass:NSDictionary.class]) {
+            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+            return 1;
+        }
+        tri::GraphSpec graph;NSString *why=nil;
+        if(!triassets::decodeGraph(object,graph,&why)) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
+            return 1;
+        }
+        tri::offline::Result rendered;std::string failure;
+        if(!tri::offline::render(graph,seconds,48000,rendered,failure)) {
+            std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
+        }
+        std::vector<tri::smf::TimedEvent> events;
+        events.reserve(rendered.midi.size());
+        for(const auto& e:rendered.midi)events.push_back({e.seconds,e.status,e.a,e.b});
+        if(!tri::smf::write(output,events,seconds,failure)) {
+            std::fprintf(stderr,"Soundnet: %s\n",failure.c_str());return 1;
+        }
+        std::printf("PASS: exported %zu MIDI events over %.1f s to %s\n",events.size(),seconds,output);
+    }
+    return 0;
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc==2 && strcmp(argv[1],"--self-test")==0) return [TRIHost runOfflineCheck];
@@ -165,8 +204,12 @@ int main(int argc, const char **argv) {
             const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
             return runExport(argv[2],argv[3],seconds);
         }
+        if ((argc==4 || argc==5) && strcmp(argv[1],"--export-midi")==0) {
+            const double seconds=argc==5 ? std::atof(argv[4]) : 8.0;
+            return runExportMidi(argv[2],argv[3],seconds);
+        }
         if (argc==2 && strcmp(argv[1],"--help")==0) {
-            std::printf("Usage: Soundnet [--self-test | --export workflow.json output.wav [seconds]]\n");
+            std::printf("Usage: Soundnet [--self-test | --export workflow.json output.wav [seconds] | --export-midi workflow.json output.mid [seconds]]\n");
             return 0;
         }
         NSApplication *app = [NSApplication sharedApplication];

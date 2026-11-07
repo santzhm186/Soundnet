@@ -1,7 +1,10 @@
 #include "../src/OfflineRender.hpp"
 #include "../src/WavFile.hpp"
 #include "../src/AudioFile.hpp"
+#include "../src/MidiFileWriter.hpp"
+#include "../src/StandardMidiFile.hpp"
 #include <cassert>
+#include <fstream>
 #include <cstdio>
 #include <string>
 
@@ -30,6 +33,28 @@ int main() {
     assert(peak>.01);
     assert(result.peak>.01);
     puts("start-triggered graph renders offline");
+
+    GraphSpec midiGraph;
+    GraphNode midiStart;midiStart.id=1;midiStart.type=StartNode;midiGraph.nodes.push_back(midiStart);
+    GraphNode midiClip;midiClip.id=2;midiClip.type=ClipNode;midiClip.clip.lengthBeats=1;
+    midiClip.clip.events={{0,0x90,67,110},{.5,0x80,67,0}};midiGraph.nodes.push_back(midiClip);
+    GraphNode midiOut;midiOut.id=3;midiOut.type=MidiOutNode;midiGraph.nodes.push_back(midiOut);
+    edge(midiGraph,1,2,1);edge(midiGraph,2,3);
+    std::vector<size_t> midiOrder;assert(graphOrder(midiGraph,midiOrder));
+    offline::Result midiResult;
+    assert(offline::render(midiGraph,2,48000,midiResult,why));
+    assert(!midiResult.midi.empty());
+    bool on=false,off=false;for(const auto& e:midiResult.midi){if((e.status&0xf0)==0x90)on=true;if((e.status&0xf0)==0x80)off=true;}
+    assert(on&&off);
+    std::string midiPath="build/tests-offline/export.mid";
+    std::vector<smf::TimedEvent> timed;
+    for(const auto& e:midiResult.midi)timed.push_back({e.seconds,e.status,e.a,e.b});
+    assert(smf::write(midiPath,timed,2,why));
+    std::ifstream in(midiPath,std::ios::binary);std::string midiBytes((std::istreambuf_iterator<char>(in)),{});
+    assert(midiBytes.rfind("MThd",0)==0);
+    MidiClip roundTrip;roundTrip=smf::parse(reinterpret_cast<const uint8_t*>(midiBytes.data()),midiBytes.size());
+    assert(!roundTrip.events.empty());
+    puts("MIDI output is captured and written as SMF");
 
     std::string path="build/tests-offline/export.wav";
     assert(wav::write(path,result.left,result.right,result.rate,why));
@@ -63,5 +88,5 @@ int main() {
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
     puts("invalid export durations are rejected");
-    puts("PASS: offline rendering, WAV output and output redirection.");
+    puts("PASS: offline rendering, WAV/MIDI export, MIDI capture and output redirection.");
 }

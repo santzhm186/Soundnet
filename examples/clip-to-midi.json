@@ -1,0 +1,48 @@
+{
+  "version": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": 23,
+      "x": 60,
+      "y": 160,
+      "parameters": {
+        "85": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": 16,
+      "x": 300,
+      "y": 160,
+      "parameters": {
+        "24": 1
+      },
+      "asset": {
+        "beats": 4,
+        "name": "FourBeat.mid",
+        "notes": 5,
+        "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
+      }
+    },
+    {
+      "id": 3,
+      "type": 18,
+      "x": 540,
+      "y": 160,
+      "parameters": {}
+    }
+  ],
+  "edges": [
+    {
+      "source": 1,
+      "target": 2,
+      "port": 1
+    },
+    {
+      "source": 2,
+      "target": 3,
+      "port": 0
+    }
+  ]
+}

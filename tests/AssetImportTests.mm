@@ -66,6 +66,11 @@ int main() { @autoreleasepool {
     assert(samplerExampleGraph.nodes[1].sample && samplerExampleGraph.nodes[1].sample->frames()>1000);
     NSDictionary *clipExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/audio-clip-compressor.json"] options:0 error:nil];
+    NSDictionary *midiExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/clip-to-midi.json"] options:0 error:nil];
+    tri::GraphSpec midiExampleGraph;
+    assert(triassets::decodeGraph(midiExample,midiExampleGraph,&graphWhy));
+    assert(midiExampleGraph.nodes.size()==3 && midiExampleGraph.edges.size()==2);
     tri::GraphSpec clipExampleGraph;
     assert(triassets::decodeGraph(clipExample,clipExampleGraph,&graphWhy));
     assert(clipExampleGraph.nodes.size()==5 && clipExampleGraph.edges.size()==4);

@@ -3,6 +3,7 @@
 #import "../src/WorkflowAssets.h"
 #import "../src/OfflineRender.hpp"
 #import "../src/WavFile.hpp"
+#import "../src/MidiFileWriter.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cmath>
 
@@ -612,6 +613,45 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     NSTextField *field=[NSTextField new];field.stringValue=[[self node:_selected][@"type"] intValue]==tri::ChordNode?@"Cmaj7":@"Dm7 | G7 | Cmaj7";
     [self harmony:field];
 }
+-(void)exportMidi:(id)sender {
+    NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.mid";
+    panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"mid"]];
+    NSView *accessory=[[NSView alloc]initWithFrame:NSMakeRect(0,0,280,52)];
+    NSTextField *label=[NSTextField labelWithString:@"导出时长（秒，1–120）"];
+    label.frame=NSMakeRect(12,28,170,20);[accessory addSubview:label];
+    NSTextField *secondsField=[[NSTextField alloc]initWithFrame:NSMakeRect(190,24,70,26)];
+    secondsField.stringValue=@"8";[accessory addSubview:secondsField];
+    panel.accessoryView=accessory;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
+        if(result!=NSModalResponseOK)return;
+        double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
+        NSURL *url=panel.URL;NSDictionary *document=copyJSON(self.document);
+        [self message:[NSString stringWithFormat:@"正在导出 %.1f 秒 MIDI…",seconds]];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            tri::GraphSpec graph;NSString *why=nil;
+            if(!triassets::decodeGraph(document,graph,&why)) {
+                dispatch_async(dispatch_get_main_queue(),^{[self message:why ?: @"工作流无效，无法导出。"];});
+                return;
+            }
+            tri::offline::Result rendered;std::string error;
+            if(!tri::offline::render(graph,seconds,48000,rendered,error)) {
+                NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                return;
+            }
+            std::vector<tri::smf::TimedEvent> events;
+            events.reserve(rendered.midi.size());
+            for(const auto& e:rendered.midi)events.push_back({e.seconds,e.status,e.a,e.b});
+            if(!tri::smf::write(url.path.UTF8String,events,seconds,error)) {
+                NSString *text=[NSString stringWithUTF8String:error.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+                return;
+            }
+            NSString *text=[NSString stringWithFormat:@"已导出 %lu 个 MIDI 事件 · %.1f 秒",(unsigned long)events.size(),seconds];
+            dispatch_async(dispatch_get_main_queue(),^{[self message:text];});
+        });
+    }];
+}
 -(void)exportWav:(id)sender {
     NSSavePanel *panel=[NSSavePanel savePanel];panel.nameFieldStringValue=@"Soundnet.wav";
     panel.allowedContentTypes=@[[UTType typeWithFilenameExtension:@"wav"]];
@@ -1026,7 +1066,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.4    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.5    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

@@ -7,11 +7,26 @@
 #include <vector>
 
 namespace tri::offline {
+struct MidiMessage {
+    double seconds;
+    uint8_t status,a,b;
+};
 struct Result {
     std::vector<float> left,right;
+    std::vector<MidiMessage> midi;
     double rate=48000;
     double peak=0;
 };
+struct MidiCapture {
+    Result* result=nullptr;
+    double rate=48000;
+    size_t offset=0;
+};
+inline void captureMidi(void* ptr,int frame,uint8_t status,uint8_t a,uint8_t b) {
+    auto* capture=static_cast<MidiCapture*>(ptr);
+    if(!capture || !capture->result || frame<0) return;
+    capture->result->midi.push_back({double(capture->offset+size_t(frame))/capture->rate,status,a,b});
+}
 
 // Renders a graph without a host. Start nodes are pulsed once, DAW outputs are
 // redirected to the hardware output when they are the graph's only output, and
@@ -35,6 +50,8 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     Engine engine;
     if(!engine.setGraph(graph)){why="工作流未通过校验，无法导出。";return false;}
     engine.prepare(rate);
+    MidiCapture capture{&result,rate,0};
+    engine.setMidiOutput(&capture,captureMidi);
     if(hasStart) {
         for(GraphNode& node:graph.nodes)if(node.type==StartNode)node.parameters[TriggerPulse]=1;
         if(!engine.setGraph(graph)){why="工作流未通过校验，无法导出。";return false;}
@@ -44,11 +61,16 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     result.rate=rate;
     result.left.assign(total,0);
     result.right.assign(total,0);
+    result.midi.clear();
     constexpr int block=512;
     for(size_t offset=0;offset<total;offset+=block) {
         int count=int(std::min<size_t>(block,total-offset));
+        capture.offset=offset;
         engine.render(nullptr,nullptr,result.left.data()+offset,result.right.data()+offset,count);
     }
+    std::stable_sort(result.midi.begin(),result.midi.end(),[](const MidiMessage& a,const MidiMessage& b){
+        return a.seconds<b.seconds;
+    });
     for(size_t i=0;i<total;++i) {
         float l=result.left[i],r=result.right[i];
         if(!std::isfinite(l)||!std::isfinite(r)){why="渲染产生了非有限采样。";return false;}
