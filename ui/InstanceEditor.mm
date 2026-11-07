@@ -912,12 +912,20 @@ std::vector<ParamPreset> presetsFor(int type) {
         if(sa>sb)return NSOrderedDescending;
         return [a[@"pitch"] intValue]<[b[@"pitch"] intValue]?NSOrderedAscending:NSOrderedDescending;
     }];
-    const double beatsPerSecond=.5; // audition at 120 BPM
+    double bpm=120;
+    for(NSDictionary *node in _document[@"nodes"]) {
+        if([node[@"type"] intValue]!=tri::ClockNode)continue;
+        NSDictionary *parameters=node[@"parameters"];
+        NSNumber *value=parameters ? parameters[@(tri::ClockBPM)] : nil;
+        if([value isKindOfClass:NSNumber.class] && value.doubleValue>1)bpm=value.doubleValue;
+        break;
+    }
+    const double secondsPerBeat=60.0/bpm;
     for(NSDictionary *note in ordered) {
         int pitch=[note[@"pitch"] intValue],velocity=[note[@"velocity"] intValue];
         double start=[note[@"start"] doubleValue],length=std::max(.05,[note[@"length"] doubleValue]);
-        int64_t on=(int64_t)(start*beatsPerSecond*NSEC_PER_SEC);
-        int64_t off=(int64_t)((start+length)*beatsPerSecond*NSEC_PER_SEC);
+        int64_t on=(int64_t)(start*secondsPerBeat*NSEC_PER_SEC);
+        int64_t off=(int64_t)((start+length)*secondsPerBeat*NSEC_PER_SEC);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,on),dispatch_get_main_queue(),^{
             if(self.midi)self.midi(0x90,(uint8_t)pitch,(uint8_t)velocity);
         });
@@ -1830,7 +1838,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.59    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.60    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
