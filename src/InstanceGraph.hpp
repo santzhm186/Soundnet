@@ -995,7 +995,7 @@ public:
                     }
                     if(type==TremoloNode && node.processor && entry.tremoloSync) {
                         static const double divisions[]={1,2,4,1.5};
-                        double hz=std::clamp(bpm/60.0*divisions[std::clamp(entry.tremoloDivision,0,3)],0.1,20.0);
+                        double hz=std::clamp((bpm>1?bpm:120.0)/60.0*divisions[std::clamp(entry.tremoloDivision,0,3)],0.1,20.0);
                         node.processor->set(TremoloRate,float(hz));
                     }
                     if(entry.bypass) {
