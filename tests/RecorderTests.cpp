@@ -34,6 +34,16 @@ int main() {
     assert(realtime.recording.frames() == 128);
     realtime.recording.stop();
 
+    realtime.inputRecording.start(48000, 1.0);
+    realtime.render(outL, outR, 128, false, 0);
+    assert(realtime.inputRecording.frames() == 128);
+    realtime.inputRecording.stop();
+
+    TRIRecorder nulls;
+    nulls.start(48000, 1.0);
+    nulls.capture(nullptr, nullptr, 4);
+    assert(nulls.frames() == 4 && nulls.left[0] == 0.f && nulls.right[3] == 0.f);
+
     std::vector<float> left(realtime.recording.left.begin(), realtime.recording.left.begin() + 128);
     std::vector<float> right(realtime.recording.right.begin(), realtime.recording.right.begin() + 128);
     std::string why;
@@ -44,5 +54,5 @@ int main() {
     std::fclose(file);
     std::remove(path.c_str());
 
-    puts("PASS: realtime output recorder copies, stops and reports overflow.");
+    puts("PASS: realtime input/output recorders copy, stop and report overflow.");
 }

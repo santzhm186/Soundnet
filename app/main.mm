@@ -18,8 +18,8 @@
     id _keyboard;
     std::map<unsigned short,int> _held;
     int _transpose;
-    NSMenuItem *_recordItem;
-    NSURL *_recordURL;
+    NSMenuItem *_recordItem, *_inputRecordItem;
+    NSURL *_recordURL, *_inputRecordURL;
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     _host = [TRIHost new];
@@ -71,6 +71,8 @@
     [file addItem:[NSMenuItem separatorItem]];
     _recordItem = [file addItemWithTitle:@"录制输出…" action:@selector(toggleRecording:) keyEquivalent:@""];
     _recordItem.target = self;
+    _inputRecordItem = [file addItemWithTitle:@"录制输入…" action:@selector(toggleInputRecording:) keyEquivalent:@""];
+    _inputRecordItem.target = self;
     NSMenuItem *editItem=[bar addItemWithTitle:@"编辑" action:nil keyEquivalent:@""];
     NSMenu *edit=[[NSMenu alloc] initWithTitle:@"编辑"];
     editItem.submenu=edit;
@@ -133,11 +135,49 @@
         self->_recordItem.title = @"停止录制";
     }];
 }
+- (void)toggleInputRecording:(id)sender {
+    if ([_host isInputRecording]) {
+        NSError *error = nil;
+        if (![_host finishInputRecording:&error]) {
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"输入录制失败";
+            alert.informativeText = error.localizedDescription ?: @"无法写入 WAV 文件。";
+            [alert beginSheetModalForWindow:_window completionHandler:nil];
+            _inputRecordItem.title = @"录制输入…";
+            return;
+        }
+        NSString *note = _host.inputRecordingOverflow ? @"已达到 60 秒上限，末尾被截断。" : @"已保存为 16-bit 立体声 WAV。";
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = @"输入录制完成";
+        alert.informativeText = [NSString stringWithFormat:@"%@\n%@", _inputRecordURL.path ?: @"", note];
+        [alert beginSheetModalForWindow:_window completionHandler:nil];
+        _inputRecordItem.title = @"录制输入…";
+        _inputRecordURL = nil;
+        return;
+    }
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.title = @"录制 Soundnet 输入";
+    panel.nameFieldStringValue = @"Soundnet 输入录音.wav";
+    panel.allowedContentTypes = @[UTTypeWAV];
+    [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
+        if (response != NSModalResponseOK || !panel.URL) return;
+        NSError *error = nil;
+        if (![self->_host startInputRecordingToURL:panel.URL error:&error]) {
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"无法开始输入录制";
+            alert.informativeText = error.localizedDescription ?: @"请先启用音频输入。";
+            [alert beginSheetModalForWindow:self->_window completionHandler:nil];
+            return;
+        }
+        self->_inputRecordURL = panel.URL;
+        self->_inputRecordItem.title = @"停止录制输入";
+    }];
+}
 - (void)restart:(id)sender { _held.clear(); [_host restartAudio]; }
 - (void)help:(id)sender {
     NSAlert *alert = [NSAlert new];
     alert.messageText = @"演奏 Soundnet";
-    alert.informativeText = @"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\n外接键盘接入本地 MIDI 节点。DAW 可把音轨和 MIDI 时钟发送至「Soundnet MIDI In」，接入 DAW MIDI 节点。独立版输出到系统所选声卡；在 Logic 的软件乐器轨道中加载 Soundnet AU，可将音频送回该轨道。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。\n\n「文件 → 录制输出」会把当前听到的最终输出录成 16-bit 立体声 WAV，最长 60 秒；停止后可再导入采样器或音频片段。";
+    alert.informativeText = @"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\n外接键盘接入本地 MIDI 节点。DAW 可把音轨和 MIDI 时钟发送至「Soundnet MIDI In」，接入 DAW MIDI 节点。独立版输出到系统所选声卡；在 Logic 的软件乐器轨道中加载 Soundnet AU，可将音频送回该轨道。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。\n\n「文件 → 录制输出」会把当前听到的最终输出录成 16-bit 立体声 WAV，最长 60 秒；「录制输入」会录下硬件输入，便于把外部声音做成采样；两者停止后都可再导入采样器或音频片段。";
     [alert beginSheetModalForWindow:_window completionHandler:nil];
 }
 - (NSEvent *)handle:(NSEvent *)e {

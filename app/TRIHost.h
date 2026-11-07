@@ -12,6 +12,10 @@
 - (BOOL)recordingOverflow;
 - (BOOL)startRecordingToURL:(NSURL *)url error:(NSError **)error;
 - (BOOL)finishRecording:(NSError **)error;
+- (BOOL)isInputRecording;
+- (BOOL)inputRecordingOverflow;
+- (BOOL)startInputRecordingToURL:(NSURL *)url error:(NSError **)error;
+- (BOOL)finishInputRecording:(NSError **)error;
 - (void)savePatch;
 - (NSDictionary *)workflowAssets;
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;

@@ -102,7 +102,8 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     double _sampleRate;
     NSString *_error;
     NSURL *_recordingURL;
-    BOOL _recordOverflow;
+    NSURL *_inputRecordingURL;
+    BOOL _recordOverflow, _inputRecordOverflow;
     id _configObserver;
     NSUInteger _generation;
 }
@@ -263,7 +264,9 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     }
 }
 - (NSString *)status {
+    if (_recordingURL && _inputRecordingURL) return @"正在录制输出与输入";
     if (_recordingURL) return _rt->recording.overflow.load() ? @"录制中 · 已达 60 秒上限" : @"录制中 · 再次选择「停止录制」保存";
+    if (_inputRecordingURL) return _rt->inputRecording.overflow.load() ? @"输入录制中 · 已达 60 秒上限" : @"输入录制中 · 再次选择「停止录制输入」保存";
     if (_error) return @"音频离线 · 从「音频」菜单重试";
     if (_waitingForInput) return @"正在等待麦克风授权";
     NSString *midi = _midiReady ? [NSString stringWithFormat:@"MIDI × %zu",_sources.size()] : @"MIDI 离线";
@@ -317,13 +320,57 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         if (error) *error = audioError(@"音频引擎尚未就绪。");
         return NO;
     }
-    if (_recordingURL) {
-        if (error) *error = audioError(@"已经在录制中。");
+    if (_recordingURL || _inputRecordingURL) {
+        if (error) *error = audioError(@"已经有录音在进行。");
         return NO;
     }
     _recordOverflow = NO;
     _rt->recording.start(_sampleRate, 60.0);
     _recordingURL = url;
+    return YES;
+}
+- (BOOL)isInputRecording { return _inputRecordingURL != nil; }
+- (BOOL)inputRecordingOverflow { return _inputRecordOverflow; }
+- (BOOL)startInputRecordingToURL:(NSURL *)url error:(NSError **)error {
+    if (_closed || !_rt || _sampleRate <= 0) {
+        if (error) *error = audioError(@"音频引擎尚未就绪。");
+        return NO;
+    }
+    if (!_inputEnabled) {
+        if (error) *error = audioError(@"请先在「音频」菜单启用音频输入。");
+        return NO;
+    }
+    if (_recordingURL || _inputRecordingURL) {
+        if (error) *error = audioError(@"已经有录音在进行。");
+        return NO;
+    }
+    _inputRecordOverflow = NO;
+    _rt->inputRecording.start(_sampleRate, 60.0);
+    _inputRecordingURL = url;
+    return YES;
+}
+- (BOOL)finishInputRecording:(NSError **)error {
+    if (!_inputRecordingURL) {
+        if (error) *error = audioError(@"当前没有输入录音。");
+        return NO;
+    }
+    _rt->inputRecording.stop();
+    _inputRecordOverflow = _rt->inputRecording.overflow.load();
+    const size_t frames = _rt->inputRecording.frames();
+    const double rate = _rt->inputRecording.rate;
+    NSString *path = _inputRecordingURL.path;
+    _inputRecordingURL = nil;
+    if (!frames) {
+        if (error) *error = audioError(@"没有录到音频。");
+        return NO;
+    }
+    std::vector<float> left(_rt->inputRecording.left.begin(), _rt->inputRecording.left.begin() + frames);
+    std::vector<float> right(_rt->inputRecording.right.begin(), _rt->inputRecording.right.begin() + frames);
+    std::string why;
+    if (!path.length || !tri::wav::write(path.UTF8String, left, right, rate, why)) {
+        if (error) *error = audioError([NSString stringWithUTF8String:why.c_str()]);
+        return NO;
+    }
     return YES;
 }
 - (BOOL)finishRecording:(NSError **)error {
@@ -365,6 +412,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 - (void)stop {
     _closed = YES;
     if (_recordingURL) { _rt->recording.stop(); _recordingURL = nil; }
+    if (_inputRecordingURL) { _rt->inputRecording.stop(); _inputRecordingURL = nil; }
     // Stop rendering and release downstream notes while the virtual source is live.
     [self tearDownGraph];
     _rt->dsp.setMidiOutput(nullptr,nullptr);

@@ -126,8 +126,8 @@ struct TRIRecorder {
             const size_t take = std::min(n, capacity - std::min(capacity, w));
             if (take < n) overflow.store(true, std::memory_order_relaxed);
             for (size_t i = 0; i < take; ++i) {
-                left[w + i] = l[i];
-                right[w + i] = r[i];
+                left[w + i] = l ? l[i] : 0.f;
+                right[w + i] = r ? r[i] : 0.f;
             }
             written.store(w + take, std::memory_order_release);
         }
@@ -141,6 +141,7 @@ struct TRIRealtime {
     TRIMidiQueue midi;
     TRIInputFIFO input;
     TRIRecorder recording;
+    TRIRecorder inputRecording;
     std::atomic<bool> panicFlag{false};
     double framesPerTick = 0;
     double sampleRate = 48000;
@@ -214,6 +215,7 @@ struct TRIRealtime {
             std::push_heap(upcoming.begin(), upcoming.begin()+count, later);
         }
         if (enableInput) input.pull(l,r,n);
+        inputRecording.capture(enableInput ? l : nullptr, enableInput ? r : nullptr, n);
         auto span = [&](int offset, int length) {
             outputOffset=offset;
             dsp.render(enableInput ? l+offset : nullptr, enableInput ? r+offset : nullptr,
