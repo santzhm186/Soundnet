@@ -7,8 +7,8 @@
 <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 <key>CFBundleName</key><string>Soundnet</string>
 <key>CFBundlePackageType</key><string>BNDL</string>
-<key>CFBundleShortVersionString</key><string>2.68.0</string>
-<key>CFBundleVersion</key><string>74</string>
+<key>CFBundleShortVersionString</key><string>2.69.0</string>
+<key>CFBundleVersion</key><string>75</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>AudioComponents</key><array><dict>
 <key>name</key><string>Soundnet: Soundnet</string>
@@ -17,7 +17,7 @@
 <key>type</key><string>aumu</string>
 <key>subtype</key><string>Tern</string>
 <key>manufacturer</key><string>Trny</string>
-<key>version</key><integer>131328</integer>
+<key>version</key><integer>148736</integer>
 <key>sandboxSafe</key><true/>
 <key>tags</key><array><string>Synthesizer</string></array>
 </dict></array>

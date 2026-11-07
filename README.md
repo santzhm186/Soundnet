@@ -1,6 +1,6 @@
 # Soundnet
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.68**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.69**。
 
 **输入 → 节点处理 → 输出**
 

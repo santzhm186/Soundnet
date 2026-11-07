@@ -19,6 +19,13 @@ codesign --verify --deep --strict "$component"
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
 build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")
 echo "== version $version ($build)"
+au_version=$(/usr/libexec/PlistBuddy -c 'Print :AudioComponents:0:version' "$component/Contents/Info.plist")
+expected_au_version=$(python3 -c 'import sys; v=sys.argv[1].split("."); print((int(v[0])<<16)|(int(v[1])<<8)|int(v[2]))' "$version")
+if [ "$au_version" != "$expected_au_version" ]; then
+    echo "ERROR: AU component version $au_version != $expected_au_version" >&2
+    exit 1
+fi
+echo "== AU component version $au_version"
 echo "== self-test"
 "$app/Contents/MacOS/Soundnet" --self-test
 echo "== example graphs"
