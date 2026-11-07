@@ -737,7 +737,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     int p=(int)slider.tag-100000;const auto& info=tri::graphParamInfo(p);
     double value=slider.doubleValue;
-    if(info.max-info.min<=12)value=std::round(value);
+    if(tri::discreteParam(p)||info.max-info.min<=12)value=std::round(value);
     if(value<info.min||value>info.max)return;
     NSTextField *field=[_inspector viewWithTag:p];
     if([field isKindOfClass:[NSTextField class]])field.stringValue=[NSString stringWithFormat:@"%.3g",value];
@@ -1840,7 +1840,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.62    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.63    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
