@@ -183,7 +183,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
     tri::GraphSpec next;
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::PhaserNode) ||
+        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::RandomNode) ||
            !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
            !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
             return fail(why,@"节点的实例 ID、类型或坐标无效。");

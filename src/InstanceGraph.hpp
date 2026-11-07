@@ -74,6 +74,13 @@ class InstanceGraph {
         bool bypassed=false;
         QuantizeState(){mapping.fill(-1);}
     };
+    struct RandomState {
+        uint64_t state=0x9e3779b97f4a7c15ull;
+        float next01() {
+            state^=state>>12;state^=state<<25;state^=state>>27;
+            return float((state*2685821657736338717ull)>>40)*(1.0f/16777216.0f);
+        }
+    };
     struct Runtime : NotePort {
         int type;
         uint64_t generation;
@@ -83,6 +90,7 @@ class InstanceGraph {
         std::unique_ptr<SamplerState> sampler;
         std::unique_ptr<AudioClipState> audioClip;
         std::unique_ptr<QuantizeState> quantizer;
+        std::unique_ptr<RandomState> random;
         std::array<float,quantum> left{},right{},inputL{},inputR{},sidechainL{},sidechainR{};
         Notes incoming{};
         GraphNode saved;
@@ -116,6 +124,12 @@ class InstanceGraph {
             }
             if(type==QuantizeNode) {
                 quantizer=std::make_unique<QuantizeState>();
+                return;
+            }
+            if(type==RandomNode) {
+                random=std::make_unique<RandomState>();
+                random->state^=gen*0x9e3779b97f4a7c15ull^node.id;
+                if(!random->state)random->state=1;
                 return;
             }
             if(auto audio=makeAudioProcessor(type)) {
@@ -198,6 +212,7 @@ class InstanceGraph {
         float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f,audioClipPitch=0;
         bool audioClipLoop=false,audioClipReverse=false;
         int quantizeRoot=0,quantizeScale=0,quantizeMode=0;
+        float randomChance=.5f;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
     };
@@ -226,7 +241,10 @@ class InstanceGraph {
                 if(renderingPlan->entries[input].state.get()!=source)continue;
                 if(target.type==StartNode || target.type==StopNode)
                     target.trigger({event.frame,target.type==StartNode});
-                else if(target.type==CountNode) {
+                else if(target.type==RandomNode) {
+                    if(target.random && target.random->next01()<entry.randomChance)
+                        dispatch(&target,event);
+                } else if(target.type==CountNode) {
                     if(++target.count>=entry.count){target.count=0;target.trigger(event);}
                 } else if(target.type==WaitNode) {
                     if(target.waitingSize<eventCapacity)
@@ -610,6 +628,7 @@ public:
             entry.quantizeRoot=int(graphParamValue(n,QuantizeRoot));
             entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
             entry.quantizeMode=int(graphParamValue(n,QuantizeMode));
+            entry.randomChance=graphParamValue(n,RandomChance);
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 

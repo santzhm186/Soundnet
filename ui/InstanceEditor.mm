@@ -1048,6 +1048,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     }
     if(type==tri::WaitNode){[self label:@"收到开始或停止信号后，等待指定秒数再转发。可排队等待多个信号。" y:y];y+=65;}
     if(type==tri::CountNode){[self label:@"每收到 X 个信号后输出一次，再开始下一轮计数。可连接 Clip 的循环完成端口。" y:y];y+=65;}
+    if(type==tri::RandomNode){[self label:@"收到触发后按 Chance 概率决定是否继续转发，适合生成随机段落或概率门限。" y:y];y+=52;}
     if(type==tri::ClipNode || type==tri::ModelNode) {
         [self button:type==tri::ClipNode?@"载入 MIDI Clip…":@"载入音符模型…" frame:NSMakeRect(12,y,225,30) action:@selector(import:) parent:_inspector];y+=40;
         if(type==tri::ClipNode) {
@@ -1659,7 +1660,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.27    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.28    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

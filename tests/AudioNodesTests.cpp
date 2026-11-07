@@ -446,6 +446,33 @@ int main() {
         assert(round.events.size()==4);
         assert((round.events[0].status&0xf0)==0x90 && round.events[0].data1==60);
     }
+    // Random trigger logic gates a downstream audio clip.
+    {
+        auto build=[&](float chance){
+            GraphSpec graph;
+            add(graph,1,StartNode);
+            add(graph,2,RandomNode,{{RandomChance,chance}});
+            auto sample=std::make_shared<AudioSample>();
+            sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.5f);
+            size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+            graph.nodes[clip].sample=sample;
+            add(graph,4,OutputNode,{{Master,1}});
+            connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
+            return graph;
+        };
+        auto level=[&](float chance){
+            GraphSpec graph=build(chance);
+            Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+            graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+            std::vector<float> left(48000),right(48000);
+            engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+            double peak=0;for(float v:left)peak=std::max(peak,double(std::abs(v)));
+            return peak;
+        };
+        assert(level(1)>0.1);
+        assert(level(0)<0.001);
+        puts("random trigger gates downstream events");
+    }
     puts("MIDI clips round-trip through the encoder");
 puts("PASS: filter, reverb, noise, sampler, audio clip, pitch/reverse, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
 

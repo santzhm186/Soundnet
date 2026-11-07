@@ -86,6 +86,12 @@ int main() { @autoreleasepool {
     assert(triassets::decodeGraph(quantizeExample,quantizeGraph,&graphWhy));
     assert(quantizeGraph.nodes.size()==5 && quantizeGraph.edges.size()==4);
     assert(quantizeGraph.nodes[2].type==tri::QuantizeNode);
+    NSDictionary *randomExample=[NSJSONSerialization JSONObjectWithData:
+        [NSData dataWithContentsOfFile:@"examples/random-gate.json"] options:0 error:nil];
+    tri::GraphSpec randomGraph;
+    assert(triassets::decodeGraph(randomExample,randomGraph,&graphWhy));
+    assert(randomGraph.nodes.size()==5 && randomGraph.edges.size()==4);
+    assert(randomGraph.nodes[1].type==tri::RandomNode);
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};
