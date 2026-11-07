@@ -97,6 +97,7 @@
     NSMenu *help = [[NSMenu alloc] initWithTitle:@"帮助"];
     helpItem.submenu = help;
     [help addItemWithTitle:@"键盘与音频输入" action:@selector(help:) keyEquivalent:@"?"].target = self;
+    [help addItemWithTitle:@"快捷键…" action:@selector(showShortcuts:) keyEquivalent:@""];
     NSApp.mainMenu = bar;
 }
 - (void)panic:(id)sender { _held.clear(); [_host panic]; }

@@ -1425,6 +1425,12 @@ std::vector<ParamPreset> presetsFor(int type) {
     return @{@"version":@3,@"nodes":nodes,@"edges":edges};
 }
 -(NSPoint)world:(NSPoint)p{return NSMakePoint((p.x-_origin.x)/_zoom,(p.y-_origin.y)/_zoom);}
+-(void)showShortcuts:(id)sender {
+    NSAlert *alert=[NSAlert new];
+    alert.messageText=@"Soundnet 快捷键";
+    alert.informativeText=@"文件与历史\n⌘O 打开  ⌘S 保存  ⌘Z 撤销  ⇧⌘Z 重做\n\n编辑\n⌘C 复制  ⌘V 粘贴  ⌘X 剪切  ⌘A 全选  ⌘D 复制节点  ⌘F 查找\nDelete 删除节点或连线  Esc 取消选择  方向键微移（⇧ 10 像素）\n\n画布\n拖动空白平移  滚轮平移  ⌘滚轮缩放  ⇧拖动框选  ⇧点击多选\n\n触发\n音频菜单可播放/停止全部开始/停止触发器；⌘. 停止所有声音";
+    [alert beginSheetModalForWindow:self.window completionHandler:nil];
+}
 -(void)fit:(id)sender {
     NSRect all=NSZeroRect;
     for(NSDictionary *node in _document[@"nodes"]) {
@@ -1798,7 +1804,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.54    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.55    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
