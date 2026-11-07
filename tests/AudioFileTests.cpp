@@ -33,6 +33,25 @@ static std::vector<uint8_t> makeWav() {
     put16(out,44,16384);put16(out,46,0);put16(out,48,uint16_t(int16_t(-16384)));put16(out,50,0);
     return out;
 }
+static std::vector<uint8_t> makeWav24() {
+    std::vector<uint8_t> out(44+6);
+    std::memcpy(out.data(),"RIFF",4);put32(out,4,36+6);std::memcpy(out.data()+8,"WAVEfmt ",8);
+    put32(out,16,16);put16(out,20,1);put16(out,22,1);put32(out,24,48000);
+    put32(out,28,144000);put16(out,32,3);put16(out,34,24);
+    std::memcpy(out.data()+36,"data",4);put32(out,40,6);
+    out[44]=0;out[45]=0;out[46]=0x40;      // 0x400000 = 0.5
+    out[47]=0;out[48]=0;out[49]=0xc0;      // 0xc00000 = -0.5
+    return out;
+}
+static std::vector<uint8_t> makeWavFloat() {
+    std::vector<uint8_t> out(44+8);
+    std::memcpy(out.data(),"RIFF",4);put32(out,4,36+8);std::memcpy(out.data()+8,"WAVEfmt ",8);
+    put32(out,16,16);put16(out,20,3);put16(out,22,1);put32(out,24,48000);
+    put32(out,28,192000);put16(out,32,4);put16(out,34,32);
+    std::memcpy(out.data()+36,"data",4);put32(out,40,8);
+    const float values[2]={.25f,-.5f};std::memcpy(out.data()+44,values,8);
+    return out;
+}
 static std::vector<uint8_t> makeAiff() {
     std::vector<uint8_t> out(62);
     std::memcpy(out.data(),"FORM",4);put32be(out,4,54);std::memcpy(out.data()+8,"AIFF",4);
@@ -56,6 +75,23 @@ int main() {
         assert(std::abs(sample.samples[0]-.5f)<1e-4);
         assert(std::abs(sample.samples[2]+.5f)<1e-4);
         puts("WAV PCM16 decodes");
+    }
+    {
+        auto bytes=makeWav24();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(sample.frames()==2);
+        assert(std::abs(sample.samples[0]-.5f)<1e-4);
+        assert(std::abs(sample.samples[1]+.5f)<1e-4);
+        puts("WAV PCM24 decodes");
+    }
+    {
+        auto bytes=makeWavFloat();
+        AudioSample sample;
+        assert(audiofile::parse(bytes.data(),bytes.size(),sample,why));
+        assert(std::abs(sample.samples[0]-.25f)<1e-6);
+        assert(std::abs(sample.samples[1]+.5f)<1e-6);
+        puts("WAV float32 decodes");
     }
     {
         auto bytes=makeAiff();

@@ -165,15 +165,25 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 
 把 component 放到 `~/Library/Audio/Plug-Ins/Components/`，重新打开 Logic，在软件乐器插槽选择「AU Instruments → Soundnet → Soundnet」。AU 沿用初版的四字符标识，同一插件目录安装一份 Soundnet 或旧版 Ternary 即可。
 
+无界面导出与自检：
+
+```sh
+build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8
+build/release/Soundnet.app/Contents/MacOS/Soundnet --self-test
+```
+
+`--export` 与界面导出使用同一套离线渲染逻辑，适合脚本化验证或批量生成音频。
+
 ## 验证与源码
 
 ```sh
 ./scripts/test-all.sh build/tests
+build/release/Soundnet.app/Contents/MacOS/Soundnet --export examples/three-loops-then-wait.json out.wav 8
 auval -strict -v aumu Tern Trny
 auval -strict -v aumu Tern Trny -oop
 ```
 
-已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 旁通、WAV 与 AIFF 解码、离线 WAV 导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
+已验证 40 个实例的编译与渲染、25 个原生界面实例的添加与撤销重做、多选复制粘贴、独立 Clip、三次循环停止、延迟启动、滤波器 / 混响 / 噪声 / 采样器 / 旁通、WAV 与 AIFF 解码、离线 WAV 导出、命令行导出，以及 AU 进程内和跨进程的图状态恢复与实际发声。硬件运行验证在 Apple Silicon 上完成，Intel 版本已编译。Logic 工程内的手动操作仍待验证。
 
 | 路径 | 内容 |
 | --- | --- |

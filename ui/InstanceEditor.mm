@@ -66,6 +66,50 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 @property(weak) SNInstanceEditor *editor;
 @end
 
+@interface SNWaveformView : NSView
+@property(nonatomic,strong) NSData *pcm;
+@property(nonatomic) NSInteger channels;
+@end
+@implementation SNWaveformView
+- (void)drawRect:(NSRect)dirty {
+    NSRect bounds=NSInsetRect(self.bounds,1,1);
+    [[NSColor colorWithWhite:.11 alpha:1] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5] fill];
+    [[NSColor colorWithWhite:.28 alpha:1] setStroke];
+    NSBezierPath *frame=[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:5 yRadius:5];
+    [frame stroke];
+    if(!_pcm.length || _channels<1)return;
+    NSUInteger count=_pcm.length/sizeof(float),frames=count/NSUInteger(_channels);
+    if(!frames)return;
+    const float *samples=(const float *)_pcm.bytes;
+    CGFloat middle=NSMidY(self.bounds),half=NSHeight(self.bounds)*.42;
+    NSUInteger width=NSUInteger(NSWidth(self.bounds));
+    if(!width)return;
+    [[NSColor colorWithCalibratedRed:.28 green:.78 blue:.94 alpha:1] setStroke];
+    NSBezierPath *wave=[NSBezierPath bezierPath];
+    for(NSUInteger x=0;x<width;++x) {
+        NSUInteger a=frames*x/width,b=frames*(x+1)/width;
+        if(b<=a)b=a+1;if(b>frames)b=frames;
+        float lo=0,hi=0;
+        for(NSUInteger f=a;f<b;++f) {
+            float value=0;
+            for(NSInteger c=0;c<_channels;++c)value+=samples[f*NSUInteger(_channels)+NSUInteger(c)];
+            value/=float(_channels);
+            lo=std::min(lo,value);hi=std::max(hi,value);
+        }
+        lo=std::max(-1.f,std::min(1.f,lo));hi=std::max(-1.f,std::min(1.f,hi));
+        [wave moveToPoint:NSMakePoint(CGFloat(x)+.5,middle-hi*half)];
+        [wave lineToPoint:NSMakePoint(CGFloat(x)+.5,middle-lo*half)];
+    }
+    [wave setLineWidth:1];[wave stroke];
+    [[NSColor colorWithWhite:.45 alpha:.7] setStroke];
+    NSBezierPath *center=[NSBezierPath bezierPath];
+    [center moveToPoint:NSMakePoint(NSMinX(bounds),middle)];
+    [center lineToPoint:NSMakePoint(NSMaxX(bounds),middle)];
+    [center setLineWidth:.5];[center stroke];
+}
+@end
+
 @interface SNInstanceEditor : NSView <NSTextFieldDelegate>
 @property(copy) TRIRead read;
 @property(copy) TRIWrite write;
@@ -533,6 +577,8 @@ namespace { NSRect nodeRect(NSDictionary *node); }
             NSData *pcm=[[NSData alloc]initWithBase64EncodedString:asset[@"pcm"] ?: @"" options:0];
             double seconds=rate>0 ? double(pcm.length)/4.0/double(std::max(1,channels))/rate : 0;
             [self label:[NSString stringWithFormat:@"%.2f 秒 · %@ · %.0f Hz",seconds,channels==1?@"单声道":@"立体声",rate] y:y];y+=26;
+            SNWaveformView *wave=[[SNWaveformView alloc]initWithFrame:NSMakeRect(12,y,225,58)];
+            wave.pcm=pcm;wave.channels=channels;[_inspector addSubview:wave];y+=66;
         } else [self label:@"未载入音频素材" y:y],y+=28;
         [self label:@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音。" y:y];y+=62;
     }
