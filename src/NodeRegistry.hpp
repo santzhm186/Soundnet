@@ -51,6 +51,7 @@ inline constexpr int TransposeSemitones=1240;
 inline constexpr int EchoTime=1250, EchoRepeats=1251, EchoFeedback=1252, EchoPitch=1253;
 inline constexpr int GateThreshold=1260, GateAttack=1261, GateRelease=1262, GateRange=1263;
 inline constexpr int MidiOutChannel=1270;
+inline constexpr int OutputWidth=1280;
 // Arranger parameters are stored on the instance, outside the AU parameter list.
 enum ArrangerParam {
     ArrHighMin=1024, ArrHighMax, ArrHighTexture,
@@ -127,6 +128,7 @@ inline constexpr ParamInfo gateAttackInfo{"Attack",.001f,1,.005f,"s"};
 inline constexpr ParamInfo gateReleaseInfo{"Release",.01f,2,.15f,"s"};
 inline constexpr ParamInfo gateRangeInfo{"Range",0,1,.8f,""};
 inline constexpr ParamInfo midiOutChannelInfo{"Channel",0,16,0,""};
+inline constexpr ParamInfo outputWidthInfo{"Width",0,2,1,""};
 
 struct NodeMeta {
     int type;
@@ -276,6 +278,7 @@ inline const ParamInfo* nodeParamInfo(int p) {
         case GateRelease:return &gateReleaseInfo;
         case GateRange:return &gateRangeInfo;
         case MidiOutChannel:return &midiOutChannelInfo;
+        case OutputWidth:return &outputWidthInfo;
         default:return nullptr;
     }
 }
@@ -299,6 +302,8 @@ inline constexpr bool nodeAcceptsParam(int type,int p) {
     if(type==EchoNode) return p>=EchoTime && p<=EchoPitch;
     if(type==GateNode) return p>=GateThreshold && p<=GateRange;
     if(type==MidiOutNode) return p==MidiOutChannel;
+    if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode)
+        return p==OutputWidth || (p>=0 && p<ParamCount && !routeParam(p));
     if(type>=FilterNode) return false;
     return p>=0 && p<ParamCount && !routeParam(p);
 }
@@ -314,7 +319,6 @@ inline std::vector<int> nodeParamList(int type) {
         case VelocityNode:return {VelocityMin,VelocityMax,VelocityRate,VelocityShape};
         case EQNode:return {EQLow,EQMid,EQHigh};
         case DelayNode:return {DelayTime,DelayFeedback,DelayMix};
-        case OutputNode:case HardwareOutputNode:case DawOutputNode:return {Master};
         case WaitNode:return {WaitSeconds};
         case CountNode:return {TriggerCount};
         case ArrangerNode:return {ArrHighMin,ArrHighMax,ArrHighTexture,ArrMidMin,ArrMidMax,ArrMidTexture,ArrLowMin,ArrLowMax,ArrLowTexture};
@@ -336,6 +340,7 @@ inline std::vector<int> nodeParamList(int type) {
         case EchoNode:return {EchoTime,EchoRepeats,EchoFeedback,EchoPitch};
         case GateNode:return {GateThreshold,GateAttack,GateRelease,GateRange};
         case MidiOutNode:return {MidiOutChannel};
+        case OutputNode: case HardwareOutputNode: case DawOutputNode:return {Master,OutputWidth};
         default:return {};
     }
 }

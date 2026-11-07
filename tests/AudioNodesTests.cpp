@@ -457,6 +457,28 @@ int main() {
         assert(validGraphParam(MidiOutNode,MidiOutChannel));
         puts("MIDI output can force a channel");
     }
+    // Output width collapses the stereo image at 0 and widens it at 2.
+    {
+        GraphSpec graph;
+        add(graph,1,MidiNode);
+        add(graph,2,Osc1Node,{{Master,1},{Level1,.8f}});
+        add(graph,3,ChorusNode,{{ChorusMix,.5f},{ChorusDepth,.6f}});
+        add(graph,4,OutputNode,{{Master,1},{OutputWidth,0}});
+        connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        std::vector<float> left(12000),right(12000);
+        engine.midi(0x90,60,100);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double narrow=0;for(size_t i=0;i<left.size();++i)narrow+=(left[i]-right[i])*(left[i]-right[i]);
+        assert(narrow<1e-6);
+        graph.nodes[3].parameters[OutputWidth]=2;assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double wide=0;for(size_t i=0;i<left.size();++i)wide+=(left[i]-right[i])*(left[i]-right[i]);
+        assert(wide>narrow);
+        assert(validGraphParam(OutputNode,OutputWidth));
+        assert(validGraphParam(HardwareOutputNode,OutputWidth));
+        puts("output width collapses and widens the stereo image");
+    }
     // Transpose shifts note-ons and their matching note-offs.
     {
         struct Sent {uint8_t status,a,b;};

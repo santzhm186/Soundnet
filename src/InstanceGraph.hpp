@@ -261,6 +261,7 @@ class InstanceGraph {
         int transposeSemitones=0;
         float echoTime=.25f,echoFeedback=.5f;
         int midiOutChannel=0;
+        float outputWidth=1;
         int echoRepeats=3,echoPitch=0;
         std::array<bool,4> triggerPorts{};
         std::vector<int> triggerInputs;
@@ -692,6 +693,7 @@ public:
             entry.echoFeedback=graphParamValue(n,EchoFeedback);
             entry.echoPitch=int(graphParamValue(n,EchoPitch));
             entry.midiOutChannel=int(graphParamValue(n,MidiOutChannel));
+            entry.outputWidth=graphParamValue(n,OutputWidth);
             auto ports=inputTypes(n.type);
             for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
 
@@ -980,7 +982,11 @@ public:
                 }
                 if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) {
                     bool sends=type==OutputNode || (hosted?type==DawOutputNode:type==HardwareOutputNode);
-                    if(source && sends && !entry.bypass)for(int i=0;i<n;++i){node.left[i]=source->left[i]*entry.gain;node.right[i]=source->right[i]*entry.gain;}
+                    if(source && sends && !entry.bypass)for(int i=0;i<n;++i){
+                        float mid=(source->left[i]+source->right[i])*.5f;
+                        float side=(source->left[i]-source->right[i])*.5f*entry.outputWidth;
+                        node.left[i]=(mid+side)*entry.gain;node.right[i]=(mid-side)*entry.gain;
+                    }
                     continue;
                 }
                 if(type==MixNode) {
