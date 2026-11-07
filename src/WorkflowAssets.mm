@@ -228,8 +228,9 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why) 
         if(edge[@"sourcePort"] && !integer(edge[@"sourcePort"],0,INT_MAX))return fail(why,@"输出端口无效。");
         next.edges.push_back({[edge[@"source"] unsignedLongLongValue],[edge[@"target"] unsignedLongLongValue],[edge[@"port"] intValue],[edge[@"sourcePort"] intValue]});
     }
-    std::vector<size_t> order;
-    if(!tri::graphOrder(next,order))return fail(why,@"节点 ID 重复、端口类型不匹配或图中存在回路。");
+    std::vector<size_t> order;std::string reason;
+    if(!tri::graphOrder(next,order,&reason))
+        return fail(why,reason.empty()?@"工作流图无效。":[NSString stringWithUTF8String:reason.c_str()]);
     graph=std::move(next);return true;
 }
 

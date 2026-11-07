@@ -90,27 +90,37 @@ inline std::vector<Signal> inputTypes(int type) {
        type==CompressorNode || type==LimiterNode || type==ChorusNode || type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};
     return {};
 }
-inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order) {
+inline bool graphFailure(std::string* why,const char* message) {
+    if(why)*why=message;
+    return false;
+}
+
+inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::string* why=nullptr) {
+    if(why)why->clear();
     std::map<InstanceID,size_t> index;
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
-        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>GateNode || n.type==Osc2Node || n.type==Osc3Node) return false;
+        if(!n.id || !index.emplace(n.id,i).second)return graphFailure(why,"节点 ID 必须非零且唯一。");
+        if(n.type<1 || n.type>GateNode || n.type==Osc2Node || n.type==Osc3Node)return graphFailure(why,"节点类型无效。");
         for(auto [p,v]:n.parameters) {
-            if(!validGraphParam(n.type,p)) return false;
+            if(!validGraphParam(n.type,p))return graphFailure(why,"节点参数不属于该节点类型。");
             const auto& info=graphParamInfo(p);
-            if(!std::isfinite(v) || v<info.min || v>info.max || (arrangerParam(p) && std::trunc(v)!=v)) return false;
+            if(!std::isfinite(v) || v<info.min || v>info.max || (arrangerParam(p) && std::trunc(v)!=v))return graphFailure(why,"节点参数超出范围。");
         }
-        if(n.type==ArrangerNode && !validArrangerRanges(n)) return false;
+        if(n.type==ArrangerNode && !validArrangerRanges(n))return graphFailure(why,"编排器音域无效：低声部不能高于高声部。");
     }
     std::vector<std::vector<size_t>> next(graph.nodes.size());
     std::vector<size_t> pending(graph.nodes.size());
     std::set<std::pair<InstanceID,int>> occupied;
     for(auto e:graph.edges) {
         auto a=index.find(e.source),b=index.find(e.target);
-        if(a==index.end() || b==index.end() || a==b) return false;
+        if(a==index.end() || b==index.end())return graphFailure(why,"连接引用了不存在的节点。");
+        if(a==b)return graphFailure(why,"节点不能连接到自身。");
         auto ports=inputTypes(graph.nodes[b->second].type);
-        if(e.port>=0 && size_t(e.port)<ports.size() && ports[e.port]!=Signal::Trigger && !occupied.emplace(e.target,e.port).second)return false;
-        if(e.port<0 || size_t(e.port)>=ports.size() || ports[e.port]!=outputType(graph.nodes[a->second].type,e.sourcePort))return false;
+        if(e.port>=0 && size_t(e.port)<ports.size() && ports[e.port]!=Signal::Trigger && !occupied.emplace(e.target,e.port).second)
+            return graphFailure(why,"同一输入端口只能有一条非触发连接。");
+        if(e.port<0 || size_t(e.port)>=ports.size() || ports[e.port]!=outputType(graph.nodes[a->second].type,e.sourcePort))
+            return graphFailure(why,"连接两端的信号类型不匹配。");
         // Feedback enters a stateful player or a wait queue on the next render
         // quantum. Audio and note dependencies remain acyclic.
         int destination=graph.nodes[b->second].type;
@@ -120,6 +130,7 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order) {
     order.clear();
     for(size_t i=0;i<pending.size();++i) if(!pending[i]) order.push_back(i);
     for(size_t j=0;j<order.size();++j) for(size_t dest:next[order[j]]) if(--pending[dest]==0)order.push_back(dest);
-    return order.size()==graph.nodes.size();
+    if(order.size()!=graph.nodes.size())return graphFailure(why,"图中存在回路。");
+    return true;
 }
 } // namespace tri

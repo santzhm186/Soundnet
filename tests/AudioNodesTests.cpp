@@ -57,6 +57,17 @@ int main() {
         assert(!graphOrder(graph,order));
     }
 
+    // Validation reports a specific reason for common graph mistakes.
+    {
+        GraphSpec graph;std::vector<size_t> order;std::string why;
+        add(graph,1,MidiNode);add(graph,1,MidiNode);
+        assert(!graphOrder(graph,order,&why));
+        assert(why.find("唯一")!=std::string::npos);
+        GraphSpec mismatch;add(mismatch,1,Osc1Node);add(mismatch,2,Osc1Node);connect(mismatch,1,2);
+        assert(!graphOrder(mismatch,order,&why));
+        assert(why.find("信号类型")!=std::string::npos);
+        puts("graph validation explains duplicate IDs and bad ports");
+    }
     // Noise -> filter -> reverb -> output produces finite, non-silent audio.
     {
         GraphSpec graph;
