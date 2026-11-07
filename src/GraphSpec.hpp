@@ -57,7 +57,8 @@ inline Signal outputType(int type,int port=0) {
     if(type==ClockNode || type==DawClockNode) return Signal::Clock;
     if(type==Osc1Node || type==InputNode || type==DawAudioNode || type==MixNode || type==EQNode || type==DelayNode ||
        type==FilterNode || type==ReverbNode || type==NoiseNode || type==SamplerNode ||
-       type==AudioClipNode || type==CompressorNode || type==LimiterNode || type==ChorusNode) return Signal::Audio;
+       type==AudioClipNode || type==CompressorNode || type==LimiterNode || type==ChorusNode ||
+       type==TremoloNode || type==BitcrusherNode) return Signal::Audio;
     return Signal::None;
 }
 inline int outputCount(int type) {
@@ -72,7 +73,7 @@ inline std::vector<Signal> inputTypes(int type) {
     if(type>=StartNode && type<=CountNode)return {Signal::Trigger};
     if(type==ChordNode || type==ModelNode || type==MidiOutNode || type==Osc1Node || type==ArrangerNode || type==SamplerNode || type==QuantizeNode) return {Signal::Notes};
     if(type==AudioClipNode)return {Signal::Trigger};
-    if(type==CompressorNode || type==LimiterNode || type==ChorusNode)return {Signal::Audio};
+    if(type==CompressorNode || type==LimiterNode || type==ChorusNode || type==TremoloNode || type==BitcrusherNode)return {Signal::Audio};
     if(type==MixNode) return {Signal::Audio,Signal::Audio,Signal::Audio,Signal::Audio};
     if(type==EQNode || type==DelayNode || type==FilterNode || type==ReverbNode ||
        type==CompressorNode || type==LimiterNode || type==ChorusNode || type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) return {Signal::Audio};
@@ -82,7 +83,7 @@ inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order) {
     std::map<InstanceID,size_t> index;
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& n=graph.nodes[i];
-        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>QuantizeNode || n.type==Osc2Node || n.type==Osc3Node) return false;
+        if(!n.id || !index.emplace(n.id,i).second || n.type<1 || n.type>BitcrusherNode || n.type==Osc2Node || n.type==Osc3Node) return false;
         for(auto [p,v]:n.parameters) {
             if(!validGraphParam(n.type,p)) return false;
             const auto& info=graphParamInfo(p);

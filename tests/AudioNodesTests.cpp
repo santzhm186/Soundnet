@@ -280,6 +280,50 @@ int main() {
         assert(rms(left,4800,20000)>.005);
         puts("chorus renders modulated delay and honors dry mix");
     }
+    // Tremolo modulates amplitude; bypass restores the dry level.
+    {
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+        add(graph,2,TremoloNode,{{TremoloRate,8},{TremoloDepth,1},{TremoloMix,1},{TremoloStereo,0}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,69,127);
+        std::vector<float> left(48000),right(48000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double wet=rms(left,4800,40000);
+        assert(wet>.01);
+        graph.nodes[2].bypass=true;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double dry=rms(left,4800,40000);
+        assert(dry>wet*1.4);
+        puts("tremolo modulates level and bypass restores the dry signal");
+    }
+    // Bit crusher holds and quantizes samples; bypass restores the dry signal.
+    {
+        GraphSpec graph;
+        add(graph,10,MidiNode);
+        add(graph,1,Osc1Node,{{Wave1,0},{Level1,.8f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
+        add(graph,2,BitcrusherNode,{{CrushBits,3},{CrushRate,3000},{CrushMix,1}});
+        add(graph,3,OutputNode,{{Master,1}});
+        connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
+        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        engine.midi(0x90,69,127);
+        std::vector<float> left(24000),right(24000);
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double crushed=rms(left,2400,20000);
+        assert(crushed>.01);
+        graph.nodes[2].bypass=true;
+        assert(engine.setGraph(graph));
+        engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
+        double dry=rms(left,2400,20000);
+        assert(dry>crushed*1.1);
+        assert(validGraphParam(BitcrusherNode,CrushBits));
+        assert(!validGraphParam(BitcrusherNode,QuantizeRoot));
+        puts("bit crusher quantizes samples and bypass restores the dry signal");
+    }
     // Scale quantizer transforms incoming notes and tracks note-off mapping.
     {
         struct Sent {uint8_t status,a,b;};
@@ -321,6 +365,6 @@ int main() {
         assert(!validGraphParam(QuantizeNode,ChorusMix));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
-    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, quantizer, bypass and type-scoped validation.");
+    puts("PASS: filter, reverb, noise, sampler, audio clip, compressor, limiter, chorus, tremolo, bit crusher, quantizer, bypass and type-scoped validation.");
 
 }

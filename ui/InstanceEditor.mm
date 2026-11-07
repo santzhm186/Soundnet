@@ -679,6 +679,8 @@ namespace { NSRect nodeRect(NSDictionary *node); }
     if(type==tri::LimiterNode){[self label:@"Threshold 开始限幅，Ceiling 输出上限，Release 恢复速度，Gain 输入增益。" y:y];y+=62;}
     if(type==tri::ChorusNode){[self label:@"Rate LFO 速度，Depth 调制深度，Mix 干湿比，Delay 基础延迟（毫秒）。" y:y];y+=62;}
     if(type==tri::QuantizeNode){[self label:@"Root 调性（0=C），Scale 0 大调 1 小调 2 多利亚 3 五声 4 半音，Mode 0 最近 1 向上 2 向下。" y:y];y+=70;}
+    if(type==tri::TremoloNode){[self label:@"Rate 0.1–20 Hz，Depth 0–1，Mix 干湿比，Stereo 左右相位差。" y:y];y+=50;}
+    if(type==tri::BitcrusherNode){[self label:@"Bits 1–16 位深，Rate 500–48000 Hz 采样保持，Mix 干湿比。" y:y];y+=50;}
     if(type==tri::ArpNode){[self label:@"Rhythm  0 直拍  1 Bossa Nova  2 Reggae  3 Disco  4 十六分" y:y];y+=70;}
     if(type==tri::DawClockNode){[self label:@"跟随 DAW 的 BPM、走带和定位。独立版可接收外部 MIDI Clock。" y:y];y+=70;}
     if(type==tri::DawOutputNode || type==tri::DawAudioNode){[self label:@"在 DAW 插件中连接对应音频总线。" y:y];y+=50;}
@@ -1173,7 +1175,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSButton *snapButton=[editor button:@"吸附" frame:NSMakeRect(712,10,65,28) action:@selector(snap:) parent:editor];
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.12    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.13    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(860,15,270,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
