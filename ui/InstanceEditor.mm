@@ -748,6 +748,19 @@ std::vector<ParamPreset> presetsFor(int type) {
     else [node removeObjectForKey:@"bypass"];
     [self commit:previous];[self inspect];
 }
+-(void)triggerAll:(int)type label:(NSString*)label {
+    NSMutableArray *ids=[NSMutableArray new];
+    for(NSDictionary *node in _document[@"nodes"])if([node[@"type"] intValue]==type)[ids addObject:node];
+    if(!ids.count){_status.stringValue=[NSString stringWithFormat:@"图中没有%@",label];return;}
+    for(NSMutableDictionary *node in ids) {
+        float pulse=[[node objectForKey:@"parameters"] objectForKey:@(tri::TriggerPulse)] ? [[node[@"parameters"] objectForKey:@(tri::TriggerPulse)] floatValue] : 0;
+        node[@"parameters"][@(tri::TriggerPulse)]=@(fmodf(pulse+1,1e6f));
+    }
+    [self commit:nil];
+    _status.stringValue=[NSString stringWithFormat:@"已触发 %lu 个%@",(unsigned long)ids.count,label];
+}
+-(void)playGraph:(id)sender {[self triggerAll:tri::StartNode label:@"开始触发器"];}
+-(void)stopGraph:(id)sender {[self triggerAll:tri::StopNode label:@"停止触发器"];}
 -(void)panic:(id)sender {
     NSDictionary *previous=copyJSON(_document);
     for(NSMutableDictionary *node in _document[@"nodes"])
@@ -1762,7 +1775,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.36    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.44    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];

@@ -86,6 +86,9 @@
     NSMenuItem *audioItem = [bar addItemWithTitle:@"音频" action:nil keyEquivalent:@""];
     NSMenu *audio = [[NSMenu alloc] initWithTitle:@"音频"];
     audioItem.submenu = audio;
+    [audio addItemWithTitle:@"播放图形" action:@selector(playGraph:) keyEquivalent:@""];
+    [audio addItemWithTitle:@"停止图形" action:@selector(stopGraph:) keyEquivalent:@""];
+    [audio addItem:[NSMenuItem separatorItem]];
     NSMenuItem *panic = [audio addItemWithTitle:@"停止所有声音" action:@selector(panic:) keyEquivalent:@"."];
     panic.target = self;
     NSMenuItem *restart = [audio addItemWithTitle:@"重启音频引擎" action:@selector(restart:) keyEquivalent:@""];
