@@ -332,6 +332,7 @@ static NSString *autosaveFilePath() {
 -(void)clipVelocityChanged:(id)sender;
 -(void)clipGridChanged:(id)sender;
 -(void)clipQuantize:(id)sender;
+-(void)clipPreview:(id)sender;
 -(void)refreshClipFields;
 -(void)autosave;
 -(void)restoreAutosave:(id)sender;
@@ -861,13 +862,15 @@ std::vector<ParamPreset> presetsFor(int type) {
     for(NSString *title in @[@"1/4",@"1/8",@"1/16",@"1/32"])[gridPopup addItemWithTitle:title];
     [gridPopup selectItemAtIndex:2];gridPopup.tag=3;gridPopup.target=self;gridPopup.action=@selector(clipGridChanged:);
     [panel.contentView addSubview:gridPopup];
+    NSButton *preview=[NSButton buttonWithTitle:@"试听" target:self action:@selector(clipPreview:)];
+    preview.frame=NSMakeRect(590,14,52,30);[panel.contentView addSubview:preview];
     NSButton *quantize=[NSButton buttonWithTitle:@"量化" target:self action:@selector(clipQuantize:)];
-    quantize.frame=NSMakeRect(590,14,60,30);[panel.contentView addSubview:quantize];
+    quantize.frame=NSMakeRect(646,14,56,30);[panel.contentView addSubview:quantize];
     NSButton *cancel=[NSButton buttonWithTitle:@"取消" target:self action:@selector(clipCancel:)];
-    cancel.frame=NSMakeRect(658,14,66,30);[panel.contentView addSubview:cancel];
+    cancel.frame=NSMakeRect(706,14,58,30);[panel.contentView addSubview:cancel];
     NSButton *apply=[NSButton buttonWithTitle:@"应用" target:self action:@selector(clipApply:)];
-    apply.frame=NSMakeRect(730,14,92,30);apply.keyEquivalent=@"\r";[panel.contentView addSubview:apply];
-    NSTextField *hint=[NSTextField labelWithString:@"单击空白添加 · 拖动移动 · 拖右边缘改长度 · 右键/Delete 删除 · 量化按网格对齐"];
+    apply.frame=NSMakeRect(768,14,64,30);apply.keyEquivalent=@"\r";[panel.contentView addSubview:apply];
+    NSTextField *hint=[NSTextField labelWithString:@"单击空白添加 · 拖动移动 · 拖右边缘改长度 · 右键/Delete 删除 · 量化按网格对齐 · 试听选中音符"];
     hint.frame=NSMakeRect(12,38,810,18);hint.font=[NSFont systemFontOfSize:10];
     hint.textColor=[NSColor secondaryLabelColor];[panel.contentView addSubview:hint];
     __weak SNInstanceEditor *weakSelf=self;
@@ -876,6 +879,18 @@ std::vector<ParamPreset> presetsFor(int type) {
     self.clipLengthField=clipField;self.clipNoteLengthField=noteField;self.clipVelocityField=velocityField;
     [self refreshClipFields];
     [self.window beginSheet:panel completionHandler:^(NSModalResponse response){(void)response;}];
+}
+-(void)clipPreview:(id)sender {
+    (void)sender;
+    if(!_clipRoll)return;
+    NSInteger index=_clipRoll.selectedIndex;
+    if(index<0 || index>=(NSInteger)_clipRoll.notes.count)return;
+    NSDictionary *note=_clipRoll.notes[(NSUInteger)index];
+    int pitch=[note[@"pitch"] intValue],velocity=[note[@"velocity"] intValue];
+    if(_midi)_midi(0x90,(uint8_t)pitch,(uint8_t)velocity);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        if(self.midi)self.midi(0x80,(uint8_t)pitch,0);
+    });
 }
 -(void)clipGridChanged:(id)sender {
     NSPopUpButton *popup=(NSPopUpButton *)sender;
@@ -1775,7 +1790,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.47    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.48    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
     SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
