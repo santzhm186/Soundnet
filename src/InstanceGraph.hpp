@@ -259,7 +259,7 @@ class InstanceGraph {
         bool hostClock=false,bypass=false;
         std::shared_ptr<const AudioSample> sample;
         float samplerRoot=60,samplerGain=.8f,samplerAttack=.005f,samplerRelease=.12f;
-        float samplerStart=0,samplerEnd=1,samplerVelocity=1;
+        float samplerStart=0,samplerEnd=1,samplerVelocity=1,samplerXfade=.005f;
         bool samplerLoop=false,samplerReverse=false;
         float audioClipGain=.9f,audioClipStart=0,audioClipEnd=1,audioClipFade=.01f,audioClipPitch=0,audioClipXfade=.005f;
         bool audioClipLoop=false,audioClipReverse=false;
@@ -573,6 +573,7 @@ class InstanceGraph {
         size_t endFrame=size_t(end*double(sampleFrames));
         if(endFrame<=startFrame)endFrame=std::min(sampleFrames,startFrame+1);
         const bool loop=entry.samplerLoop && endFrame>startFrame+1;
+        const double xfade=loop ? std::min(double(endFrame-startFrame)*.5,double(entry.samplerXfade)*rate) : 0.0;
         const float outputGain=entry.samplerGain;
         int position=0;
         auto renderTo=[&](int limit) {
@@ -594,7 +595,14 @@ class InstanceGraph {
                         return a+(b-a)*fraction;
                     };
                     float left=sampleAt(0),right=channels>1?sampleAt(1):left;
-                    const float amp=voice.envelope*voice.velocity*outputGain;
+                    float loopGain=1.f;
+                    if(xfade>0.0) {
+                        const double sinceStart=voice.direction>0 ? voice.position-double(startFrame) : double(endFrame)-voice.position;
+                        const double remaining=voice.direction>0 ? double(endFrame)-voice.position : voice.position-double(startFrame);
+                        if(sinceStart<xfade)loopGain*=float(std::max(0.0,sinceStart)/xfade);
+                        if(remaining<xfade)loopGain*=float(std::max(0.0,remaining)/xfade);
+                    }
+                    const float amp=voice.envelope*loopGain*voice.velocity*outputGain;
                     node.left[position]+=left*amp;
                     node.right[position]+=right*amp;
                     if(voice.releasing) {
@@ -710,6 +718,7 @@ public:
             entry.samplerEnd=graphParamValue(n,SamplerEnd);
             entry.samplerReverse=graphParamValue(n,SamplerReverse)>=.5f;
             entry.samplerVelocity=graphParamValue(n,SamplerVelocity);
+            entry.samplerXfade=graphParamValue(n,SamplerXfade);
             entry.audioClipGain=graphParamValue(n,AudioClipGain);
             entry.audioClipLoop=graphParamValue(n,AudioClipLoop)>=.5f;
             entry.audioClipStart=graphParamValue(n,AudioClipStart);

@@ -149,7 +149,7 @@ int main() {
             sample->samples[i]=float(std::sin(2*3.14159265358979323846*440.0*double(i)/48000.0))*.4f;
         GraphSpec graph;
         add(graph,10,MidiNode);
-        size_t sampler=add(graph,1,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,1},{SamplerAttack,.001f},{SamplerRelease,.02f},{SamplerStart,0},{SamplerEnd,1}});
+        size_t sampler=add(graph,1,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,1},{SamplerAttack,.001f},{SamplerRelease,.02f},{SamplerStart,0},{SamplerEnd,1},{SamplerXfade,10}});
         graph.nodes[sampler].sample=sample;
         add(graph,2,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
@@ -166,6 +166,8 @@ int main() {
         engine.midi(0x80,60,0);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,24000,48000)<.005);
+        for(float sample:left)assert(std::isfinite(sample));
+        assert(validGraphParam(SamplerNode,SamplerXfade));
         puts("sampler plays, loops and releases a note");
     }
 
