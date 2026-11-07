@@ -669,7 +669,9 @@ public:
         }
         localCount=dawCount=0;
     }
-    void panic() {panicRequested.store(true,std::memory_order_release);reset();}
+    // Only the render thread is allowed to touch live node state. UI/MIDI
+    // callers publish a request; the next render block performs the reset.
+    void panic() {panicRequested.store(true,std::memory_order_release);}
     void render(const float* inL,const float* inR,float* outL,float* outR,int frames) {
         if(frames<=0 || !outL || !outR)return;
         bool planChanged=plans.consume();
@@ -683,7 +685,7 @@ public:
         }
         renderingPlan=&plans.current();
         const auto& entries=renderingPlan->entries;
-        if(inputOverflow) {panic();inputOverflow=false;}
+        if(inputOverflow) {inputOverflow=false;reset();}
         for(int offset=0;offset<frames;offset+=quantum) {
             int n=std::min(quantum,frames-offset);
             outputBase=offset;
