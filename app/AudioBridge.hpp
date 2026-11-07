@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <thread>
+#include <vector>
 
 // A bounded multi-producer FIFO. The audio thread does not acquire locks or allocate.
 struct TRIMsg {
@@ -91,10 +93,54 @@ public:
     }
 };
 
+// Captures the post-master output for the standalone app. The audio thread only
+// copies samples; starting, stopping and writing the WAV happen on the main thread.
+struct TRIRecorder {
+    std::vector<float> left, right;
+    std::atomic<bool> active{false};
+    std::atomic<size_t> written{0};
+    std::atomic<int> inFlight{0};
+    std::atomic<bool> overflow{false};
+    double rate = 48000;
+    size_t capacity = 0;
+
+    void start(double sampleRate, double seconds) {
+        rate = sampleRate;
+        capacity = size_t(std::max(1.0, sampleRate * seconds));
+        left.assign(capacity, 0.f);
+        right.assign(capacity, 0.f);
+        written.store(0, std::memory_order_relaxed);
+        overflow.store(false, std::memory_order_relaxed);
+        active.store(true, std::memory_order_release);
+    }
+    void stop() {
+        active.store(false, std::memory_order_release);
+        // Wait for a capture that already passed the active check.
+        while (inFlight.load(std::memory_order_acquire)) std::this_thread::yield();
+    }
+    void capture(const float *l, const float *r, size_t n) {
+        if (!active.load(std::memory_order_acquire)) return;
+        inFlight.fetch_add(1, std::memory_order_acq_rel);
+        if (active.load(std::memory_order_acquire)) {
+            const size_t w = written.load(std::memory_order_relaxed);
+            const size_t take = std::min(n, capacity - std::min(capacity, w));
+            if (take < n) overflow.store(true, std::memory_order_relaxed);
+            for (size_t i = 0; i < take; ++i) {
+                left[w + i] = l[i];
+                right[w + i] = r[i];
+            }
+            written.store(w + take, std::memory_order_release);
+        }
+        inFlight.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    size_t frames() const { return written.load(std::memory_order_acquire); }
+};
+
 struct TRIRealtime {
     tri::Engine dsp;
     TRIMidiQueue midi;
     TRIInputFIFO input;
+    TRIRecorder recording;
     std::atomic<bool> panicFlag{false};
     double framesPerTick = 0;
     double sampleRate = 48000;
@@ -189,6 +235,7 @@ struct TRIRealtime {
             offset = position;
         }
         if (offset < n) span(offset,n-offset);
+        recording.capture(l,r,n);
         outputStart=0; outputOffset=0;
     }
 };

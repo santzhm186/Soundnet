@@ -2,6 +2,7 @@
 #import "AudioBridge.hpp"
 #include "PatchRouting.hpp"
 #include "WorkflowAssetStore.hpp"
+#include "../src/WavFile.hpp"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMIDI/CoreMIDI.h>
 #import <mach/mach_time.h>
@@ -100,6 +101,8 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     BOOL _inputEnabled, _waitingForInput, _closed, _midiReady;
     double _sampleRate;
     NSString *_error;
+    NSURL *_recordingURL;
+    BOOL _recordOverflow;
     id _configObserver;
     NSUInteger _generation;
 }
@@ -260,6 +263,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     }
 }
 - (NSString *)status {
+    if (_recordingURL) return _rt->recording.overflow.load() ? @"录制中 · 已达 60 秒上限" : @"录制中 · 再次选择「停止录制」保存";
     if (_error) return @"音频离线 · 从「音频」菜单重试";
     if (_waitingForInput) return @"正在等待麦克风授权";
     NSString *midi = _midiReady ? [NSString stringWithFormat:@"MIDI × %zu",_sources.size()] : @"MIDI 离线";
@@ -306,6 +310,46 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (void)sendStatus:(uint8_t)status data1:(uint8_t)a data2:(uint8_t)b { _rt->enqueue(status,a,b); }
 - (void)panic { _rt->panicFlag.store(true); }
+- (BOOL)isRecording { return _recordingURL != nil; }
+- (BOOL)recordingOverflow { return _recordOverflow; }
+- (BOOL)startRecordingToURL:(NSURL *)url error:(NSError **)error {
+    if (_closed || !_rt || _sampleRate <= 0) {
+        if (error) *error = audioError(@"音频引擎尚未就绪。");
+        return NO;
+    }
+    if (_recordingURL) {
+        if (error) *error = audioError(@"已经在录制中。");
+        return NO;
+    }
+    _recordOverflow = NO;
+    _rt->recording.start(_sampleRate, 60.0);
+    _recordingURL = url;
+    return YES;
+}
+- (BOOL)finishRecording:(NSError **)error {
+    if (!_recordingURL) {
+        if (error) *error = audioError(@"当前没有录音。");
+        return NO;
+    }
+    _rt->recording.stop();
+    _recordOverflow = _rt->recording.overflow.load();
+    const size_t frames = _rt->recording.frames();
+    const double rate = _rt->recording.rate;
+    NSString *path = _recordingURL.path;
+    _recordingURL = nil;
+    if (!frames) {
+        if (error) *error = audioError(@"没有录到音频。");
+        return NO;
+    }
+    std::vector<float> left(_rt->recording.left.begin(), _rt->recording.left.begin() + frames);
+    std::vector<float> right(_rt->recording.right.begin(), _rt->recording.right.begin() + frames);
+    std::string why;
+    if (!path.length || !tri::wav::write(path.UTF8String, left, right, rate, why)) {
+        if (error) *error = audioError([NSString stringWithUTF8String:why.c_str()]);
+        return NO;
+    }
+    return YES;
+}
 - (NSDictionary *)workflowAssets { return _assets.current; }
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets { return _assets.replace(assets,_rt->dsp); }
 - (void)savePatch {
@@ -320,6 +364,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (void)stop {
     _closed = YES;
+    if (_recordingURL) { _rt->recording.stop(); _recordingURL = nil; }
     // Stop rendering and release downstream notes while the virtual source is live.
     [self tearDownGraph];
     _rt->dsp.setMidiOutput(nullptr,nullptr);
