@@ -85,5 +85,70 @@ int main() {
         for(auto e:out)if((e.status&0xf0)==0x80&&e.note==64)released=true;
         assert(released);
     }
-    puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start, note release on lost input and typed validation.");
+    // A compressor with only a detector input must stay silent: the sidechain
+    // is not the payload.
+    {
+        GraphSpec side;
+        GraphNode noise{31,NoiseNode};
+        noise.parameters={{NoiseLevel,.8f}};
+        side.nodes={noise,{32,CompressorNode},{33,HardwareOutputNode}};
+        side.edges={{31,32,1,0},{32,33,0,0}};
+        Engine comp;comp.prepare(48000);assert(comp.setGraph(side));
+        float peak=0;
+        for(int block=0;block<10;++block) {
+            comp.render(nullptr,nullptr,l,r,128);
+            for(int i=0;i<128;++i)peak=std::max(peak,std::max(std::abs(l[i]),std::abs(r[i])));
+        }
+        assert(peak<1.0e-6f);
+    }
+    // A forced MIDI channel must also apply to the note-offs sent when the
+    // upstream disappears.
+    {
+        GraphSpec g;
+        GraphNode outNode{42,MidiOutNode};
+        outNode.parameters={{MidiOutChannel,2}};
+        g.nodes={{41,MidiNode},outNode};
+        g.edges={{41,42,0}};
+        Engine midiEngine;midiEngine.prepare(48000);
+        std::vector<Sent> events;events.reserve(32);
+        midiEngine.setMidiOutput(&events,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){
+            static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});
+        });
+        assert(midiEngine.setGraph(g));
+        midiEngine.midi(0x90,60,100);
+        for(int block=0;block<4;++block)midiEngine.render(nullptr,nullptr,l,r,128);
+        bool onChannel2=false,offReturned=false;
+        for(auto e:events)if((e.status&0xf0)==0x90&&e.note==60)onChannel2=((e.status&15)==1);
+        assert(onChannel2);
+        GraphSpec cut;cut.nodes=g.nodes;events.clear();
+        assert(midiEngine.setGraph(cut));
+        midiEngine.render(nullptr,nullptr,l,r,128);
+        for(auto e:events)if((e.status&0xf0)==0x80&&e.note==60)offReturned=((e.status&15)==1);
+        assert(offReturned);
+    }
+    // A trigger chain longer than the depth budget must continue on the next
+    // block instead of dropping the event.
+    {
+        GraphSpec chain;
+        for(int i=0;i<70;++i) chain.nodes.push_back({uint64_t(100+i),StartNode});
+        for(int i=0;i<69;++i)chain.edges.push_back({uint64_t(100+i),uint64_t(101+i),0,0});
+        GraphNode metronome{200,MetronomeNode};
+        metronome.parameters={{MetronomeLevel,.8f},{MetronomeBPM,120},{MetronomeBeats,4}};
+        chain.nodes.push_back(metronome);
+        chain.edges.push_back({169,200,0,0});
+        chain.nodes.push_back({201,HardwareOutputNode});
+        chain.edges.push_back({200,201,0,0});
+        Engine deep;assert(deep.setGraph(chain));deep.prepare(48000);
+        // The pulse is published like the editor's play button: a value that is
+        // already present at first publish is treated as already seen.
+        chain.nodes[0].parameters[TriggerPulse]=1;
+        assert(deep.setGraph(chain));
+        float peak=0;
+        for(int block=0;block<6;++block) {
+            deep.render(nullptr,nullptr,l,r,128);
+            for(int i=0;i<128;++i)peak=std::max(peak,std::max(std::abs(l[i]),std::abs(r[i])));
+        }
+        assert(peak>0.001f);
+    }
+    puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start, note release on lost input, sidechain isolation, forced-channel release, deep trigger chains and typed validation.");
 }

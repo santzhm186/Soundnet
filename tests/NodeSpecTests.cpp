@@ -119,6 +119,19 @@ int main() {
         assert(compileGraph(graph,plan,&why));
         assert(plan.nodes[2].triggerInputs[1].size()==2);
     }
+    // 6b. An ordinary input takes exactly one source: two edges into the same
+    //     audio input are an error, not a silent overwrite.
+    {
+        GraphSpec graph;
+        graph.nodes={node(1,NoiseNode),node(2,FilterNode),node(3,HardwareOutputNode)};
+        connect(graph,1,"audio",2,"audio");
+        connect(graph,1,"audio",2,"audio");
+        connect(graph,2,"audio",3,"audio");
+        CompiledGraph plan;
+        std::string why;
+        assert(!compileGraph(graph,plan,&why));
+        assert(why.find("一条连接")!=std::string::npos);
+    }
     // 7. Timed feedback through a feedback-boundary port is ordered by the
     //    engine; an ordinary audio loop stays a cycle error.
     {

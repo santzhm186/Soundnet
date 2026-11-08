@@ -487,7 +487,7 @@ inline const std::vector<NodeSpec>& nodeSpecs() {
     static const std::vector<NodeSpec> table = []{
         std::vector<NodeSpec> v;
         auto add=[&](NodeSpec s){v.push_back(std::move(s));};
-        const uint8_t req=0, trig=PortOptional|PortFeedback, multi=PortMultiSource|PortOptional;
+        const uint8_t req=0;
         // ---- inputs -------------------------------------------------------
         add({"soundnet.midi-input",MidiNode,"本地 MIDI","输入",1,1,true,true,
              CapNoteSource|CapTriggerSource|CapGenerator,TimeMode::None,0,
@@ -556,8 +556,8 @@ inline const std::vector<NodeSpec>& nodeSpecs() {
              {pout("notes","音符",Signal::Midi,RoleMain)}, {}, "model"});
         add({"soundnet.mixer",MixNode,"混音器","处理",1,1,true,true,
              CapStream,TimeMode::Stream,0,
-             {pin("in1","输入 1",Signal::Audio,RoleData,multi),pin("in2","输入 2",Signal::Audio,RoleData,multi),
-              pin("in3","输入 3",Signal::Audio,RoleData,multi),pin("in4","输入 4",Signal::Audio,RoleData,multi)},
+             {pin("in1","输入 1",Signal::Audio,RoleData),pin("in2","输入 2",Signal::Audio,RoleData),
+              pin("in3","输入 3",Signal::Audio,RoleData),pin("in4","输入 4",Signal::Audio,RoleData)},
              {pout("audio","音频",Signal::Audio,RoleMain)}, {}, nullptr});
         add({"soundnet.eq",EQNode,"EQ","处理",1,1,true,true,
              CapStream|CapBypassable,TimeMode::Stream,0,
@@ -839,6 +839,8 @@ inline std::string registryProblems() {
                 if(!port.id||!*port.id) why+=std::string(spec.key)+" 存在空端口 ID。\n";
                 if(!ids.emplace(port.id,1).second) why+=std::string(spec.key)+" 同方向端口 ID 重复："+port.id+"\n";
                 if(port.signal==Signal::None) why+=std::string(spec.key)+" 端口 "+port.id+" 的信号为 None。\n";
+                if(input && port.role!=RoleTrigger && (port.flags&PortMultiSource))
+                    why+=std::string(spec.key)+" 的非触发输入声明了多源："+port.id+"\n";
             }
         }
         if(spec.instantiable) {

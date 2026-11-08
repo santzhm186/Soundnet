@@ -1521,17 +1521,33 @@ std::vector<ParamPreset> presetsFor(int type) {
         if(result==NSModalResponseOK)[[NSJSONSerialization dataWithJSONObject:self.document options:NSJSONWritingPrettyPrinted error:nil] writeToURL:panel.URL atomically:YES];
     }];
 }
+-(BOOL)adoptFile:(NSDictionary *)file {
+    if(![file isKindOfClass:NSDictionary.class]) {[self message:@"无效的工作流。"];return NO;}
+    NSString *why=nil;
+    NSDictionary *document=nil;
+    // A graph document (v3 or v4) goes through the canonicaliser; anything else
+    // is the old v1/v2 patch format and needs the legacy migrator.
+    id version=file[@"version"];
+    if([version isKindOfClass:NSNumber.class] && ([version intValue]==3 || [version intValue]==4))
+        document=triassets::canonicalGraph(file,&why);
+    else
+        document=[self migrate:file];
+    tri::GraphSpec graph;
+    if(!document || !triassets::decodeGraph(document,graph,&why,true,true)) {
+        [self message:why ?: @"无效的工作流。"];return NO;
+    }
+    NSDictionary *previous=copyJSON(self.document);
+    self.document=copyJSON(document);
+    [self.selection removeAllObjects];self.selected=0;self.selectedEdge=-1;
+    [self commit:previous];[self fit:nil];[self inspect];
+    return YES;
+}
 -(void)open:(id)sender {
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.allowedContentTypes=@[UTTypeJSON];
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result!=NSModalResponseOK)return;
         NSDictionary *file=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:panel.URL] options:NSJSONReadingMutableContainers error:nil];
-        if(![file[@"version"] isEqual:@3])file=[self migrate:file];
-        tri::GraphSpec graph;NSString *why=nil;
-        if(!file || !triassets::decodeGraph(file,graph,&why)){[self message:why ?: @"无效的工作流。"];return;}
-        NSDictionary *previous=copyJSON(self.document);self.document=copyJSON(file);
-        [self.selection removeAllObjects];self.selected=0;self.selectedEdge=-1;
-        [self commit:previous];[self fit:nil];[self inspect];
+        [self adoptFile:file];
     }];
 }
 -(NSDictionary *)migrate:(NSDictionary *)file {

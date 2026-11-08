@@ -174,5 +174,67 @@ int main() {
         assert(reported);
         assert(!triassets::decodeGraph(document,graph,&why,false,false));
     }
+    // 7. A null version is a file error, not an exception.
+    {
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(@{@"version":[NSNull null],@"nodes":@[],@"edges":@[]},
+                                       graph,&why));
+        assert(why.length>0);
+        assert(triassets::canonicalGraph(@{@"version":[NSNull null]},&why)==nil);
+    }
+    // 8. v3 custom names and assets survive canonicalisation.
+    {
+        NSMutableDictionary *document=[v3Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *osc=[nodes[2] mutableCopy];
+        osc[@"name"]=@"Lead";
+        osc[@"note"]=@"keep me";
+        nodes[2]=osc;document[@"nodes"]=nodes;
+        NSString *why=nil;
+        NSDictionary *canonical=triassets::canonicalGraph(document,&why);
+        assert(canonical);
+        assert([[canonical[@"nodes"][2] objectForKey:@"name"] isEqual:@"Lead"]);
+        assert([[canonical[@"nodes"][2] objectForKey:@"note"] isEqual:@"keep me"]);
+    }
+    // 9. A legal float endpoint such as 0.001 must not be rejected because the
+    //    document stores it as a double.
+    {
+        NSMutableDictionary *document=[v3Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        [nodes addObject:@{@"id":@8,@"type":@(tri::SamplerNode),@"x":@0,@"y":@0,
+                           @"parameters":@{@"1133":@0.001,@"1134":@5.0}}];
+        document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(triassets::decodeGraph(document,graph,&why));
+        assert(graph.nodes[4].parameters.at(tri::SamplerAttack)==0.001f);
+        NSDictionary *canonical=triassets::canonicalGraph(document,&why);
+        assert(canonical);
+        assert([canonical[@"nodes"][4][@"parameters"][@"sampler.attack"] doubleValue]==
+               double(0.001f));
+        assert(triassets::decodeGraph(canonical,graph,&why));
+    }
+    // 10. Two edges into one ordinary input: v3 keeps the last (the old loader
+    //     behaved that way), v4 refuses instead of silently dropping one.
+    {
+        NSMutableDictionary *document=[v3Document() mutableCopy];
+        NSMutableArray *edges=[document[@"edges"] mutableCopy];
+        [edges addObject:@{@"source":@1,@"sourcePort":@"notes",@"target":@2,@"port":@"notes"}];
+        document[@"edges"]=edges;
+        tri::GraphSpec graph;NSString *why=nil;
+        std::vector<tri::Diagnostic> diagnostics;
+        assert(triassets::decodeGraph(document,graph,&why,false,true,&diagnostics));
+        int intoArranger=0;
+        for(const auto& edge:graph.edges) if(edge.target==2&&edge.port==0)++intoArranger;
+        assert(intoArranger==1);
+        bool explained=false;
+        for(const auto& diagnostic:diagnostics)
+            if(diagnostic.message.find("重复连接")!=std::string::npos)explained=true;
+        assert(explained);
+        NSMutableDictionary *v4=[v4Document() mutableCopy];
+        NSMutableArray *v4edges=[v4[@"edges"] mutableCopy];
+        [v4edges addObject:@{@"source":@1,@"sourcePort":@"notes",@"target":@2,@"port":@"notes"}];
+        v4[@"edges"]=v4edges;
+        assert(!triassets::decodeGraph(v4,graph,&why));
+    }
     puts("PASS: v4 documents, v3 migration, unknown nodes, parameter scope and port names");
 }

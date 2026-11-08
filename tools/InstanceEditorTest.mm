@@ -21,6 +21,7 @@
 - (void)remove:(id)sender;
 - (NSArray *)activeIDs;
 - (BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
+- (BOOL)adoptFile:(NSDictionary *)file;
 @end
 
 int main() {
@@ -90,6 +91,18 @@ int main() {
         NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::AudioClipNode)];
         assert(clipDrop && [clipDrop[@"nodeKey"] isEqual:clipKey] && clipDrop[@"asset"][@"name"]);
         std::remove(dropPath.c_str());
+
+        // Opening a v4 project must go through the canonicaliser, not the v1/v2
+        // migrator.
+        NSDictionary *v4=[NSJSONSerialization JSONObjectWithData:
+            [NSData dataWithContentsOfFile:@"examples/three-voice-arrangement.v4.json"]
+            options:NSJSONReadingMutableContainers error:nil];
+        assert([editor adoptFile:v4]);
+        NSDictionary *opened=[editor valueForKey:@"document"];
+        assert([opened[@"version"] isEqual:@4]);
+        assert([opened[@"nodes"] count]==9);
+        assert([opened[@"nodes"][2][@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
+        assert([opened[@"edges"][2][@"sourcePort"] isEqual:@"high"]);
 
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
         assert(triassets::validate([NSJSONSerialization JSONObjectWithData:serialized options:0 error:nil],nullptr));

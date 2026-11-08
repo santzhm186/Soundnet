@@ -315,13 +315,26 @@ class InstanceGraph {
     // Ring FIFO with a head/tail cursor: pushes during processing land after
     // the frame boundary read this block, so nothing is copied and no event is
     // ever delivered twice.
-    struct DeferredTrigger { size_t index=0; Trigger event{}; };
+    // A deferred event must survive a topology publish between blocks, so it
+    // carries stable instance IDs instead of plan indices or runtime pointers.
+    struct DeferredTrigger {
+        size_t index=0;
+        Trigger event{};
+        bool redispatch=false;
+        InstanceID sourceId=0,targetId=0;
+    };
     std::array<DeferredTrigger,eventCapacity> deferredSlots{};
     size_t deferredHead=0,deferredTail=0;
     uint32_t deferredOverflow=0;
     static constexpr size_t dispatchDepthLimit=64;
     std::array<Runtime*,256> dispatchStack{};
     size_t dispatchSize=0;
+    // A MIDI output may force its channel. Note-offs must use the same channel
+    // as the note-ons, otherwise the host keeps the original note sounding.
+    static uint8_t outputChannel(int configured,int inputKey) {
+        const int channel=configured>0?((configured-1)&15):(inputKey%16);
+        return uint8_t(channel);
+    }
     static PortLink linkByRole(const PlanNode& plan,Signal signal,PortRole role) {
         if(!plan.spec)return PortLink{};
         for(size_t p=0;p<plan.spec->inputs.size();++p)
@@ -367,9 +380,20 @@ class InstanceGraph {
     // polarity. The stack only bounds that chain: a re-entered node receives the
     // event but does not recurse, and pathological chains stop instead of
     // overflowing the audio thread.
+    void enqueueDeferred(size_t index,Trigger event,Runtime* source,bool redispatch) {
+        if(deferredTail>=deferredSlots.size()) {clearDeferredEvents();return;}
+        const InstanceID targetId=(!redispatch&&renderingPlan&&index<renderingPlan->entries.size())
+            ? renderingPlan->entries[index].state->saved.id : 0;
+        deferredSlots[deferredTail++]={index,event,redispatch,source?source->saved.id:0,targetId};
+    }
     void dispatch(Runtime* source,Trigger event) {
         if(!renderingPlan || !source)return;
-        if(dispatchSize>=dispatchDepthLimit)return;
+        // The chain is too deep to finish this block. Resume from this source at
+        // the start of the next block instead of dropping the event.
+        if(dispatchSize>=dispatchDepthLimit) {
+            enqueueDeferred(0,event,source,true);
+            return;
+        }
         const auto& entries=renderingPlan->entries;
         dispatchStack[dispatchSize++]=source;
         for(size_t index=0;index<entries.size();++index) {
@@ -1031,14 +1055,19 @@ public:
         const double beat=this->beat.load(std::memory_order_acquire);
         bool planChanged=plans.consume();
         if(planChanged) {
-            if(output)for(auto& node:plans.current().retired)for(int k=0;k<2048;++k)
-                if(node->incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
+            if(output)for(auto& node:plans.current().retired) {
+                if(node->type!=MidiOutNode)continue;
+                const int configured=int(graphParamValue(node->saved,MidiOutChannel));
+                for(int k=0;k<2048;++k) if(node->incoming[k].velocity)
+                    output(outputContext,0,uint8_t(0x80|outputChannel(configured,k)),uint8_t(k/16),0);
+            }
             // A node whose note input disappeared (upstream removed, or now an
             // unknown type) must release what it already sent downstream.
             for(const auto& entry:plans.current().entries) {
                 if(entry.mainNote.connected()||entry.state->type!=MidiOutNode)continue;
                 for(int k=0;k<2048;++k) if(entry.state->incoming[k].velocity) {
-                    if(output)output(outputContext,0,0x80|(k%16),k/16,0);
+                    if(output)output(outputContext,0,
+                        uint8_t(0x80|outputChannel(entry.midiOutChannel,k)),uint8_t(k/16),0);
                     entry.state->incoming[k]={};
                 }
             }
@@ -1075,10 +1104,18 @@ public:
                 const size_t boundary=deferredTail;
                 while(deferredHead<boundary) {
                     const DeferredTrigger item=deferredSlots[deferredHead++];
-                    if(item.index>=entries.size())continue;
                     Trigger event{item.event.frame,item.event.start};
                     event.frame=0;
+                    if(item.redispatch) {
+                        Runtime* source=nullptr;
+                        for(const auto& candidate:entries)
+                            if(candidate.state->saved.id==item.sourceId) {source=candidate.state.get();break;}
+                        if(source)dispatch(source,event);   // continue a long chain
+                        continue;
+                    }
+                    if(item.index>=entries.size())continue;
                     auto& entry=entries[item.index];
+                    if(entry.state->saved.id!=item.targetId)continue;   // node was replaced
                     deliver(*entry.state,entry,event);
                     dispatch(entry.state.get(),event);
                 }
@@ -1095,8 +1132,14 @@ public:
                 PortLink primary;Signal primarySignal=Signal::None;
                 for(size_t p=0;p<entry.inputs.size()&&p<entry.spec->inputs.size();++p) {
                     if(!entry.inputs[p].connected())continue;
-                    const Signal signal=entry.spec->inputs[p].signal;
-                    if(signal==Signal::Audio||signal==Signal::Midi) {primary=entry.inputs[p];primarySignal=signal;break;}
+                    const PortSpec& port=entry.spec->inputs[p];
+                    // Sidechain, clock and trigger are never the payload: a
+                    // compressor with only a detector connected must stay silent.
+                    if(port.role==RoleSidechain||port.role==RoleClock||port.role==RoleTrigger||
+                       port.role==RoleControl)continue;
+                    if(port.signal==Signal::Audio||port.signal==Signal::Midi) {
+                        primary=entry.inputs[p];primarySignal=port.signal;break;
+                    }
                 }
                 auto* source=primary.connected()?entries[size_t(primary.node)].state.get():nullptr;
                 auto* noteInput=(source&&primarySignal==Signal::Midi)?&source->notePort(primary.port):nullptr;

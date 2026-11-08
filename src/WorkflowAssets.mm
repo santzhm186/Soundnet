@@ -4,6 +4,7 @@
 #include "StandardMidiFile.hpp"
 #include "AudioFile.hpp"
 #include <climits>
+#include <set>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -221,8 +222,11 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
     if(![document isKindOfClass:NSDictionary.class] || ![document[@"nodes"] isKindOfClass:NSArray.class] ||
        ![document[@"edges"] isKindOfClass:NSArray.class])
         return fail(why,@"请选择 Soundnet 工作流文件。");
-    const int version=[document[@"version"] intValue];
-    if(!numeric(document[@"version"]) || (version!=3 && version!=4))
+    id rawVersion=document[@"version"];
+    if(!numeric(rawVersion))
+        return fail(why,@"请选择版本 3 或 4 的 Soundnet 工作流。");
+    const int version=[rawVersion intValue];
+    if(version!=3 && version!=4)
         return fail(why,@"请选择版本 3 或 4 的 Soundnet 工作流。");
     const bool strict=version>=4;
     auto integer=[](id v,double min,double max) {
@@ -289,12 +293,16 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             }
             if(!numeric(value))return fail(why,@"参数值应为数字。");
             const double number=[value doubleValue];
+            // Graph parameters are float. Comparing a decimal literal such as
+            // 0.001 against a float minimum rejects a legal endpoint, so both
+            // sides are brought to float before the range check.
+            const float stored=float(number);
             const tri::ParamInfo& info=*param->info;
-            if(!std::isfinite(number)||number<info.min||number>info.max)
+            if(!std::isfinite(number)||!std::isfinite(stored)||stored<info.min||stored>info.max)
                 return fail(why,[NSString stringWithFormat:@"参数超出范围：%@",rawKey]);
             if(param->discrete && number!=std::trunc(number))
                 return fail(why,[NSString stringWithFormat:@"参数必须为整数：%@",rawKey]);
-            node.parameters[pid]=float(number);
+            node.parameters[pid]=stored;
         }
         if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
             return fail(why,@"同一声部的最低音不能高于最高音。");
@@ -318,6 +326,10 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
     }
     std::map<uint64_t,const tri::GraphNode*> nodeById;
     for(const auto& node:next.nodes) nodeById.emplace(node.id,&node);
+    // Non-trigger inputs are single-source. v3 documents may still carry two
+    // edges into one port because the old loader silently kept the last one;
+    // keep that edge and drop the earlier copies so the project still opens.
+    std::set<std::pair<uint64_t,int>> occupiedInputs;
     for(id edge in document[@"edges"]) {
         if(![edge isKindOfClass:NSDictionary.class] || !integer(edge[@"source"],1,9007199254740991.) ||
             !integer(edge[@"target"],1,9007199254740991.))return fail(why,@"连线格式无效。");
@@ -359,6 +371,21 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
         } else {
             parsed.sourcePort=0;
         }
+        const tri::PortSpec* inputPort=tri::nodePort(target->type,true,size_t(parsed.port));
+        const bool trigger=inputPort && (inputPort->role==tri::RoleTrigger||
+                                         inputPort->signal==tri::Signal::Trigger);
+        if(!trigger) {
+            auto key=std::make_pair(parsed.target,parsed.port);
+            if(!occupiedInputs.insert(key).second) {
+                if(strict)return fail(why,@"同一输入端口只能有一条连接。");
+                for(size_t i=0;i<next.edges.size();++i)
+                    if(next.edges[i].target==parsed.target&&next.edges[i].port==parsed.port) {
+                        next.edges.erase(next.edges.begin()+long(i));
+                        break;
+                    }
+                early.push_back({parsed.target,"忽略重复连接，保留最后一条。",false});
+            }
+        }
         next.edges.push_back(std::move(parsed));
     }
     tri::CompiledGraph plan;
@@ -376,7 +403,7 @@ NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
         fail(why,@"工作流应为对象。");
         return nil;
     }
-    if([document[@"version"] intValue]==4) {
+    if(numeric(document[@"version"]) && [document[@"version"] intValue]==4) {
         // Already canonical; still validate so a corrupt v4 file never reaches
         // the engine through the editor.
         tri::GraphSpec graph;
@@ -385,9 +412,17 @@ NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
     }
     tri::GraphSpec graph;
     if(!decodeGraph(document,graph,why,false,true))return nil;
+    // Rebuild from the original dictionaries so a custom `name`, an asset and
+    // any field this build does not know about survive the migration.
+    std::map<uint64_t,NSDictionary*> originalById;
+    for(id row in document[@"nodes"])
+        if([row isKindOfClass:NSDictionary.class] && numeric(row[@"id"]))
+            originalById.emplace([row[@"id"] unsignedLongLongValue],row);
     NSMutableArray *nodes=[NSMutableArray arrayWithCapacity:graph.nodes.size()];
     for(const auto& node:graph.nodes) {
-        NSMutableDictionary *row=[NSMutableDictionary new];
+        auto original=originalById.find(node.id);
+        NSMutableDictionary *row=original!=originalById.end()
+            ? [original->second mutableCopy] : [NSMutableDictionary new];
         row[@"id"]=@(node.id);
         if(node.unavailable) {
             row[@"nodeKey"]=[NSString stringWithUTF8String:node.key.c_str()];
@@ -404,12 +439,7 @@ NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
         }
         row[@"x"]=@(node.x);row[@"y"]=@(node.y);
         if(node.bypass)row[@"bypass"]=@YES;
-        // Re-attach the original asset payload untouched.
-        for(id original in document[@"nodes"]) {
-            if([original isKindOfClass:NSDictionary.class] &&
-               [original[@"id"] unsignedLongLongValue]==node.id && original[@"asset"])
-                row[@"asset"]=original[@"asset"];
-        }
+        else [row removeObjectForKey:@"bypass"];
         [nodes addObject:row];
     }
     NSMutableArray *edges=[NSMutableArray arrayWithCapacity:graph.edges.size()];

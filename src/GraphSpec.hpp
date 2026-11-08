@@ -276,8 +276,11 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
         const Signal produced=plan.nodes[a->second].spec->outputs[size_t(edge.sourcePort)].signal;
         if(produced!=inputPort.signal)return fail("连接两端的信号类型不匹配。");
         const bool trigger=inputPort.role==RoleTrigger||inputPort.signal==Signal::Trigger;
-        const bool multi=trigger||(inputPort.flags&PortMultiSource);
-        if(!multi && !occupied.emplace(edge.target,edge.port).second)
+        // Ordinary inputs are single-source: the run plan stores one upstream
+        // link per port, so accepting a second edge would silently drop one.
+        // Trigger inputs accept several distinct sources; identical duplicates
+        // are dropped below.
+        if(!trigger && !occupied.emplace(edge.target,edge.port).second)
             return fail("同一输入端口只能有一条连接。");
         auto& links=targetPlan.triggerInputs[size_t(edge.port)];
         if(trigger) {
