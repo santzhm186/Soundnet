@@ -5,6 +5,7 @@
 #include "../src/GraphSpec.hpp"
 #include <cassert>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <set>
 #include <string>
@@ -181,6 +182,30 @@ int main() {
         assert(!validNodeType(Osc2Node));            // migration only
         assert(!validNodeType(CommentNode+1000));
         assert(FirstAppendedNode>CommentNode);
+    }
+    // 11. The documented project budget (4096 nodes / 16384 edges) must compile
+    //     in interactive time: publishing a topology edit happens on the UI
+    //     thread, so a quadratic port lookup would freeze the editor.
+    {
+        GraphSpec graph;
+        for(int i=0;i<4;++i){GraphNode n;n.id=uint64_t(i+1);n.type=NoiseNode;n.key=nodeKey(NoiseNode);graph.nodes.push_back(n);}
+        uint64_t id=5;
+        while(graph.nodes.size()<maxGraphNodes) {
+            GraphNode n;n.id=id++;n.type=MixNode;n.key=nodeKey(MixNode);graph.nodes.push_back(n);
+        }
+        const char* ports[4]={"in1","in2","in3","in4"};
+        for(size_t i=4;i<graph.nodes.size()&&graph.edges.size()+4<=maxGraphEdges;++i)
+            for(int p=0;p<4;++p) connect(graph,uint64_t(1+(i%4)),"audio",graph.nodes[i].id,ports[p]);
+        const auto start=std::chrono::steady_clock::now();
+        CompiledGraph plan;std::string why;
+        assert(compileGraph(graph,plan,&why));
+        const double milliseconds=std::chrono::duration<double,std::milli>(
+            std::chrono::steady_clock::now()-start).count();
+        assert(plan.order.size()==graph.nodes.size());
+        if(milliseconds>500) {
+            fprintf(stderr,"compileGraph took %.1f ms for the max budget\n",milliseconds);
+            assert(false);
+        }
     }
     puts("PASS: node descriptors, stable ports, parameter scope, duplicate triggers, feedback and unknown nodes");
 }

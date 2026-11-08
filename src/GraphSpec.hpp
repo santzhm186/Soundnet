@@ -128,13 +128,14 @@ inline bool normalizeGraph(GraphSpec& graph,std::string* why=nullptr) {
         if(node.key.empty()) node.key=nodeKey(node.type);
         if(node.type!=0 && node.key.empty()) return detail::graphFailure(why,"节点类型没有稳定标识。");
     }
+    // One index for the whole edge list: a scan per edge would be O(E*N), which
+    // matters at the 4096/16384 project budget.
+    std::map<InstanceID,const GraphNode*> byId;
+    for(const auto& node:graph.nodes) byId.emplace(node.id,&node);
     for(auto& edge:graph.edges) {
-        const GraphNode* source=nullptr;
-        const GraphNode* target=nullptr;
-        for(const auto& node:graph.nodes) {
-            if(node.id==edge.source)source=&node;
-            if(node.id==edge.target)target=&node;
-        }
+        auto foundSource=byId.find(edge.source),foundTarget=byId.find(edge.target);
+        const GraphNode* source=foundSource==byId.end()?nullptr:foundSource->second;
+        const GraphNode* target=foundTarget==byId.end()?nullptr:foundTarget->second;
         if(!source||!target)continue;   // reported by compileGraph
         // Edges that touch an unavailable node are carried through untouched so
         // a newer project can be saved again without losing them.

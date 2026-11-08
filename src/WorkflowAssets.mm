@@ -316,6 +316,8 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             early.push_back({node.id,"素材缺失，节点输出保持静音。",false});
         next.nodes.push_back(std::move(node));
     }
+    std::map<uint64_t,const tri::GraphNode*> nodeById;
+    for(const auto& node:next.nodes) nodeById.emplace(node.id,&node);
     for(id edge in document[@"edges"]) {
         if(![edge isKindOfClass:NSDictionary.class] || !integer(edge[@"source"],1,9007199254740991.) ||
             !integer(edge[@"target"],1,9007199254740991.))return fail(why,@"连线格式无效。");
@@ -324,12 +326,9 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
         parsed.target=[edge[@"target"] unsignedLongLongValue];
         // Ports may be named (v4) or positional (v3). A named port is resolved
         // through the descriptor; an unknown name is an error, never a silent 0.
-        const tri::GraphNode* target=nullptr;
-        const tri::GraphNode* source=nullptr;
-        for(const auto& node:next.nodes) {
-            if(node.id==parsed.target)target=&node;
-            if(node.id==parsed.source)source=&node;
-        }
+        auto foundTarget=nodeById.find(parsed.target),foundSource=nodeById.find(parsed.source);
+        const tri::GraphNode* target=foundTarget==nodeById.end()?nullptr:foundTarget->second;
+        const tri::GraphNode* source=foundSource==nodeById.end()?nullptr:foundSource->second;
         if(!target||!source)return fail(why,@"连线引用了不存在的节点。");
         if(target->unavailable||source->unavailable) {
             if([edge[@"port"] isKindOfClass:NSString.class])parsed.portId=[edge[@"port"] UTF8String] ?: "";
@@ -414,19 +413,21 @@ NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
         [nodes addObject:row];
     }
     NSMutableArray *edges=[NSMutableArray arrayWithCapacity:graph.edges.size()];
+    std::map<uint64_t,const tri::GraphNode*> byId;
+    for(const auto& node:graph.nodes) byId.emplace(node.id,&node);
     for(const auto& edge:graph.edges) {
         NSMutableDictionary *row=[NSMutableDictionary new];
         row[@"source"]=@(edge.source);row[@"target"]=@(edge.target);
-        const tri::GraphNode* source=nullptr;
-        for(const auto& node:graph.nodes)if(node.id==edge.source)source=&node;
+        auto foundSource=byId.find(edge.source);
+        const tri::GraphNode* source=foundSource==byId.end()?nullptr:foundSource->second;
         std::string sourcePort=edge.sourcePortId;
         if(sourcePort.empty()&&source&&!source->unavailable)
             sourcePort=tri::nodePortId(source->type,false,size_t(edge.sourcePort));
         std::string port=edge.portId;
         if(port.empty()) {
-            for(const auto& node:graph.nodes)
-                if(node.id==edge.target&&!node.unavailable)
-                    port=tri::nodePortId(node.type,true,size_t(edge.port));
+            auto foundTarget=byId.find(edge.target);
+            if(foundTarget!=byId.end()&&!foundTarget->second->unavailable)
+                port=tri::nodePortId(foundTarget->second->type,true,size_t(edge.port));
         }
         if(!sourcePort.empty())row[@"sourcePort"]=[NSString stringWithUTF8String:sourcePort.c_str()];
         if(!port.empty())row[@"port"]=[NSString stringWithUTF8String:port.c_str()];
