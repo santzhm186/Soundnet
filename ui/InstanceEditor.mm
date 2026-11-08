@@ -74,29 +74,14 @@ static NSString *nodeLabel(NSDictionary *node) {
     return title(typeOf(node));
 }
 static NSArray<NSString*> *paramOptions(int p) {
-    if(p==tri::Wave1 || p==tri::Wave2 || p==tri::Wave3)
-        return @[@"正弦",@"方波",@"锯齿",@"三角"];
-    if(p==tri::Pattern)
-        return @[@"直八",@"Bossa Nova",@"Reggae",@"Disco",@"十六分脉冲"];
-    if(p==tri::ChordQuality)
-        return @[@"大三和弦",@"小三和弦",@"属七",@"大七",@"小七",@"减三",@"挂二",@"挂四"];
-    if(p==tri::FilterType)
-        return @[@"低通",@"高通",@"带通"];
-    if(p==tri::NoiseType)
-        return @[@"白噪声",@"粉红噪声"];
-    if(p==tri::QuantizeScale)
-        return @[@"大调",@"小调",@"多利亚",@"五声",@"半音"];
-    if(p==tri::QuantizeMode)
-        return @[@"就近",@"向上",@"向下"];
-    if(p==tri::QuantizeRoot)
-        return @[@"C",@"C#",@"D",@"D#",@"E",@"F",@"F#",@"G",@"G#",@"A",@"A#",@"B"];
-    if(p==tri::ArpOn || p==tri::ClipRun || p==tri::ClipLoop || p==tri::ProgressRun ||
-       p==tri::ChordRun || p==tri::SamplerLoop || p==tri::AudioClipLoop ||
-       p==tri::SamplerReverse || p==tri::AudioClipReverse)
-        return @[@"关闭",@"开启"];
-    if(p==tri::ClockSync)
-        return @[@"自由",@"同步宿主"];
-    return nil;
+    // Enumerations live in the descriptor: one list for validation, storage and
+    // the inspector.
+    const tri::ParamSpec *spec=tri::paramSpec(p);
+    if(!spec||!spec->options||!spec->optionCount)return nil;
+    NSMutableArray *rows=[NSMutableArray arrayWithCapacity:spec->optionCount];
+    for(int i=0;i<spec->optionCount;++i)
+        rows[i]=[NSString stringWithUTF8String:spec->options[i]];
+    return rows;
 }
 NSArray<NSString *> *voiceNames() { return @[@"高声部", @"中声部", @"低声部"]; }
 struct VoiceControls { int lower,upper,texture; };
@@ -112,10 +97,18 @@ NSString *pitchName(int note) {
     static NSString *const names[]={@"C",@"C♯",@"D",@"E♭",@"E",@"F",@"F♯",@"G",@"A♭",@"A",@"B♭",@"B"};
     return [NSString stringWithFormat:@"%@%d",names[note%12],note/12-1];
 }
-NSString *outputName(int type,int port) {
-    if(type==tri::ArrangerNode)return voiceNames()[port];
-    if(type==tri::ClipNode && port==1)return @"循环完成";
-    return @"输出";
+// Port names come from the descriptor, so a node that renames or adds a port
+// never needs an editor change. The signal is only a fallback for unknown types.
+NSString *portLabel(int type,bool input,int port) {
+    const tri::PortSpec *spec=tri::nodePort(type,input,size_t(port));
+    if(spec&&spec->label&&*spec->label)return @(spec->label);
+    if(spec) {
+        if(spec->signal==tri::Signal::Audio)return @"音频";
+        if(spec->signal==tri::Signal::Midi)return @"音符";
+        if(spec->signal==tri::Signal::Trigger)return @"触发";
+        if(spec->signal==tri::Signal::Clock)return @"时钟";
+    }
+    return input?@"输入":@"输出";
 }
 NSColor *signalColor(tri::Signal signal) {
     if(signal==tri::Signal::Notes)return [NSColor colorWithCalibratedRed:.9 green:.7 blue:.4 alpha:1];
@@ -1943,14 +1936,13 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         for(int p=0;p<(int)inputs.size();++p) {
             NSPoint at=jack(node,false,p);[signalColor(inputs[p])setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
-            NSString *label=inputs[p]==tri::Signal::Audio?@"音频":inputs[p]==tri::Signal::Notes?@"音符":inputs[p]==tri::Signal::Trigger?@"触发":@"时钟";
-            drawText(label,NSMakeRect(at.x+9,at.y-8,55,20),NSColor.lightGrayColor);
+            drawText(portLabel(type,true,p),NSMakeRect(at.x+9,at.y-8,55,20),NSColor.lightGrayColor);
         }
         int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
             NSPoint at=jack(node,true,p);[signalColor(tri::outputType(type,p))setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
-            drawText(outputName(type,p),NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
+            drawText(portLabel(type,false,p),NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
         }
     }
     if(editor.boxSelecting) {

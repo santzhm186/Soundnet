@@ -132,8 +132,12 @@ enum class TimeMode : uint8_t { None, Content, Timed, Stream };
 // ---------------------------------------------------------------------------
 struct ParamSpec {
     const ParamInfo* info;
-    const char* key;   // stable alias, used by the v4 project format
-    bool discrete;     // integral value; validation rejects fractions
+    const char* key;      // stable alias, used by the v4 project format
+    bool discrete;        // integral value; validation rejects fractions
+    // Optional enumerated labels, in value order starting at 0. The inspector
+    // builds its popup from here, so a node never ships two copies of the list.
+    const char* const* options=nullptr;
+    uint8_t optionCount=0;
 };
 
 // Graph-node parameter IDs. These live above the legacy AU parameter range so a
@@ -392,6 +396,39 @@ inline const std::map<int,ParamSpec>& paramSpecs() {
         add(DelaySync,delaySyncInfo,"delay.sync",true);
         add(DelayDivision,delayDivisionInfo,"delay.division",true);
         add(ChannelFilter,channelFilterInfo,"channelFilter.channel",true);
+        // Enumerated parameters. Order is the stored value.
+        static const char* const waves[]={"正弦","方波","锯齿","三角"};
+        static const char* const patterns[]={"直八","Bossa Nova","Reggae","Disco","十六分脉冲"};
+        static const char* const qualities[]={"大三和弦","小三和弦","属七","大七","小七","减三","挂二","挂四"};
+        static const char* const filterTypes[]={"低通","高通","带通"};
+        static const char* const noiseTypes[]={"白噪声","粉红噪声"};
+        static const char* const scales[]={"大调","小调","多利亚","五声","半音"};
+        static const char* const quantizeModes[]={"就近","向上","向下"};
+        static const char* const roots[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+        static const char* const onOff[]={"关闭","开启"};
+        static const char* const clockSync[]={"自由","同步宿主"};
+        static const char* const tremoloDivisions[]={"四分","八分","十六分","附点四分"};
+        static const char* const delayDivisions[]={"四分","八分","十六分","附点八分"};
+        auto option=[&](int id,const char* const* labels,uint8_t count) {
+            auto it=m.find(id);
+            if(it==m.end())return;
+            it->second.options=labels;
+            it->second.optionCount=count;
+        };
+        for(int id:{Wave1,Wave2,Wave3})option(id,waves,4);
+        option(Pattern,patterns,5);
+        option(ChordQuality,qualities,8);
+        option(FilterType,filterTypes,3);
+        option(NoiseType,noiseTypes,2);
+        option(QuantizeScale,scales,5);
+        option(QuantizeMode,quantizeModes,3);
+        option(QuantizeRoot,roots,12);
+        for(int id:{int(ArpOn),int(ClipRun),int(ClipLoop),int(ChordRun),int(ProgressRun),
+                    SamplerLoop,SamplerReverse,AudioClipLoop,AudioClipReverse,TremoloSync,DelaySync})
+            option(id,onOff,2);
+        option(ClockSync,clockSync,2);
+        option(TremoloDivision,tremoloDivisions,4);
+        option(DelayDivision,delayDivisions,4);
         return m;
     }();
     return table;
@@ -829,6 +866,13 @@ inline std::string registryProblems() {
             if(param->discrete && (info.min!=std::trunc(info.min)||info.max!=std::trunc(info.max)||
                                    info.def!=std::trunc(info.def)))
                 why+=std::string(param->key)+" 标记为离散但范围含小数。\n";
+            if(param->options) {
+                const double span=double(info.max)-double(info.min)+1.0;
+                if(param->optionCount==0||span!=double(param->optionCount))
+                    why+=std::string(param->key)+" 的枚举标签数量与取值范围不一致。\n";
+                if(info.min!=0)
+                    why+=std::string(param->key)+" 的枚举必须从 0 开始。\n";
+            }
         }
         if(spec.assetKind) {
             const bool declared=nodeHas(spec.capabilities,CapAssetClip)||nodeHas(spec.capabilities,CapAssetAudio)||

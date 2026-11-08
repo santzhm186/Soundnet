@@ -66,6 +66,11 @@ int main() {
         assert(!nodeParamDiscrete(SamplerNode,SamplerRoot));   // pitch ratio is continuous
         assert(!nodeParamDiscrete(FilterNode,FilterCutoff));
         assert(discreteParam(FilterType) && !discreteParam(FilterCutoff));
+        const ParamSpec* filterType=paramSpec(FilterType);
+        assert(filterType&&filterType->optionCount==3&&filterType->options);
+        assert(std::string(filterType->options[1])=="高通");
+        assert(paramSpec(QuantizeRoot)->optionCount==12);
+        assert(paramSpec(FilterCutoff)->options==nullptr);   // continuous: no enum
     }
     // 4. Same graph, two spellings: positional v3 edges and named v4 edges must
     //    compile to the same plan.
