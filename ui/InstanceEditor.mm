@@ -324,6 +324,7 @@ static NSString *autosaveFilePath() {
 @property(strong) NSView *inspector;
 @property(strong) NSTextField *status;
 @property(strong) NSTextField *heading;
+@property(copy) NSString *headingText;
 @property(strong) NSButton *keyboardToggle;
 @property(strong) NSTextField *zoomLabel;
 @property(strong) NSArray<NSView *> *zoomControls;
@@ -1534,6 +1535,10 @@ std::vector<ParamPreset> presetsFor(int type) {
     const CGFloat canvasW=MAX(240,W-8-inspectW-10-canvasX);
     _heading.frame=NSMakeRect(W-8-252,15,244,25);
     _heading.alignment=NSTextAlignmentRight;
+    // The toolbar's last button ends at 917: fall back to a short title rather
+    // than colliding with it in a narrow (Audio Unit) editor.
+    BOOL wide=(W-8-252)>=926;
+    _heading.stringValue=wide?(_headingText ?: _heading.stringValue):@"2.79";
     _libraryScroll.frame=NSMakeRect(8,top,libW,contentH);
     [_library setFrameSize:NSMakeSize(libW-2,contentH)];
     _canvas.frame=NSMakeRect(canvasX,top,canvasW,contentH);
@@ -2328,7 +2333,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
     NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.79    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(1040,15,220,25);heading.alignment=NSTextAlignmentRight;
-    editor.heading=heading;[editor addSubview:heading];
+    editor.heading=heading;editor.headingText=heading.stringValue;[editor addSubview:heading];
 
     NSScrollView *libraryScroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(8,48,196,600)];
     libraryScroll.hasVerticalScroller=YES;libraryScroll.drawsBackground=NO;
