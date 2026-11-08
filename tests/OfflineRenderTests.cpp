@@ -7,6 +7,7 @@
 #include <fstream>
 #include <cstdio>
 #include <string>
+#include <filesystem>
 
 using namespace tri;
 
@@ -15,6 +16,8 @@ static void edge(GraphSpec& graph,uint64_t source,uint64_t target,int port=0,int
 }
 
 int main() {
+    // Exports go to build/tests-offline; a clean tree has no such directory yet.
+    std::filesystem::create_directories("build/tests-offline");
     GraphSpec graph;
     GraphNode start;start.id=1;start.type=StartNode;start.x=0;start.y=0;graph.nodes.push_back(start);
     GraphNode clip;clip.id=2;clip.type=ClipNode;clip.x=120;clip.y=0;

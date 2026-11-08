@@ -35,10 +35,11 @@
         ^NSDictionary *{ return host.workflowAssets; },
         ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
-            styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable)
+            styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];
     _window.title = @"Soundnet";
     _window.releasedWhenClosed = NO;
+    _window.contentMinSize = NSMakeSize(1180, 620);
     _window.contentView = editor;
     _window.initialFirstResponder = editor;
     [_window center];

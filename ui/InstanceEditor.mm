@@ -93,6 +93,8 @@ NSString *parameterName(int p) {
 
 namespace { NSRect nodeRect(NSDictionary *node); }
 
+static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
+
 @class SNInstanceEditor;
 @interface SNInstanceCanvas : NSView
 @property(weak) SNInstanceEditor *editor;
@@ -316,9 +318,21 @@ static NSString *autosaveFilePath() {
 @property(strong) NSMutableArray *history;
 @property(strong) NSMutableArray *future;
 @property(strong) SNInstanceCanvas *canvas;
+@property(strong) NSScrollView *libraryScroll;
+@property(strong) NSView *library;
 @property(strong) NSScrollView *inspectorScroll;
 @property(strong) NSView *inspector;
 @property(strong) NSTextField *status;
+@property(strong) NSTextField *heading;
+@property(strong) NSButton *keyboardToggle;
+@property(strong) NSTextField *zoomLabel;
+@property(strong) NSArray<NSView *> *zoomControls;
+@property BOOL keyboardVisible;
+@property(strong) NSView *piano;
+@property(strong) NSDictionary *dragStartGroup;
+@property uint64_t groupDrag;
+@property NSPoint groupGrab;
+@property(strong) NSMutableDictionary<NSNumber *,NSArray *> *groupDragNodes;
 @property uint64_t selected;
 @property(strong) NSMutableSet<NSNumber *> *selection;
 @property NSInteger selectedEdge;
@@ -379,6 +393,22 @@ static NSString *autosaveFilePath() {
 -(void)insert:(NSMenuItem *)sender;
 -(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 -(NSPoint)world:(NSPoint)point;
+-(void)layoutUI;
+-(void)toggleKeyboard:(id)sender;
+-(void)zoomIn:(id)sender;
+-(void)zoomOut:(id)sender;
+-(void)zoomReset:(id)sender;
+-(void)zoomBy:(double)factor atViewPoint:(NSPoint)point;
+-(uint64_t)insertNodeType:(int)type atPoint:(NSPoint)point;
+-(void)insertFromLibrary:(int)type;
+-(NSMutableArray *)groups;
+-(NSArray *)groupList;
+-(void)groupSelection:(id)sender;
+-(void)dissolveGroup:(id)sender;
+-(void)renameGroup:(NSDictionary *)group;
+-(void)renameGroupMenu:(NSMenuItem *)sender;
+-(NSDictionary *)groupAtPoint:(NSPoint)point titleOnly:(BOOL)titleOnly;
+-(void)commitGroups:(NSDictionary *)previous;
 @end
 
 
@@ -1135,7 +1165,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     for(NSView *view in _inspector.subviews.copy)[view removeFromSuperview];
     if(_selection.count>1) {
         [self label:[NSString stringWithFormat:@"已选择 %lu 个节点",(unsigned long)_selection.count] y:12];
-        [self label:@"Shift 点击增减选择，Shift 拖动框选。拖动任一节点可整体移动。" y:40];
+        [self label:@"Shift 点击增减选择，拖动空白框选。拖动任一节点可整体移动。" y:40];
         [self button:@"复制节点" frame:NSMakeRect(12,78,105,28) action:@selector(duplicate:) parent:_inspector];
         [self button:@"删除节点" frame:NSMakeRect(132,78,105,28) action:@selector(remove:) parent:_inspector];
         [self button:@"断开连线" frame:NSMakeRect(12,112,105,28) action:@selector(disconnect:) parent:_inspector];
@@ -1493,21 +1523,177 @@ std::vector<ParamPreset> presetsFor(int type) {
     return @{@"version":@3,@"nodes":nodes,@"edges":edges};
 }
 -(NSPoint)world:(NSPoint)p{return NSMakePoint((p.x-_origin.x)/_zoom,(p.y-_origin.y)/_zoom);}
+-(void)setFrameSize:(NSSize)size {[super setFrameSize:size];[self layoutUI];}
+-(void)layoutUI {
+    const CGFloat W=self.bounds.size.width,H=self.bounds.size.height;
+    if(W<200||H<200)return;
+    const CGFloat top=48,statusH=24,inspectW=262,pianoH=_keyboardVisible?84:0;
+    const CGFloat statusY=H-10-pianoH-(pianoH?6:0)-statusH;
+    const CGFloat contentH=MAX(240,statusY-8-top);
+    const CGFloat libW=196,canvasX=8+libW+10;
+    const CGFloat canvasW=MAX(240,W-8-inspectW-10-canvasX);
+    _heading.frame=NSMakeRect(W-8-252,15,244,25);
+    _heading.alignment=NSTextAlignmentRight;
+    _libraryScroll.frame=NSMakeRect(8,top,libW,contentH);
+    [_library setFrameSize:NSMakeSize(libW-2,contentH)];
+    _canvas.frame=NSMakeRect(canvasX,top,canvasW,contentH);
+    _inspectorScroll.frame=NSMakeRect(W-8-inspectW,top,inspectW,contentH);
+    _inspector.frame=NSMakeRect(0,0,inspectW-2,MAX(contentH,520));
+    _status.frame=NSMakeRect(12,statusY,MAX(120,W-8-112-20),statusH);
+    _keyboardToggle.frame=NSMakeRect(W-8-104,statusY-1,104,24);
+    if(_piano){_piano.hidden=!_keyboardVisible;_piano.frame=NSMakeRect(8,H-8-pianoH,MAX(120,W-16),pianoH);}
+    CGFloat x=canvasX+10;
+    for(NSView *control in _zoomControls) {
+        NSRect frame=control.frame;
+        frame.origin=NSMakePoint(x,top+contentH-34);
+        control.frame=frame;x+=frame.size.width+4;
+    }
+}
+-(void)updateZoomLabel {_zoomLabel.stringValue=[NSString stringWithFormat:@"%ld%%",(long)std::lround(_zoom*100)];}
+-(void)toggleKeyboard:(id)sender {
+    _keyboardVisible=!_keyboardVisible;
+    _keyboardToggle.state=_keyboardVisible?NSControlStateValueOn:NSControlStateValueOff;
+    [self layoutUI];
+    [self message:_keyboardVisible?@"显示钢琴键盘":@"隐藏钢琴键盘"];
+}
+-(void)zoomBy:(double)factor atViewPoint:(NSPoint)point {
+    double next=std::clamp(_zoom*factor,.15,3.0);
+    if(std::abs(next-_zoom)<1e-6)return;
+    // Keep the graph point under the cursor pinned while scaling.
+    NSPoint anchor=[self world:point];
+    _zoom=next;
+    _origin=NSMakePoint(point.x-anchor.x*_zoom,point.y-anchor.y*_zoom);
+    [self updateZoomLabel];_canvas.needsDisplay=YES;
+}
+-(void)zoomIn:(id)sender {
+    NSSize size=_canvas.bounds.size;
+    [self zoomBy:1.2 atViewPoint:NSMakePoint(size.width/2,size.height/2)];
+}
+-(void)zoomOut:(id)sender {
+    NSSize size=_canvas.bounds.size;
+    [self zoomBy:1/1.2 atViewPoint:NSMakePoint(size.width/2,size.height/2)];
+}
+-(void)zoomReset:(id)sender {
+    NSSize size=_canvas.bounds.size;
+    [self zoomBy:1.0/_zoom atViewPoint:NSMakePoint(size.width/2,size.height/2)];
+    [self message:@"缩放 100%"];
+}
+-(uint64_t)insertNodeType:(int)type atPoint:(NSPoint)point {
+    NSDictionary *previous=copyJSON(_document);
+    uint64_t next=1;
+    for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
+    [self makeNode:type at:point id:next];
+    _selected=next;
+    [_selection removeAllObjects];[_selection addObject:@(next)];
+    [self commit:previous];[self inspect];
+    return next;
+}
+-(void)insertFromLibrary:(int)type {
+    NSSize size=_canvas.bounds.size;
+    NSPoint center=[self world:NSMakePoint(size.width/2-86,size.height/2-50)];
+    [self insertNodeType:type atPoint:center];
+    [self message:[NSString stringWithFormat:@"已添加 %@",title(type)]];
+}
+-(NSMutableArray *)groups {
+    if(!_document)return [NSMutableArray array];
+    NSMutableArray *list=_document[@"groups"];
+    if(![list isKindOfClass:NSMutableArray.class]) {list=[NSMutableArray new];_document[@"groups"]=list;}
+    return list;
+}
+// Drawing and hit testing must not insert the key: a document that differs from
+// the host copy would be replaced by the one-second sync in -tick.
+-(NSArray *)groupList {
+    id list=_document[@"groups"];
+    return [list isKindOfClass:NSArray.class]?list:@[];
+}
+-(void)groupSelection:(id)sender {
+    NSArray<NSNumber *> *ids=[self activeIDs];
+    if(!ids.count){NSBeep();[self message:@"先选中要编组的节点"];return;}
+    NSRect bounds=NSZeroRect;
+    for(NSNumber *key in ids) {
+        NSDictionary *node=[self node:key.unsignedLongLongValue];if(!node)continue;
+        NSRect r=nodeRect(node);
+        bounds=NSIsEmptyRect(bounds)?r:NSUnionRect(bounds,r);
+    }
+    if(NSIsEmptyRect(bounds))return;
+    NSDictionary *previous=copyJSON(_document);
+    uint64_t next=1;
+    for(NSDictionary *group in [self groups])next=std::max(next,[group[@"id"] unsignedLongLongValue]+1);
+    [[self groups] addObject:[@{@"id":@(next),@"title":@"分组",
+        @"x":@(bounds.origin.x-18),@"y":@(bounds.origin.y-44),
+        @"w":@(bounds.size.width+36),@"h":@(bounds.size.height+62)} mutableCopy]];
+    [self commit:previous];_canvas.needsDisplay=YES;
+    [self message:@"已创建分组：框内节点会随标题一起移动 · 双击标题重命名，右键解散"];
+}
+-(void)dissolveGroup:(id)sender {
+    NSInteger tag=[sender respondsToSelector:@selector(tag)]?[sender tag]:0;
+    uint64_t target=tag>0?(uint64_t)tag:_groupDrag;
+    if(!target)return;
+    NSDictionary *previous=copyJSON(_document);
+    NSIndexSet *indexes=[[self groups] indexesOfObjectsPassingTest:^BOOL(NSDictionary *group,NSUInteger,BOOL*){
+        return [group[@"id"] unsignedLongLongValue]==target;
+    }];
+    if(!indexes.count)return;
+    [[self groups] removeObjectsAtIndexes:indexes];
+    _groupDrag=0;
+    [self commit:previous];_canvas.needsDisplay=YES;
+    [self message:@"已解散分组（节点保留）"];
+}
+-(void)renameGroup:(NSDictionary *)group {
+    NSAlert *alert=[NSAlert new];
+    alert.messageText=@"分组名称";
+    alert.informativeText=@"留空则显示为「分组」。";
+    NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(0,0,240,24)];
+    field.stringValue=group[@"title"] ?: @"分组";
+    alert.accessoryView=field;
+    [alert addButtonWithTitle:@"确定"];[alert addButtonWithTitle:@"取消"];
+    NSDictionary *previous=copyJSON(_document);
+    NSNumber *gid=group[@"id"];
+    __weak SNInstanceEditor *weakSelf=self;
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
+        if(response!=NSAlertFirstButtonReturn)return;
+        SNInstanceEditor *editor=weakSelf;if(!editor)return;
+        NSString *name=field.stringValue;
+        for(NSMutableDictionary *entry in [editor groups])
+            if([entry[@"id"] isEqual:gid]) {entry[@"title"]=name.length?name:@"分组";break;}
+        [editor commit:previous];editor.canvas.needsDisplay=YES;
+    }];
+}
+-(void)renameGroupMenu:(NSMenuItem *)sender {if([sender.representedObject isKindOfClass:NSDictionary.class])[self renameGroup:sender.representedObject];}
+-(NSDictionary *)groupAtPoint:(NSPoint)point titleOnly:(BOOL)titleOnly {
+    for(NSDictionary *group in [[self groupList] reverseObjectEnumerator]) {
+        NSRect r=NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
+                            [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
+        if(titleOnly)r.size.height=28;
+        if(NSPointInRect(point,r))return group;
+    }
+    return nil;
+}
+-(void)commitGroups:(NSDictionary *)previous {[self commit:previous];_canvas.needsDisplay=YES;}
 -(void)showShortcuts:(id)sender {
     NSAlert *alert=[NSAlert new];
     alert.messageText=@"Soundnet 快捷键";
-    alert.informativeText=@"文件与历史\n⌘O 打开  ⌘S 保存  ⌘Z 撤销  ⇧⌘Z 重做\n\n编辑\n⌘C 复制  ⌘V 粘贴  ⌘X 剪切  ⌘A 全选  ⌘D 复制节点  ⌘F 查找\nDelete 删除节点或连线  Esc 取消选择  方向键微移（⇧ 10 像素）\n\n画布\n拖动空白平移  滚轮平移  ⌘滚轮缩放  ⇧拖动框选  ⇧点击多选\n\n触发\n音频菜单可播放/停止全部开始/停止触发器；⌘. 停止所有声音";
+    alert.informativeText=@"文件与历史\n⌘O 打开  ⌘S 保存  ⌘Z 撤销  ⇧⌘Z 重做\n\n编辑\n⌘C 复制  ⌘V 粘贴  ⌘X 剪切  ⌘A 全选  ⌘D 复制节点  ⌘F 查找\nDelete 删除节点或连线  Esc 取消选择  方向键微移（⇧ 10 像素）\n⇧⌘G 把选中节点编组（双击分组标题重命名）\n\n画布\n拖动空白框选  拖动分组标题整体移动  Option 拖动或中键拖动平移  滚轮平移\n⌘滚轮或触控板捏合缩放（以光标为中心）\n左侧节点库：单击插入到画布中央，直接拖到画布任意位置\n\n触发\n音频菜单可播放/停止全部开始/停止触发器；⌘. 停止所有声音";
     [alert beginSheetModalForWindow:self.window completionHandler:nil];
 }
 -(void)fit:(id)sender {
     NSRect all=NSZeroRect;
     for(NSDictionary *node in _document[@"nodes"]) {
-        NSRect r=NSMakeRect([node[@"x"] doubleValue],[node[@"y"] doubleValue],170,130);
+        NSRect r=nodeRect(node);
+        all=NSIsEmptyRect(all)?r:NSUnionRect(all,r);
+    }
+    for(NSDictionary *group in [self groupList]) {
+        NSRect r=NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
+                            [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
         all=NSIsEmptyRect(all)?r:NSUnionRect(all,r);
     }
     if(NSIsEmptyRect(all))all=NSMakeRect(0,0,700,400);
-    _zoom=std::clamp(std::min(800./all.size.width,450./all.size.height),.1,1.2);
-    _origin=NSMakePoint(20-all.origin.x*_zoom,35-all.origin.y*_zoom);_canvas.needsDisplay=YES;
+    NSSize size=_canvas.bounds.size;
+    double availableW=std::max(200.,size.width-48),availableH=std::max(160.,size.height-48);
+    _zoom=std::clamp(std::min(availableW/all.size.width,availableH/all.size.height),.1,1.2);
+    _origin=NSMakePoint((size.width-all.size.width*_zoom)/2-all.origin.x*_zoom,
+                        (size.height-all.size.height*_zoom)/2-all.origin.y*_zoom);
+    [self updateZoomLabel];_canvas.needsDisplay=YES;
 }
 -(void)autoLayout:(id)sender {
     NSArray<NSDictionary*> *nodes=_document[@"nodes"];
@@ -1587,7 +1773,8 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 }
 @implementation SNInstanceCanvas
 -(instancetype)initWithFrame:(NSRect)frame {
-    if((self=[super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    if((self=[super initWithFrame:frame]))
+        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL,SNNodeTypePasteboard]];
     return self;
 }
 -(BOOL)isFlipped{return YES;}
@@ -1596,13 +1783,22 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
 }
 -(NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if([sender.draggingPasteboard stringForType:SNNodeTypePasteboard])return NSDragOperationCopy;
     return [self draggedURLs:sender].count?NSDragOperationCopy:NSDragOperationNone;
 }
 -(NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender { return [self draggingEntered:sender]; }
 -(BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSString *nodeType=[sender.draggingPasteboard stringForType:SNNodeTypePasteboard];
+    NSPoint view=[self convertPoint:sender.draggingLocation fromView:nil];
+    if(nodeType) {
+        int type=nodeType.intValue;
+        if(!tri::nodeMeta(type))return NO;
+        NSPoint at=[_editor world:view];
+        [_editor insertNodeType:type atPoint:NSMakePoint(at.x-86,at.y-40)];
+        return YES;
+    }
     NSArray<NSURL *> *urls=[self draggedURLs:sender];
     if(!urls.count)return NO;
-    NSPoint view=[self convertPoint:sender.draggingLocation fromView:nil];
     BOOL clipMode=([NSEvent modifierFlags]&NSEventModifierFlagOption)!=0;
     return [_editor dropFileURLs:urls atPoint:[_editor world:view] clipMode:clipMode];
 }
@@ -1623,6 +1819,23 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         for(double x=x0;x<=x1;x+=20){[grid moveToPoint:NSMakePoint(x,a.y)];[grid lineToPoint:NSMakePoint(x,b.y)];}
         for(double y=y0;y<=y1;y+=20){[grid moveToPoint:NSMakePoint(a.x,y)];[grid lineToPoint:NSMakePoint(b.x,y)];}
         [grid stroke];
+    }
+    for(NSDictionary *group in [editor groupList]) {
+        NSRect r=NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
+                            [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
+        [[NSColor colorWithWhite:1 alpha:.045]setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:r xRadius:9 yRadius:9]fill];
+        NSBezierPath *border=[NSBezierPath bezierPathWithRoundedRect:r xRadius:9 yRadius:9];
+        [border setLineDash:(CGFloat[]){6,4} count:2 phase:0];
+        border.lineWidth=1/[editor zoom];[[NSColor colorWithWhite:1 alpha:.18]setStroke];[border stroke];
+        NSRect title=NSMakeRect(r.origin.x,r.origin.y,r.size.width,28);
+        // NSRectFill composites with Copy and would drop the alpha, so the
+        // translucent header has to go through a bezier path.
+        [[NSColor colorWithWhite:1 alpha:.08]setFill];
+        [[NSBezierPath bezierPathWithRect:title]fill];
+        [[NSColor colorWithWhite:1 alpha:.12]setFill];
+        [[NSBezierPath bezierPathWithRect:NSMakeRect(r.origin.x,r.origin.y+27,r.size.width,1)]fill];
+        drawText(group[@"title"] ?: @"分组",NSInsetRect(title,10,6),[NSColor colorWithWhite:.75 alpha:1],11);
     }
     NSInteger edgeIndex=0;
     for(NSDictionary *edge in editor.document[@"edges"]) {
@@ -1686,6 +1899,17 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         action.enabled=[item[1] isEqualToString:@"paste:"]?editor.clipboard!=nil:hasSelection;
     }
     [menu addItem:[NSMenuItem separatorItem]];
+    NSDictionary *group=[editor groupAtPoint:editor.menuPoint titleOnly:NO];
+    NSMenuItem *groupItem=[menu addItemWithTitle:@"编组选中节点" action:@selector(groupSelection:) keyEquivalent:@"G"];
+    groupItem.target=editor;groupItem.enabled=hasSelection;
+    groupItem.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
+    if(group) {
+        NSMenuItem *rename=[menu addItemWithTitle:@"重命名分组…" action:@selector(renameGroupMenu:) keyEquivalent:@""];
+        rename.target=editor;rename.representedObject=group;
+        NSMenuItem *dissolve=[menu addItemWithTitle:@"解散分组" action:@selector(dissolveGroup:) keyEquivalent:@""];
+        dissolve.target=editor;dissolve.tag=[group[@"id"] integerValue];
+    }
+    [menu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *all=[menu addItemWithTitle:@"选择全部" action:@selector(selectAll:) keyEquivalent:@"a"];
     all.target=editor;all.enabled=[(NSArray *)editor.document[@"nodes"] count]>0;
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
@@ -1728,8 +1952,28 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         }
         ++index;
     }
-    if(additive) {
+    NSDictionary *group=[editor groupAtPoint:point titleOnly:YES];
+    if(group) {
+        if(event.clickCount==2) {[editor renameGroup:group];return;}
+        NSRect area=NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
+                               [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
+        editor.dragStartGroup=copyJSON(editor.document);
+        editor.groupDrag=[group[@"id"] unsignedLongLongValue];
+        editor.groupGrab=point;
+        NSMutableDictionary *members=[NSMutableDictionary new];
+        for(NSDictionary *node in editor.document[@"nodes"]) {
+            NSRect r=nodeRect(node);
+            if(NSPointInRect(NSMakePoint(NSMidX(r),NSMidY(r)),area))
+                members[node[@"id"]]=@[@([node[@"x"] doubleValue]),@([node[@"y"] doubleValue])];
+        }
+        editor.groupDragNodes=members;
+        [editor message:[NSString stringWithFormat:@"拖动标题可整体移动 %lu 个节点",(unsigned long)members.count]];
+        return;
+    }
+    BOOL wantsPan=(event.modifierFlags&NSEventModifierFlagOption)!=0;
+    if(!wantsPan) {
         editor.boxSelecting=YES;editor.boxOrigin=point;editor.boxCurrent=point;
+        if(!additive)[editor selectNone:nil];
         self.needsDisplay=YES;return;
     }
     [editor selectNone:nil];editor.panning=YES;
@@ -1737,6 +1981,25 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 -(void)mouseDragged:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
     NSPoint view=[self convertPoint:event.locationInWindow fromView:nil];
+    if(editor.groupDrag) {
+        NSPoint point=[editor world:view];
+        double dx=point.x-editor.groupGrab.x,dy=point.y-editor.groupGrab.y;
+        NSDictionary *base=editor.dragStartGroup;
+        for(NSDictionary *origin in base[@"groups"])
+            if([origin[@"id"] unsignedLongLongValue]==editor.groupDrag)
+                for(NSMutableDictionary *target in [editor groups])
+                    if([target[@"id"] isEqual:origin[@"id"]]) {
+                        target[@"x"]=@([origin[@"x"] doubleValue]+dx);
+                        target[@"y"]=@([origin[@"y"] doubleValue]+dy);
+                        break;
+                    }
+        for(NSNumber *key in editor.groupDragNodes) {
+            NSArray *origin=editor.groupDragNodes[key];
+            NSMutableDictionary *node=[editor node:key.unsignedLongLongValue];if(!node)continue;
+            node[@"x"]=@([origin[0] doubleValue]+dx);node[@"y"]=@([origin[1] doubleValue]+dy);
+        }
+        self.needsDisplay=YES;return;
+    }
     if(editor.boxSelecting) {
         editor.boxCurrent=[editor world:view];self.needsDisplay=YES;return;
     }
@@ -1754,6 +2017,11 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 }
 -(void)mouseUp:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
+    if(editor.groupDrag) {
+        [editor commitGroups:editor.dragStartGroup];
+        editor.groupDrag=0;editor.dragStartGroup=nil;editor.groupDragNodes=nil;
+        self.needsDisplay=YES;return;
+    }
     if(editor.boxSelecting) {
         NSRect box=NSMakeRect(std::min(editor.boxOrigin.x,editor.boxCurrent.x),std::min(editor.boxOrigin.y,editor.boxCurrent.y),
                               std::fabs(editor.boxCurrent.x-editor.boxOrigin.x),std::fabs(editor.boxCurrent.y-editor.boxOrigin.y));
@@ -1787,8 +2055,17 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     self.needsDisplay=YES;
 }
 -(void)scrollWheel:(NSEvent *)event {
-    if(event.modifierFlags&NSEventModifierFlagCommand) _editor.zoom=std::clamp(_editor.zoom*std::exp(-event.scrollingDeltaY*.02),.05,3.);
-    else _editor.origin=NSMakePoint(_editor.origin.x-event.scrollingDeltaX,_editor.origin.y-event.scrollingDeltaY);
+    if(event.modifierFlags&NSEventModifierFlagCommand) {
+        NSPoint point=[self convertPoint:event.locationInWindow fromView:nil];
+        [_editor zoomBy:std::exp(-event.scrollingDeltaY*.02) atViewPoint:point];
+    } else {
+        _editor.origin=NSMakePoint(_editor.origin.x-event.scrollingDeltaX,_editor.origin.y-event.scrollingDeltaY);
+    }
+    self.needsDisplay=YES;
+}
+-(void)magnifyWithEvent:(NSEvent *)event {
+    NSPoint point=[self convertPoint:event.locationInWindow fromView:nil];
+    [_editor zoomBy:1+event.magnification atViewPoint:point];
     self.needsDisplay=YES;
 }
 -(void)keyDown:(NSEvent *)event {
@@ -1801,7 +2078,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         if([key isEqualToString:@"a"]){[editor selectAll:nil];return;}
         if([key isEqualToString:@"d"]){[editor duplicate:nil];return;}
         if([key isEqualToString:@"f"]){[editor search:nil];return;}
-        if([key isEqualToString:@"g"]){[editor snap:nil];return;}
+        if([key isEqualToString:@"g"]){if(event.modifierFlags&NSEventModifierFlagShift)[editor groupSelection:nil];else[editor snap:nil];return;}
     }
     if(event.keyCode==51 || event.keyCode==117) {
         if(editor.selectedEdge>=0)[editor deleteEdge:editor.selectedEdge];
@@ -1833,31 +2110,208 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 @end
 @interface SNPiano : NSView
 @property(copy) TRIMIDI send;
-@property int note;
+@property int octave;
 @end
-@implementation SNPiano
+@implementation SNPiano {
+    int _active, _octaveIndex;
+}
 -(BOOL)isFlipped{return YES;}
--(void)drawRect:(NSRect)dirty {
-    for(int i=0;i<24;++i) {
-        NSRect r=NSMakeRect(i*self.bounds.size.width/24,0,self.bounds.size.width/24-1,55);
-        [(i+48)==_note?NSColor.systemOrangeColor:NSColor.lightGrayColor setFill];NSRectFill(r);
-        drawText([NSString stringWithFormat:@"%d",48+i],NSInsetRect(r,4,18),NSColor.blackColor,10);
+-(int)lowNote { return 48+_octaveIndex*12; }
+-(int)noteAtPoint:(NSPoint)p black:(BOOL *)black {
+    const double w=self.bounds.size.width,h=self.bounds.size.height;
+    const double whiteW=w/14.0;
+    static const int boundaries[5]={1,2,4,5,6};
+    static const int semitones[5]={1,3,6,8,10};
+    // Black keys sit on top of the white rows, so they win the hit test.
+    for(int octave=1;octave>=0;--octave) {
+        for(int i=4;i>=0;--i) {
+            double cx=(octave*7+boundaries[i])*whiteW;
+            NSRect r=NSMakeRect(cx-whiteW*.31,0,whiteW*.62,h*.60);
+            if(NSPointInRect(p,r)) {
+                if(black)*black=YES;
+                return [self lowNote]+octave*12+semitones[i];
+            }
+        }
     }
+    static const int whiteSemitones[7]={0,2,4,5,7,9,11};
+    int index=std::clamp(int(std::floor(p.x/std::max(whiteW,.001))),0,13);
+    if(black)*black=NO;
+    return [self lowNote]+(index/7)*12+whiteSemitones[index%7];
+}
+-(void)drawRect:(NSRect)dirty {
+    const double w=self.bounds.size.width,h=self.bounds.size.height;
+    const double whiteW=w/14.0;
+    [[NSColor colorWithWhite:.08 alpha:1]setFill];NSRectFill(self.bounds);
+    static const int whiteSemitones[7]={0,2,4,5,7,9,11};
+    NSColor *pressed=[NSColor colorWithCalibratedRed:.95 green:.62 blue:.25 alpha:1];
+    for(int i=0;i<14;++i) {
+        int note=[self lowNote]+(i/7)*12+whiteSemitones[i%7];
+        NSRect r=NSMakeRect(i*whiteW+1,0,whiteW-2,h-3);
+        NSBezierPath *key=[NSBezierPath bezierPathWithRoundedRect:r xRadius:3 yRadius:3];
+        [(note==_active?pressed:[NSColor colorWithCalibratedWhite:.93 alpha:1]) setFill];[key fill];
+        [[NSColor colorWithWhite:.32 alpha:1]setStroke];key.lineWidth=1;[key stroke];
+        if(i%7==0)drawText(pitchName(note),NSMakeRect(r.origin.x+4,h-17,whiteW-6,13),
+                           [NSColor colorWithWhite:.38 alpha:1],9);
+    }
+    static const int boundaries[5]={1,2,4,5,6},semitones[5]={1,3,6,8,10};
+    for(int octave=0;octave<2;++octave) for(int i=0;i<5;++i) {
+        int note=[self lowNote]+octave*12+semitones[i];
+        double cx=(octave*7+boundaries[i])*whiteW;
+        NSRect r=NSMakeRect(cx-whiteW*.31,0,whiteW*.62,h*.60);
+        NSBezierPath *key=[NSBezierPath bezierPathWithRoundedRect:r xRadius:2 yRadius:2];
+        [(note==_active?pressed:[NSColor colorWithWhite:.12 alpha:1]) setFill];[key fill];
+        [[NSColor colorWithWhite:.30 alpha:1]setStroke];key.lineWidth=1;[key stroke];
+    }
+}
+-(void)press:(int)note {
+    if(note==_active)return;
+    if(_active && _send)_send(0x80,(unsigned char)_active,0);
+    _active=note;
+    if(_active && _send)_send(0x90,(unsigned char)_active,100);
+    self.needsDisplay=YES;
+}
+-(void)releaseNote {
+    if(_active && _send)_send(0x80,(unsigned char)_active,0);
+    _active=0;self.needsDisplay=YES;
+}
+-(void)mouseDown:(NSEvent *)event {
+    [self press:[self noteAtPoint:[self convertPoint:event.locationInWindow fromView:nil] black:nil]];
+}
+-(void)mouseDragged:(NSEvent *)event {
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    if(!NSPointInRect(p,self.bounds)){[self releaseNote];return;}
+    [self press:[self noteAtPoint:p black:nil]];
+}
+-(void)mouseUp:(NSEvent *)event {[self releaseNote];}
+-(void)viewDidMoveToWindow {if(!self.window)[self releaseNote];}
+@end
+
+// Categorised node palette. Rows are built from the same registry the canvas
+// context menu uses, so a new node type shows up in both places.
+@interface SNNodeLibrary : NSView <NSDraggingSource>
+@property(weak) SNInstanceEditor *editor;
+@end
+@implementation SNNodeLibrary {
+    NSMutableArray<NSDictionary *> *_rows;
+    NSInteger _hover, _pressed;
+    NSPoint _pressPoint;
+    NSEvent *_pressEvent;
+    BOOL _dragged;
+    double _contentHeight;
+}
+-(BOOL)isFlipped{return YES;}
+-(BOOL)isOpaque{return NO;}
+static NSColor *categoryColor(NSString *category) {
+    if([category isEqualToString:@"输入"])return [NSColor colorWithCalibratedRed:.40 green:.72 blue:.78 alpha:1];
+    if([category isEqualToString:@"处理"])return [NSColor colorWithCalibratedRed:.58 green:.52 blue:.86 alpha:1];
+    if([category isEqualToString:@"逻辑"])return [NSColor colorWithCalibratedRed:.90 green:.45 blue:.40 alpha:1];
+    if([category isEqualToString:@"输出"])return [NSColor colorWithCalibratedRed:.45 green:.72 blue:.52 alpha:1];
+    return [NSColor colorWithWhite:.55 alpha:1];
+}
+-(void)rebuild {
+    _rows=[NSMutableArray new];
+    double y=8;
+    for(NSString *category in @[@"输入",@"处理",@"逻辑",@"注释",@"输出"]) {
+        NSMutableArray *items=[NSMutableArray new];
+        for(NSArray *row in catalog()) if([row[2] isEqualToString:category]) [items addObject:row];
+        if(!items.count)continue;
+        [_rows addObject:@{@"kind":@"header",@"title":category,@"y":@(y),@"h":@20}];
+        y+=21;
+        for(NSArray *row in items) {
+            [_rows addObject:@{@"kind":@"item",@"title":row[1],@"type":row[0],@"category":category,@"y":@(y),@"h":@22}];
+            y+=22;
+        }
+        y+=9;
+    }
+    _contentHeight=y+4;
+    self.frame=NSMakeRect(0,0,self.bounds.size.width,_contentHeight);
+    self.needsDisplay=YES;
+}
+-(void)setFrameSize:(NSSize)size {
+    [super setFrameSize:NSMakeSize(size.width,_contentHeight>0?_contentHeight:size.height)];
+}
+-(NSInteger)rowAtPoint:(NSPoint)p {
+    for(NSUInteger i=0;i<_rows.count;++i) {
+        NSDictionary *row=_rows[i];
+        double y=[row[@"y"] doubleValue],h=[row[@"h"] doubleValue];
+        if(p.y>=y && p.y<y+h)return (NSInteger)i;
+    }
+    return -1;
+}
+-(void)drawRect:(NSRect)dirty {
+    for(NSUInteger i=0;i<_rows.count;++i) {
+        NSDictionary *row=_rows[i];
+        double y=[row[@"y"] doubleValue],h=[row[@"h"] doubleValue];
+        NSRect r=NSMakeRect(4,y,self.bounds.size.width-10,h);
+        if([row[@"kind"] isEqualToString:@"header"]) {
+            drawText(row[@"title"],NSMakeRect(8,y+3,r.size.width,14),[NSColor colorWithWhite:.45 alpha:1],10);
+            continue;
+        }
+        BOOL hot=((NSInteger)i==_hover);
+        if(hot){[[NSColor colorWithWhite:1 alpha:.07]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:5 yRadius:5]fill];}
+        [categoryColor(row[@"category"]) setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(12,y+h/2-3,6,6)]fill];
+        drawText(row[@"title"],NSMakeRect(26,y+3,r.size.width-30,16),[NSColor colorWithWhite:hot?.95:.82 alpha:1],11.5);
+    }
+}
+-(void)updateTrackingAreas {
+    for(NSTrackingArea *area in self.trackingAreas)[self removeTrackingArea:area];
+    [self addTrackingArea:[[NSTrackingArea alloc]initWithRect:self.bounds
+        options:(NSTrackingMouseMoved|NSTrackingMouseEnteredAndExited|NSTrackingActiveInKeyWindow|NSTrackingInVisibleRect)
+        owner:self userInfo:nil]];
+}
+-(void)mouseMoved:(NSEvent *)event {
+    NSInteger row=[self rowAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+    if(row==_hover)return;
+    _hover=row;self.needsDisplay=YES;
+}
+-(void)mouseExited:(NSEvent *)event {_hover=-1;self.needsDisplay=YES;}
+-(NSImage *)dragImageForTitle:(NSString *)title {
+    NSImage *image=[[NSImage alloc]initWithSize:NSMakeSize(168,26)];
+    [image lockFocus];
+    [[NSColor colorWithWhite:.20 alpha:.96]setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0,0,168,26) xRadius:6 yRadius:6]fill];
+    [title drawInRect:NSMakeRect(10,6,148,15) withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11.5],
+        NSForegroundColorAttributeName:NSColor.whiteColor}];
+    [image unlockFocus];
+    return image;
 }
 -(void)mouseDown:(NSEvent *)event {
     NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
-    _note=48+std::clamp(int(p.x/self.bounds.size.width*24),0,23);
-    if(_send)_send(0x90,_note,100);self.needsDisplay=YES;
+    _pressed=[self rowAtPoint:p];_pressPoint=p;_pressEvent=event;_dragged=NO;
 }
--(void)mouseUp:(NSEvent *)event {if(_note && _send)_send(0x80,_note,0);_note=0;self.needsDisplay=YES;}
+-(void)mouseDragged:(NSEvent *)event {
+    if(_pressed<0||_dragged)return;
+    NSPoint p=[self convertPoint:event.locationInWindow fromView:nil];
+    if(std::hypot(p.x-_pressPoint.x,p.y-_pressPoint.y)<4)return;
+    NSDictionary *row=_rows[_pressed];
+    if(![row[@"kind"] isEqualToString:@"item"])return;
+    _dragged=YES;
+    NSPasteboardItem *item=[NSPasteboardItem new];
+    [item setString:[row[@"type"] stringValue] forType:SNNodeTypePasteboard];
+    NSDraggingItem *dragging=[[NSDraggingItem alloc]initWithPasteboardWriter:item];
+    NSImage *image=[self dragImageForTitle:row[@"title"]];
+    [dragging setDraggingFrame:NSMakeRect(_pressPoint.x-14,_pressPoint.y-12,image.size.width,image.size.height) contents:image];
+    [self beginDraggingSessionWithItems:@[dragging] event:event source:self];
+}
+-(void)mouseUp:(NSEvent *)event {
+    if(_pressed<0||_dragged){_pressed=-1;return;}
+    NSDictionary *row=_rows[_pressed];
+    _pressed=-1;
+    if([row[@"kind"] isEqualToString:@"item"] && _editor)[_editor insertFromLibrary:[row[@"type"] intValue]];
+}
+-(NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+    return NSDragOperationCopy;
+}
 @end
 
 NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead inputRead,TRIInputWrite inputWrite,TRIStatus status,TRIAssetsRead assetsRead,TRIAssetsWrite assetsWrite) {
-    SNInstanceEditor *editor=[[SNInstanceEditor alloc]initWithFrame:NSMakeRect(0,0,1144,650)];
+    SNInstanceEditor *editor=[[SNInstanceEditor alloc]initWithFrame:NSMakeRect(0,0,1360,840)];
     editor.read=read;editor.write=write;editor.midi=midi;editor.inputRead=inputRead;editor.inputWrite=inputWrite;
     editor.assetsRead=assetsRead;editor.assetsWrite=assetsWrite;
     editor.history=[NSMutableArray new];editor.future=[NSMutableArray new];editor.zoom=1;editor.origin=NSMakePoint(20,20);
-    editor.selection=[NSMutableSet new];editor.selectedEdge=-1;editor.snap=NO;
+    editor.selection=[NSMutableSet new];editor.selectedEdge=-1;editor.snap=NO;editor.keyboardVisible=YES;
+    editor.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
     [editor button:@"打开" frame:NSMakeRect(12,10,65,28) action:@selector(open:) parent:editor];
     [editor button:@"保存" frame:NSMakeRect(82,10,65,28) action:@selector(save:) parent:editor];
     [editor button:@"撤销" frame:NSMakeRect(152,10,65,28) action:@selector(undo:) parent:editor];
@@ -1872,17 +2326,54 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.78    输入 → 处理 → 输出"];
-    heading.frame=NSMakeRect(930,15,200,25);[editor addSubview:heading];
-    SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(8,48,862,505)];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.79    输入 → 处理 → 输出"];
+    heading.frame=NSMakeRect(1040,15,220,25);heading.alignment=NSTextAlignmentRight;
+    editor.heading=heading;[editor addSubview:heading];
+
+    NSScrollView *libraryScroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(8,48,196,600)];
+    libraryScroll.hasVerticalScroller=YES;libraryScroll.drawsBackground=NO;
+    libraryScroll.borderType=NSNoBorder;libraryScroll.autohidesScrollers=NO;
+    SNNodeLibrary *library=[[SNNodeLibrary alloc]initWithFrame:NSMakeRect(0,0,194,600)];
+    library.editor=editor;editor.library=library;editor.libraryScroll=libraryScroll;
+    libraryScroll.documentView=library;[library rebuild];[editor addSubview:libraryScroll];
+
+    SNInstanceCanvas *canvas=[[SNInstanceCanvas alloc]initWithFrame:NSMakeRect(214,48,700,600)];
     canvas.editor=editor;editor.canvas=canvas;[editor addSubview:canvas];
-    NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(878,48,260,505)];
+
+    NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(1010,48,262,600)];
     scroll.hasVerticalScroller=YES;editor.inspectorScroll=scroll;
     editor.inspector=[[SNFlippedView alloc]initWithFrame:NSMakeRect(0,0,260,520)];
     scroll.documentView=editor.inspector;[editor addSubview:scroll];
-    editor.status=[NSTextField labelWithString:@"右键插入节点 · 拖入 MIDI/WAV/AIFF/MLMODEL · Shift 框选 · Cmd+C/V"];
-    editor.status.frame=NSMakeRect(12,558,1120,22);[editor addSubview:editor.status];
-    SNPiano *piano=[[SNPiano alloc]initWithFrame:NSMakeRect(12,590,1120,55)];piano.send=midi;[editor addSubview:piano];
+
+    editor.status=[NSTextField labelWithString:@"左侧节点库可点击或拖入画布 · 拖动框选 · Option 拖动平移 · ⌘滚轮缩放 · ⇧⌘G 编组"];
+    editor.status.font=[NSFont systemFontOfSize:11];
+    editor.status.textColor=[NSColor secondaryLabelColor];
+    editor.status.frame=NSMakeRect(12,640,1100,22);[editor addSubview:editor.status];
+
+    NSButton *keyboard=[NSButton checkboxWithTitle:@"钢琴键盘" target:editor action:@selector(toggleKeyboard:)];
+    [keyboard setButtonType:NSButtonTypePushOnPushOff];
+    keyboard.state=NSControlStateValueOn;keyboard.font=[NSFont systemFontOfSize:11];
+    keyboard.frame=NSMakeRect(1160,640,104,24);
+    editor.keyboardToggle=keyboard;[editor addSubview:keyboard];
+
+    NSButton *zoomOut=[NSButton buttonWithTitle:@"−" target:editor action:@selector(zoomOut:)];
+    zoomOut.frame=NSMakeRect(224,620,26,22);zoomOut.bezelStyle=NSBezelStyleRounded;
+    NSButton *zoomIn=[NSButton buttonWithTitle:@"+" target:editor action:@selector(zoomIn:)];
+    zoomIn.frame=NSMakeRect(286,620,26,22);zoomIn.bezelStyle=NSBezelStyleRounded;
+    NSTextField *zoomLabel=[NSTextField labelWithString:@"100%"];
+    zoomLabel.frame=NSMakeRect(252,621,34,18);zoomLabel.alignment=NSTextAlignmentCenter;
+    zoomLabel.font=[NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium];
+    zoomLabel.textColor=[NSColor secondaryLabelColor];
+    NSButton *zoomFit=[NSButton buttonWithTitle:@"适配" target:editor action:@selector(fit:)];
+    zoomFit.frame=NSMakeRect(316,620,44,22);zoomFit.bezelStyle=NSBezelStyleRounded;
+    zoomFit.font=[NSFont systemFontOfSize:10];
+    editor.zoomLabel=zoomLabel;
+    editor.zoomControls=@[zoomOut,zoomLabel,zoomIn,zoomFit];
+    for(NSView *control in editor.zoomControls)[editor addSubview:control];
+
+    SNPiano *piano=[[SNPiano alloc]initWithFrame:NSMakeRect(8,690,1264,84)];piano.send=midi;
+    editor.piano=piano;[editor addSubview:piano];
+
     NSDictionary *assets=assetsRead?assetsRead():nil;
     if(assets[@"graph"])editor.document=copyJSON(assets[@"graph"]);
     else {
@@ -1890,6 +2381,8 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
         editor.document=copyJSON([editor migrate:legacy] ?: @{@"version":@3,@"nodes":@[],@"edges":@[]});
         if(assets)[editor commit:nil];
     }
+    [editor layoutUI];
+    [editor updateZoomLabel];
     [editor fit:nil];[editor inspect];
     __weak SNInstanceEditor *weak=editor;
     editor.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer*){[weak tick];}];
