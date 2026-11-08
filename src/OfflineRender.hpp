@@ -98,18 +98,18 @@ inline bool renderStems(GraphSpec graph,double seconds,double rate,
         std::vector<Stem>& stems,std::string& why) {
     stems.clear();
     std::vector<size_t> outputs;
-    for(size_t i=0;i<graph.nodes.size();++i) {
-        int type=graph.nodes[i].type;
-        if(type==HardwareOutputNode||type==DawOutputNode||type==OutputNode)
+    // Output detection is a declared capability, not a type list: a new sink
+    // node participates in stem export without touching this file.
+    for(size_t i=0;i<graph.nodes.size();++i)
+        if(nodeHas(nodeCapabilities(graph.nodes[i].type),CapOutputSink))
             outputs.push_back(i);
-    }
     if(outputs.empty()) {why="工作流没有音频输出节点。";return false;}
     if(outputs.size()>64) {why="音频输出节点过多。";return false;}
     for(size_t index:outputs) {
         GraphSpec copy=graph;
         for(size_t i=0;i<copy.nodes.size();++i) {
             GraphNode& node=copy.nodes[i];
-            const bool output=node.type==HardwareOutputNode||node.type==DawOutputNode||node.type==OutputNode;
+            const bool output=nodeHas(nodeCapabilities(node.type),CapOutputSink);
             if(i==index) {
                 if(node.type==DawOutputNode) node.type=HardwareOutputNode;
             } else if(output) {

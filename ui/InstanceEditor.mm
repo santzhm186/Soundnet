@@ -18,10 +18,60 @@ NSArray *catalog() {
     return rows;
 }
 NSString *title(int type) { return @(tri::nodeTitle(type)); }
+// v4 documents identify a node by `nodeKey` and a parameter by its stable key.
+// The helpers below are the only place that knows about the wire shape, so an
+// older numeric document still opens and is rewritten canonically on save.
+int typeOf(NSDictionary *node) {
+    id key=node[@"nodeKey"];
+    if([key isKindOfClass:NSString.class]) {
+        const int resolved=tri::nodeTypeForKey([key UTF8String]);
+        if(resolved)return resolved;
+    }
+    return [node[@"type"] intValue];
+}
+NSString *paramKeyName(int pid) {
+    return [NSString stringWithUTF8String:tri::paramKey(pid)];
+}
+NSNumber *paramValue(NSDictionary *node,int pid) {
+    NSDictionary *parameters=node[@"parameters"];
+    id value=parameters[paramKeyName(pid)];
+    if(!value)value=parameters[[@(pid) stringValue]];
+    return value ?: @(tri::graphParamInfo(pid).def);
+}
+void setParam(NSMutableDictionary *node,int pid,double value) {
+    NSMutableDictionary *parameters=node[@"parameters"];
+    if(![parameters isKindOfClass:NSMutableDictionary.class]) {
+        parameters=[NSMutableDictionary new];
+        node[@"parameters"]=parameters;
+    }
+    parameters[paramKeyName(pid)]=@(value);
+    [parameters removeObjectForKey:[@(pid) stringValue]];
+}
+int inputPortOf(NSDictionary *node,NSDictionary *edge) {
+    id port=edge[@"port"];
+    if([port isKindOfClass:NSString.class])return tri::nodePortIndex(typeOf(node),true,[port UTF8String]);
+    return port ? [port intValue] : 0;
+}
+int outputPortOf(NSDictionary *node,NSDictionary *edge) {
+    id port=edge[@"sourcePort"];
+    if([port isKindOfClass:NSString.class])return tri::nodePortIndex(typeOf(node),false,[port UTF8String]);
+    return port ? [port intValue] : 0;
+}
+NSMutableDictionary *makeEdge(uint64_t source,uint64_t target,int targetType,int targetPort,int sourceType,int sourcePort) {
+    NSMutableDictionary *edge=[NSMutableDictionary new];
+    edge[@"source"]=@(source);edge[@"target"]=@(target);
+    const char* targetId=tri::nodePortId(targetType,true,size_t(targetPort));
+    const char* sourceId=tri::nodePortId(sourceType,false,size_t(sourcePort));
+    if(targetId&&*targetId)edge[@"port"]=[NSString stringWithUTF8String:targetId];
+    if(sourceId&&*sourceId)edge[@"sourcePort"]=[NSString stringWithUTF8String:sourceId];
+    return edge;
+}
 static NSString *nodeLabel(NSDictionary *node) {
     NSString *name=node[@"name"];
     if([name isKindOfClass:NSString.class] && name.length)return name;
-    return title([node[@"type"] intValue]);
+    // A node written by a newer build keeps its place on the canvas.
+    if(typeOf(node)==0)return @"缺失节点";
+    return title(typeOf(node));
 }
 static NSArray<NSString*> *paramOptions(int p) {
     if(p==tri::Wave1 || p==tri::Wave2 || p==tri::Wave3)
@@ -56,7 +106,7 @@ constexpr VoiceControls voiceControls[]={
     {tri::ArrLowMin,tri::ArrLowMax,tri::ArrLowTexture}
 };
 NSNumber *voiceValue(NSDictionary *node,int pid) {
-    return node[@"parameters"][[@(pid) stringValue]] ?: @(tri::graphParamInfo(pid).def);
+    return paramValue(node,pid);
 }
 NSString *pitchName(int note) {
     static NSString *const names[]={@"C",@"C♯",@"D",@"E♭",@"E",@"F",@"F♯",@"G",@"A♭",@"A",@"B♭",@"B"};
@@ -510,15 +560,27 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)message:(NSString *)text {_status.stringValue=text ?: @"";}
 -(void)commit:(NSDictionary *)previous {
     tri::GraphSpec graph;NSString *why=nil;
-    if(!triassets::decodeGraph(_document,graph,&why,false) || !_assetsWrite || !_assetsWrite(@{@"graph":_document})) {
-        _document=copyJSON(previous) ?: [@{@"version":@3,@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];[self message:why ?: @"宿主无法应用节点图。"];
+    std::vector<tri::Diagnostic> diagnostics;
+    if(!triassets::decodeGraph(_document,graph,&why,false,true,&diagnostics) ||
+       !_assetsWrite || !_assetsWrite(@{@"graph":_document})) {
+        _document=copyJSON(previous) ?: [@{@"version":@4,@"projectId":@"local",@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];[self message:why ?: @"宿主无法应用节点图。"];
     } else {
         if(previous && ![previous isEqual:_document]) {
             [_history addObject:copyJSON(previous)];[_future removeAllObjects];
             while(_history.count>64)[_history removeObjectAtIndex:0];
         }
         [self autosave];
-        [self message:[NSString stringWithFormat:@"%lu 个独立节点 · %lu 条连接",(unsigned long)[_document[@"nodes"] count],(unsigned long)[_document[@"edges"] count]]];
+        NSString *status=[NSString stringWithFormat:@"%lu 个独立节点 · %lu 条连接",
+                          (unsigned long)[_document[@"nodes"] count],(unsigned long)[_document[@"edges"] count]];
+        if(!diagnostics.empty()) {
+            size_t fatal=0;
+            for(const auto& diagnostic:diagnostics) if(diagnostic.fatal)++fatal;
+            status=[status stringByAppendingFormat:@" · %lu 处提示：%@",(unsigned long)diagnostics.size(),
+                    [NSString stringWithUTF8String:diagnostics.front().message.c_str()]];
+            if(fatal)_status.textColor=NSColor.systemOrangeColor;
+            else _status.textColor=NSColor.secondaryLabelColor;
+        }
+        [self message:status];
     }
     [self pruneSelection];
     _canvas.needsDisplay=YES;
@@ -545,11 +607,12 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(!data){[self message:@"没有可恢复的自动保存"];return;}
     id object=[NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
     tri::GraphSpec graph;NSString *why=nil;
-    if(![object isKindOfClass:NSDictionary.class] || !triassets::decodeGraph(object,graph,&why)) {
+    NSDictionary *canonical=[object isKindOfClass:NSDictionary.class]?triassets::canonicalGraph(object,&why):nil;
+    if(!canonical || !triassets::decodeGraph(canonical,graph,&why,true,true)) {
         [self message:why ?: @"自动保存文件无效"];return;
     }
     NSDictionary *previous=copyJSON(_document);
-    _document=copyJSON(object);
+    _document=copyJSON(canonical);
     [_selection removeAllObjects];_selected=0;_selectedEdge=-1;
     [self commit:previous];[self inspect];[self fit:nil];
     [self message:@"已恢复自动保存"];
@@ -568,10 +631,15 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSButton *b=[NSButton buttonWithTitle:text target:self action:action];b.frame=frame;[parent addSubview:b];return b;
 }
 -(NSMutableDictionary *)makeNode:(int)type at:(NSPoint)point id:(uint64_t)uid {
+    const tri::NodeSpec *spec=tri::nodeSpec(type);
     NSMutableDictionary *parameters=[NSMutableDictionary new];
-    for(int p:controls(type))parameters[[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
-    if(type==tri::Osc1Node)parameters[[@(tri::Level1) stringValue]]=@.66;
-    NSMutableDictionary *node=[@{@"id":@(uid),@"type":@(type),@"x":@(point.x),@"y":@(point.y),@"parameters":parameters} mutableCopy];
+    for(int p:controls(type))parameters[paramKeyName(p)]=@(tri::graphParamInfo(p).def);
+    if(type==tri::Osc1Node)parameters[paramKeyName(tri::Level1)]=@.66;
+    NSMutableDictionary *node=[@{@"id":@(uid),
+        @"nodeKey":[NSString stringWithUTF8String:spec?spec->key:"soundnet.comment"],
+        @"nodeVersion":@(spec?spec->nodeVersion:1),
+        @"stateVersion":@(spec?spec->stateVersion:1),
+        @"x":@(point.x),@"y":@(point.y),@"parameters":parameters} mutableCopy];
     [_document[@"nodes"] addObject:node];
     return node;
 }
@@ -612,11 +680,10 @@ std::vector<ParamPreset> presetsFor(int type) {
         NSMutableDictionary *node=[self makeNode:type at:NSMakePoint(point.x+offset*30,point.y+offset*30) id:uid];
         node[@"asset"]=asset;
         if(type==tri::ClipNode) {
-            NSMutableDictionary *params=node[@"parameters"];
-            params[[@(tri::ClipRun) stringValue]]=@1;
-            params[[@(tri::ClipLoop) stringValue]]=@1;
+            setParam(node,tri::ClipRun,1);
+            setParam(node,tri::ClipLoop,1);
         } else if(type==tri::AudioClipNode) {
-            node[@"parameters"][[@(tri::AudioClipLoop) stringValue]]=@1;
+            setParam(node,tri::AudioClipLoop,1);
         }
         last=uid; added=YES; ++offset;
     }
@@ -761,7 +828,6 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(!needle.length)return;
     NSDictionary *found=nil;
     for(NSDictionary *node in _document[@"nodes"]) {
-        int type=[node[@"type"] intValue];
         NSString *labelText=[[NSString stringWithFormat:@"%@ %@",nodeLabel(node),node[@"id"]] lowercaseString];
         if([[node[@"id"] stringValue] isEqualToString:needle] || [labelText containsString:needle]){found=node;break;}
     }
@@ -770,7 +836,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSRect r=nodeRect(found);
     _origin=NSMakePoint(_canvas.bounds.size.width/2-(NSMidX(r))*_zoom,_canvas.bounds.size.height/2-(NSMidY(r))*_zoom);
     _canvas.needsDisplay=YES;
-    [self message:[NSString stringWithFormat:@"已定位 %@ #%@",title([found[@"type"] intValue]),found[@"id"]]];
+    [self message:[NSString stringWithFormat:@"已定位 %@ #%@",title(typeOf(found)),found[@"id"]]];
 }
 -(void)undo:(id)sender {[self historyFrom:_history to:_future];}
 -(void)redo:(id)sender {[self historyFrom:_future to:_history];}
@@ -791,7 +857,7 @@ std::vector<ParamPreset> presetsFor(int type) {
         value<info.min || value>info.max) { [self message:@"参数超出范围。"];return; }
     if(tri::discreteParam(p))value=std::round(value);
     NSDictionary *previous=copyJSON(_document);
-    node[@"parameters"][[@(p) stringValue]]=@(value);
+    setParam(node,p,value);
     NSSlider *slider=[_inspector viewWithTag:p+100000];
     if([slider isKindOfClass:[NSSlider class]])slider.doubleValue=value;
     [self commit:previous];[self.window makeFirstResponder:_canvas];
@@ -806,14 +872,13 @@ std::vector<ParamPreset> presetsFor(int type) {
     if([field isKindOfClass:[NSTextField class]])field.stringValue=[NSString stringWithFormat:@"%.3g",value];
     if(tri::discreteParam(p))value=std::round(value);
     NSDictionary *previous=copyJSON(_document);
-    node[@"parameters"][[@(p) stringValue]]=@(value);
+    setParam(node,p,value);
     [self commit:previous];
 }
 -(void)trigger:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     NSDictionary *previous=copyJSON(_document);
-    NSString *key=[@(tri::TriggerPulse) stringValue];
-    node[@"parameters"][key]=@(([node[@"parameters"][key] intValue]+1)%1000000);
+    setParam(node,tri::TriggerPulse,([paramValue(node,tri::TriggerPulse) intValue]+1)%1000000);
     [self commit:previous];
 }
 -(void)bypassChanged:(NSButton *)sender {
@@ -825,11 +890,10 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)triggerAll:(int)type label:(NSString*)label {
     NSMutableArray *ids=[NSMutableArray new];
-    for(NSDictionary *node in _document[@"nodes"])if([node[@"type"] intValue]==type)[ids addObject:node];
+    for(NSDictionary *node in _document[@"nodes"])if(typeOf(node)==type)[ids addObject:node];
     if(!ids.count){_status.stringValue=[NSString stringWithFormat:@"图中没有%@",label];return;}
     for(NSMutableDictionary *node in ids) {
-        float pulse=[[node objectForKey:@"parameters"] objectForKey:@(tri::TriggerPulse)] ? [[node[@"parameters"] objectForKey:@(tri::TriggerPulse)] floatValue] : 0;
-        node[@"parameters"][@(tri::TriggerPulse)]=@(fmodf(pulse+1,1e6f));
+        setParam(node,tri::TriggerPulse,fmodf([paramValue(node,tri::TriggerPulse) floatValue]+1,1e6f));
     }
     [self commit:nil];
     _status.stringValue=[NSString stringWithFormat:@"已触发 %lu 个%@",(unsigned long)ids.count,label];
@@ -839,7 +903,8 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)panic:(id)sender {
     NSDictionary *previous=copyJSON(_document);
     for(NSMutableDictionary *node in _document[@"nodes"])
-        for(int p:{tri::ClipRun,tri::ProgressRun,tri::ChordRun})if(node[@"parameters"][[@(p) stringValue]])node[@"parameters"][[@(p) stringValue]]=@0;
+        for(int p:{tri::ClipRun,tri::ProgressRun,tri::ChordRun})
+            if(node[@"parameters"][paramKeyName(p)])setParam(node,p,0);
     [self commit:previous];
     if(_midi)for(int ch=0;ch<16;++ch)_midi(0xb0|ch,120,0);
 }
@@ -847,14 +912,15 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)harmony:(NSTextField *)field {
     auto parsed=tri::parseProgression(field.stringValue.UTF8String);
     NSMutableDictionary *node=[self node:_selected];if(!parsed || !node){[self message:@"请输入和弦名称，如 Cmaj7 | Am7 | Dm7 | G7。"];return;}
-    NSDictionary *previous=copyJSON(_document);NSMutableDictionary *p=node[@"parameters"];
-    if([node[@"type"] intValue]==tri::ChordNode) {
-        p[[@(tri::ChordRoot) stringValue]]=@((*parsed)[0].root);p[[@(tri::ChordQuality) stringValue]]=@((*parsed)[0].quality);
+    NSDictionary *previous=copyJSON(_document);
+    if(typeOf(node)==tri::ChordNode) {
+        setParam(node,tri::ChordRoot,(*parsed)[0].root);
+        setParam(node,tri::ChordQuality,(*parsed)[0].quality);
     } else {
-        p[[@(tri::ProgressLength) stringValue]]=@(parsed->size());
+        setParam(node,tri::ProgressLength,parsed->size());
         for(size_t i=0;i<parsed->size();++i){
-            p[[@(tri::ProgressRoot1+2*i) stringValue]]=@((*parsed)[i].root);
-            p[[@(tri::ProgressQuality1+2*i) stringValue]]=@((*parsed)[i].quality);
+            setParam(node,tri::ProgressRoot1+2*i,(*parsed)[i].root);
+            setParam(node,tri::ProgressQuality1+2*i,(*parsed)[i].quality);
         }
     }
     [self commit:previous];[self inspect];
@@ -979,7 +1045,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     }];
     double bpm=120;
     for(NSDictionary *node in _document[@"nodes"]) {
-        if([node[@"type"] intValue]!=tri::ClockNode)continue;
+        if(typeOf(node)!=tri::ClockNode)continue;
         NSDictionary *parameters=node[@"parameters"];
         NSNumber *value=parameters ? parameters[@(tri::ClockBPM)] : nil;
         if([value isKindOfClass:NSNumber.class] && value.doubleValue>1)bpm=value.doubleValue;
@@ -1071,7 +1137,7 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)import:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     uint64_t uid=_selected;
-    int nodeType=[node[@"type"] intValue];
+    int nodeType=typeOf(node);
     BOOL clip=nodeType==tri::ClipNode,audio=nodeType==tri::SamplerNode || nodeType==tri::AudioClipNode;
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.canChooseDirectories=!clip && !audio;
     NSArray *extensions=clip?@[@"mid",@"midi"]:audio?@[@"wav",@"aif",@"aiff",@"aifc",@"mp3",@"m4a",@"aac",@"caf",@"flac"]:
@@ -1103,7 +1169,7 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)rangeChanged:(NSTextField *)field {
     NSMutableDictionary *node=[self node:_selected];
-    if([node[@"type"] intValue]!=tri::ArrangerNode)return;
+    if(typeOf(node)!=tri::ArrangerNode)return;
     int pid=(int)field.tag;
     for(auto voice:voiceControls) {
         if(pid!=voice.lower && pid!=voice.upper)continue;
@@ -1118,15 +1184,15 @@ std::vector<ParamPreset> presetsFor(int type) {
             return;
         }
         NSDictionary *previous=copyJSON(_document);
-        node[@"parameters"][[@(pid) stringValue]]=@(value);
+        setParam(node,pid,value);
         [self commit:previous];[self inspect];return;
     }
 }
 -(void)textureChanged:(NSPopUpButton *)popup {
     NSMutableDictionary *node=[self node:_selected];
-    if([node[@"type"] intValue]!=tri::ArrangerNode)return;
+    if(typeOf(node)!=tri::ArrangerNode)return;
     NSDictionary *previous=copyJSON(_document);
-    node[@"parameters"][[@(popup.tag) stringValue]]=@(popup.indexOfSelectedItem);
+    setParam(node,(int)popup.tag,popup.indexOfSelectedItem);
     [self commit:previous];[self inspect];
 }
 -(double)arrangerInspector:(NSDictionary *)node y:(double)y {
@@ -1175,7 +1241,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     }
     NSMutableDictionary *node=[self node:_selected];
     if(!node){[self label:@"右键画布插入节点。拖动输出端口接到输入端口。" y:12];return;}
-    int type=[node[@"type"] intValue];
+    int type=typeOf(node);
     [self label:[NSString stringWithFormat:@"%@  #%llu",nodeLabel(node),_selected] y:12];
     NSTextField *nameField=[[NSTextField alloc]initWithFrame:NSMakeRect(12,32,225,24)];
     nameField.stringValue=node[@"name"] ?: @"";nameField.placeholderString=@"自定义名称（可选）";
@@ -1207,7 +1273,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     else for(int p:controls(type)) {
         [self label:parameterName(p) y:y];
         const auto& info=tri::graphParamInfo(p);
-        id val=node[@"parameters"][[@(p) stringValue]] ?: @(info.def);
+        id val=paramValue(node,p);
         NSArray<NSString*> *options=paramOptions(p);
         if(options) {
             NSPopUpButton *popup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(142,y,96,26) pullsDown:NO];
@@ -1295,7 +1361,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     _inspector.frame=NSMakeRect(0,0,260,std::max(520.,y+20));
 }
 -(void)preset:(id)sender {
-    NSTextField *field=[NSTextField new];field.stringValue=[[self node:_selected][@"type"] intValue]==tri::ChordNode?@"Cmaj7":@"Dm7 | G7 | Cmaj7";
+    NSTextField *field=[NSTextField new];field.stringValue=typeOf([self node:_selected])==tri::ChordNode?@"Cmaj7":@"Dm7 | G7 | Cmaj7";
     [self harmony:field];
 }
 -(void)exportMidi:(id)sender {
@@ -1440,20 +1506,20 @@ std::vector<ParamPreset> presetsFor(int type) {
 
 -(void)applyPreset:(NSPopUpButton *)popup {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
-    auto presets=presetsFor([node[@"type"] intValue]);
+    auto presets=presetsFor(typeOf(node));
     NSInteger index=popup.indexOfSelectedItem-1;
     if(index<0 || index>=(NSInteger)presets.size())return;
     NSDictionary *previous=copyJSON(_document);
     for(const auto& item:presets[index].values)
-        node[@"parameters"][[@(item.first) stringValue]]=@(item.second);
+        setParam(node,item.first,item.second);
     [self commit:previous];[self inspect];
     [self message:[NSString stringWithFormat:@"已应用预设：%s",presets[index].name]];
 }
 -(void)resetParams:(id)sender {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     NSDictionary *previous=copyJSON(_document);
-    for(int p:controls([node[@"type"] intValue]))
-        node[@"parameters"][[@(p) stringValue]]=@(tri::graphParamInfo(p).def);
+    for(int p:controls(typeOf(node)))
+        setParam(node,p,tri::graphParamInfo(p).def);
     [self commit:previous];[self inspect];[self message:@"已恢复默认参数。"];
 }
 -(void)save:(id)sender {
@@ -1521,7 +1587,8 @@ std::vector<ParamPreset> presetsFor(int type) {
         int slot=pid>=tri::RouteMix1&&pid<=tri::RouteMix4?pid-tri::RouteMix1:tri::clockPort(pid)&&(target==tri::ArpNode||target==tri::VelocityNode)?1:0;
         [edges addObject:[@{@"source":@(source),@"target":@(target),@"port":@(slot)}mutableCopy]];
     }
-    return @{@"version":@3,@"nodes":nodes,@"edges":edges};
+    NSDictionary *legacy=@{@"version":@3,@"nodes":nodes,@"edges":edges};
+    return triassets::canonicalGraph(legacy,&why);
 }
 -(NSPoint)world:(NSPoint)p{return NSMakePoint((p.x-_origin.x)/_zoom,(p.y-_origin.y)/_zoom);}
 -(void)setFrameSize:(NSSize)size {[super setFrameSize:size];[self layoutUI];}
@@ -1733,12 +1800,17 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)blank:(id)sender {
     NSDictionary *previous=copyJSON(_document);
-    _document=[@{@"version":@3,@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];
+    _document=[@{@"version":@4,@"projectId":@"local",@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];
     _selected=0;[self commit:previous];[self inspect];
 }
 -(void)tick {
     NSDictionary *remote=_assetsRead ? _assetsRead()[@"graph"] : nil;
     if(remote && ![remote isEqual:_document] && !_moving && !_wireSource) {
+        NSString *reason=nil;
+        NSDictionary *canonical=triassets::canonicalGraph(remote,&reason);
+        if(!canonical)return;
+        remote=canonical;
+        if([remote isEqual:_document])return;
         _document=copyJSON(remote);[self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
     }
 }
@@ -1746,7 +1818,7 @@ std::vector<ParamPreset> presetsFor(int type) {
 
 namespace {
 NSRect nodeRect(NSDictionary *node) {
-    int type=[node[@"type"] intValue];
+    int type=typeOf(node);
     int count=std::max((int)tri::inputTypes(type).size(),tri::outputCount(type));
     return NSMakeRect([node[@"x"] doubleValue],[node[@"y"] doubleValue],172,std::max(88,48+count*24));
 }
@@ -1762,7 +1834,7 @@ double curveY(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
 }
 bool nearEdge(NSDictionary *edge,NSDictionary *a,NSDictionary *b,NSPoint point,double tolerance) {
     if(!a || !b)return false;
-    int port=[edge[@"port"] intValue],out=[edge[@"sourcePort"] intValue];
+    int port=inputPortOf(b,edge),out=outputPortOf(a,edge);
     NSPoint from=jack(a,true,out),to=jack(b,false,port);
     NSPoint c1=NSMakePoint(from.x+70,from.y),c2=NSMakePoint(to.x-70,to.y);
     for(int i=0;i<=32;++i) {
@@ -1845,22 +1917,28 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     NSInteger edgeIndex=0;
     for(NSDictionary *edge in editor.document[@"edges"]) {
         NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
-        int port=[edge[@"port"] intValue],out=[edge[@"sourcePort"] intValue];
+        int port=inputPortOf(b,edge),out=outputPortOf(a,edge);
         NSPoint from=jack(a,true,out),to=jack(b,false,port);
         NSBezierPath *path=[NSBezierPath new];[path moveToPoint:from];
         [path curveToPoint:to controlPoint1:NSMakePoint(from.x+70,from.y) controlPoint2:NSMakePoint(to.x-70,to.y)];
         BOOL chosen=(edgeIndex==editor.selectedEdge);
-        [chosen?NSColor.whiteColor:signalColor(tri::outputType([a[@"type"] intValue],out)) setStroke];
+        [chosen?NSColor.whiteColor:signalColor(tri::outputType(typeOf(a),out)) setStroke];
         path.lineWidth=chosen?3:2;[path stroke];
         ++edgeIndex;
     }
     for(NSDictionary *node in editor.document[@"nodes"]) {
-        int type=[node[@"type"] intValue];NSRect r=nodeRect(node);BOOL bypassed=[node[@"bypass"] boolValue];
+        int type=typeOf(node);NSRect r=nodeRect(node);BOOL bypassed=[node[@"bypass"] boolValue];
         [[NSColor colorWithWhite:bypassed?.13:.18 alpha:1]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
         [[editor isSelected:[node[@"id"] unsignedLongLongValue]]?NSColor.whiteColor:[NSColor colorWithWhite:.4 alpha:1] setStroke];
         [[NSBezierPath bezierPathWithRect:r]stroke];
         drawText([NSString stringWithFormat:@"%@ #%@",nodeLabel(node),node[@"id"]],NSMakeRect(r.origin.x+9,r.origin.y+8,160,28),NSColor.whiteColor);
         if(bypassed)drawText(@"旁通",NSMakeRect(NSMaxX(r)-46,r.origin.y+8,40,20),NSColor.systemOrangeColor,10);
+        if(type==0) {
+            [[NSColor systemRedColor]setStroke];
+            NSBezierPath *warn=[NSBezierPath bezierPathWithRect:r];[warn stroke];
+            drawText(node[@"nodeKey"] ?: @"未知类型",NSMakeRect(r.origin.x+9,r.origin.y+30,150,18),
+                     NSColor.systemRedColor,10);
+        }
         auto inputs=tri::inputTypes(type);
         for(int p=0;p<(int)inputs.size();++p) {
             NSPoint at=jack(node,false,p);[signalColor(inputs[p])setFill];
@@ -1925,7 +2003,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     editor.lastPoint=view;editor.dragStart=copyJSON(editor.document);
     BOOL additive=(event.modifierFlags&(NSEventModifierFlagShift|NSEventModifierFlagCommand))!=0;
     for(NSDictionary *node in [editor.document[@"nodes"] reverseObjectEnumerator]) {
-        int type=[node[@"type"] intValue];
+        int type=typeOf(node);
         int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
             NSPoint pos=jack(node,true,p);
@@ -2040,16 +2118,19 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     if(editor.wireSource) {
         NSPoint point=[editor world:[self convertPoint:event.locationInWindow fromView:nil]];
         for(NSDictionary *node in editor.document[@"nodes"]) {
-            auto inputs=tri::inputTypes([node[@"type"] intValue]);
+            int targetType=typeOf(node);
+            auto inputs=tri::inputTypes(targetType);
             for(int p=0;p<(int)inputs.size();++p) {
                 NSPoint pos=jack(node,false,p);
                 if(std::hypot(pos.x-point.x,pos.y-point.y)>14/editor.zoom)continue;
                 uint64_t uid=[node[@"id"] unsignedLongLongValue];
                 NSIndexSet *existing=[editor.document[@"edges"] indexesOfObjectsPassingTest:^BOOL(NSDictionary *e,NSUInteger,BOOL*){
-                    return [e[@"target"] unsignedLongLongValue]==uid && [e[@"port"] intValue]==p;
+                    return [e[@"target"] unsignedLongLongValue]==uid && inputPortOf(node,e)==p;
                 }];
                 if(inputs[p]!=tri::Signal::Trigger)[editor.document[@"edges"] removeObjectsAtIndexes:existing];
-                [editor.document[@"edges"] addObject:[@{@"source":@(editor.wireSource),@"target":@(uid),@"port":@(p),@"sourcePort":@(editor.wirePort)}mutableCopy]];
+                NSDictionary *source=[editor node:editor.wireSource];
+                [editor.document[@"edges"] addObject:makeEdge(editor.wireSource,uid,targetType,p,
+                    source?typeOf(source):0,editor.wirePort)];
                 [editor commit:editor.dragStart];editor.wireSource=0;editor.selectedEdge=-1;
                 self.needsDisplay=YES;return;
             }
@@ -2331,7 +2412,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [snapButton setButtonType:NSButtonTypePushOnPushOff];
     [editor button:@"导出" frame:NSMakeRect(782,10,65,28) action:@selector(exportWav:) parent:editor];
     [editor button:@"排列" frame:NSMakeRect(852,10,65,28) action:@selector(autoLayout:) parent:editor];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.79    输入 → 处理 → 输出"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.80    输入 → 处理 → 输出"];
     heading.frame=NSMakeRect(1040,15,220,25);heading.alignment=NSTextAlignmentRight;
     editor.heading=heading;editor.headingText=heading.stringValue;[editor addSubview:heading];
 
@@ -2383,7 +2464,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     if(assets[@"graph"])editor.document=copyJSON(assets[@"graph"]);
     else {
         NSDictionary *legacy=ternaryfile::snapshot(read,assetsRead);
-        editor.document=copyJSON([editor migrate:legacy] ?: @{@"version":@3,@"nodes":@[],@"edges":@[]});
+        editor.document=copyJSON([editor migrate:legacy] ?: @{@"version":@4,@"projectId":@"local",@"nodes":@[],@"edges":@[]});
         if(assets)[editor commit:nil];
     }
     [editor layoutUI];

@@ -70,8 +70,9 @@ int main() {
         sampler.tag = tri::SamplerNode;
         [editor insert:sampler];
         assert([assets[@"graph"][@"nodes"] count]==27);
+        NSString *samplerKey=[NSString stringWithUTF8String:tri::nodeKey(tri::SamplerNode)];
         NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
-            [NSPredicate predicateWithFormat:@"type == %d", tri::SamplerNode]] firstObject];
+            [NSPredicate predicateWithFormat:@"nodeKey == %@", samplerKey]] firstObject];
         assert(samplerNode && [samplerNode[@"parameters"] count]==10);
         std::vector<float> wave(4800), waveR(4800);
         for (size_t i=0; i<wave.size(); ++i) wave[i]=waveR[i]=0.2f*std::sin(2*M_PI*440*i/48000.0);
@@ -82,11 +83,12 @@ int main() {
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(100, 100) clipMode:NO]);
         assert([assets[@"graph"][@"nodes"] count]==28);
         NSDictionary *samplerDrop = [assets[@"graph"][@"nodes"] lastObject];
-        assert(samplerDrop && [samplerDrop[@"type"] intValue]==tri::SamplerNode && samplerDrop[@"asset"][@"name"]);
+        assert(samplerDrop && [samplerDrop[@"nodeKey"] isEqual:samplerKey] && samplerDrop[@"asset"][@"name"]);
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(140, 140) clipMode:YES]);
         assert([assets[@"graph"][@"nodes"] count]==29);
         NSDictionary *clipDrop = [assets[@"graph"][@"nodes"] lastObject];
-        assert(clipDrop && [clipDrop[@"type"] intValue]==tri::AudioClipNode && clipDrop[@"asset"][@"name"]);
+        NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::AudioClipNode)];
+        assert(clipDrop && [clipDrop[@"nodeKey"] isEqual:clipKey] && clipDrop[@"asset"][@"name"]);
         std::remove(dropPath.c_str());
 
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
@@ -101,7 +103,7 @@ int main() {
             styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         window.releasedWhenClosed = NO;
         window.contentView = editor;
-        [editor setValue:example forKey:@"document"];
+        [editor setValue:triassets::canonicalGraph(example,nil) forKey:@"document"];
         [editor setValue:@1 forKey:@"selected"];
         [editor commit:nil];
         [editor fit:nil];

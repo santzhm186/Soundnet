@@ -1,0 +1,178 @@
+// Project format v4: stable node keys, stable parameter keys, stable port IDs,
+// and a one-way migration from the v3 documents that shipped before it.
+#import <Foundation/Foundation.h>
+#include "../src/WorkflowAssets.h"
+#include "../src/GraphSpec.hpp"
+#include <cassert>
+#include <cstdio>
+
+static NSDictionary *v4Document() {
+    return @{
+        @"version":@4, @"projectId":@"test-project",
+        @"nodes":@[
+            @{@"id":@1,@"nodeKey":@"soundnet.midi-input",@"x":@0,@"y":@0,@"parameters":@{}},
+            @{@"id":@2,@"nodeKey":@"soundnet.voice-arranger",@"x":@200,@"y":@0,
+              @"parameters":@{@"high.minimum":@72,@"high.maximum":@95,@"high.texture":@0,
+                              @"middle.minimum":@55,@"middle.maximum":@71,@"middle.texture":@1,
+                              @"low.minimum":@36,@"low.maximum":@54,@"low.texture":@2}},
+            @{@"id":@3,@"nodeKey":@"soundnet.oscillator",@"x":@420,@"y":@0,
+              @"parameters":@{@"osc1.wave":@2,@"osc1.level":@0.6}},
+            @{@"id":@4,@"nodeKey":@"soundnet.audio-output",@"x":@640,@"y":@0,
+              @"parameters":@{@"output.master":@0.8}}
+        ],
+        @"edges":@[
+            @{@"source":@1,@"sourcePort":@"notes",@"target":@2,@"port":@"notes"},
+            @{@"source":@2,@"sourcePort":@"middle",@"target":@3,@"port":@"notes"},
+            @{@"source":@3,@"sourcePort":@"audio",@"target":@4,@"port":@"audio"}
+        ]
+    };
+}
+
+static NSDictionary *v3Document() {
+    return @{
+        @"version":@3,
+        @"nodes":@[
+            @{@"id":@1,@"type":@(tri::MidiNode),@"x":@0,@"y":@0,@"parameters":@{}},
+            @{@"id":@2,@"type":@(tri::ArrangerNode),@"x":@200,@"y":@0,
+              @"parameters":@{@"1024":@72,@"1025":@95,@"1026":@0,@"1027":@55,@"1028":@71,
+                              @"1029":@1,@"1030":@36,@"1031":@54,@"1032":@2,
+                              @"24":@0.8}},   // Master never belonged to the arranger.
+            @{@"id":@3,@"type":@(tri::Osc1Node),@"x":@420,@"y":@0,
+              @"parameters":@{@"0":@2,@"1":@0.6}},
+            @{@"id":@4,@"type":@(tri::HardwareOutputNode),@"x":@640,@"y":@0,
+              @"parameters":@{@"24":@0.8}}
+        ],
+        @"edges":@[
+            @{@"source":@1,@"target":@2,@"port":@0},
+            @{@"source":@2,@"target":@3,@"port":@0,@"sourcePort":@1},
+            @{@"source":@3,@"target":@4,@"port":@0}
+        ]
+    };
+}
+
+int main() {
+    // 1. A canonical v4 document decodes with named ports and named parameters.
+    {
+        tri::GraphSpec graph;
+        NSString *why=nil;
+        assert(triassets::decodeGraph(v4Document(),graph,&why));
+        assert(graph.projectId=="test-project");
+        assert(graph.nodes.size()==4);
+        assert(graph.nodes[1].type==tri::ArrangerNode);
+        assert(graph.nodes[1].key=="soundnet.voice-arranger");
+        assert(graph.nodes[1].parameters.at(tri::ArrHighMin)==72);
+        assert(graph.nodes[2].parameters.at(tri::Wave1)==2);
+        assert(graph.edges.size()==3);
+        assert(graph.edges[1].port==0&&graph.edges[1].sourcePort==1);
+        assert(graph.edges[1].sourcePortId=="middle");
+        assert(graph.edges[1].portId=="notes");
+    }
+    // 2. v3 migrates to the same graph and then to a canonical document.
+    {
+        tri::GraphSpec legacy;
+        NSString *why=nil;
+        assert(triassets::decodeGraph(v3Document(),legacy,&why));
+        assert(legacy.nodes.size()==4);
+        assert(legacy.nodes[1].parameters.count(tri::Master)==0);   // out of scope, dropped
+        NSDictionary *canonical=triassets::canonicalGraph(v3Document(),&why);
+        assert(canonical&&[canonical[@"version"] isEqual:@4]);
+        NSArray *nodes=canonical[@"nodes"];
+        assert([[nodes[1] objectForKey:@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
+        assert([nodes[1][@"parameters"] objectForKey:@"high.minimum"]);
+        assert([[canonical[@"edges"][1] objectForKey:@"sourcePort"] isEqual:@"middle"]);
+        tri::GraphSpec migrated;
+        assert(triassets::decodeGraph(canonical,migrated,&why));
+        assert(migrated.nodes[1].parameters.at(tri::ArrHighMin)==72);
+        assert(migrated.edges[1].sourcePort==1);
+        assert(migrated.edges[1].port==0);
+    }
+    // 3. An unknown node type survives a round trip with its edges and assets.
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        [nodes addObject:@{@"id":@9,@"nodeKey":@"soundnet.future-renderer",@"x":@800,@"y":@0,
+                           @"parameters":@{@"whatever":@1}}];
+        NSMutableArray *edges=[document[@"edges"] mutableCopy];
+        [edges addObject:@{@"source":@3,@"sourcePort":@"audio",@"target":@9,@"port":@"in"}];
+        document[@"nodes"]=nodes;document[@"edges"]=edges;
+        tri::GraphSpec graph;
+        NSString *why=nil;
+        assert(triassets::decodeGraph(document,graph,&why,false,true));
+        assert(graph.nodes.size()==5);
+        assert(graph.nodes[4].unavailable);
+        assert(graph.nodes[4].key=="soundnet.future-renderer");
+        assert(graph.edges.size()==4);
+        // Strict callers (export, host publication) refuse it.
+        assert(!triassets::decodeGraph(document,graph,&why,false,false));
+        NSDictionary *canonical=triassets::canonicalGraph(document,&why);
+        assert([canonical[@"nodes"] count]==5);
+        assert([[canonical[@"nodes"][4] objectForKey:@"nodeKey"] isEqual:@"soundnet.future-renderer"]);
+        assert([[canonical[@"edges"][3] objectForKey:@"port"] isEqual:@"in"]);
+    }
+    // 4. v4 is strict: unknown names, wrong-node parameters and unsupported
+    //    bypass must not be guessed into something plausible.
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *edges=[document[@"edges"] mutableCopy];
+        edges[0]=@{@"source":@1,@"sourcePort":@"notes",@"target":@2,@"port":@"nonsense"};
+        document[@"edges"]=edges;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));
+        assert(why.length>0);
+    }
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *arranger=[nodes[1] mutableCopy];
+        arranger[@"parameters"]=@{@"filter.cutoff":@100};    // belongs to the filter node
+        nodes[1]=arranger;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));
+    }
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *osc=[nodes[2] mutableCopy];
+        osc[@"bypass"]=@YES;                                // oscillators have no bypass
+        nodes[2]=osc;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));
+    }
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *arranger=[nodes[1] mutableCopy];
+        arranger[@"parameters"]=@{@"high.minimum":@90,@"high.maximum":@70};
+        nodes[1]=arranger;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));   // low voice above high voice
+    }
+    // 5. A discrete parameter refuses fractions in both formats.
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *osc=[nodes[2] mutableCopy];
+        osc[@"parameters"]=@{@"osc1.wave":@1.5};
+        nodes[2]=osc;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));
+    }
+    // 6. A node written by a newer behaviour version is editable but not
+    //    exportable: the editor keeps it, strict callers refuse to pretend.
+    {
+        NSMutableDictionary *document=[v4Document() mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *osc=[nodes[2] mutableCopy];
+        osc[@"nodeVersion"]=@99;
+        nodes[2]=osc;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString *why=nil;
+        std::vector<tri::Diagnostic> diagnostics;
+        assert(triassets::decodeGraph(document,graph,&why,false,true,&diagnostics));
+        bool reported=false;
+        for(const auto& diagnostic:diagnostics)
+            if(diagnostic.message.find("行为版本")!=std::string::npos)reported=true;
+        assert(reported);
+        assert(!triassets::decodeGraph(document,graph,&why,false,false));
+    }
+    puts("PASS: v4 documents, v3 migration, unknown nodes, parameter scope and port names");
+}

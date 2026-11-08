@@ -9,7 +9,7 @@ mkdir -p "$build"
 cd "$root"
 
 cxx=(xcrun clang++ -std=c++17 -O2 -mmacosx-version-min=13.0)
-tests=(ArrangerTests AudioFileTests AudioNodesTests ConcurrencyTests EngineTests RegistryTests InstanceGraphTests MusicNodesTests OfflineRenderTests RecorderTests SoakTests WorkflowSourcesTests)
+tests=(ArrangerTests AudioFileTests AudioNodesTests ConcurrencyTests EngineTests RegistryTests NodeSpecTests InstanceGraphTests MusicNodesTests OfflineRenderTests RecorderTests SoakTests WorkflowSourcesTests)
 for name in "${tests[@]}"; do
   echo "== compile $name"
   "${cxx[@]}" "tests/$name.cpp" -o "$build/$name"
@@ -25,6 +25,10 @@ echo "== compile AssetImportTests"
 echo "== compile AssetStoreTests"
 "${cxx[@]}" -fobjc-arc -I. tests/AssetStoreTests.mm src/WorkflowAssets.mm \
   -framework Foundation -framework CoreML -framework AVFoundation -o "$build/AssetStoreTests"
+
+echo "== compile WorkflowFormatTests"
+"${cxx[@]}" -fobjc-arc -I. tests/WorkflowFormatTests.mm src/WorkflowAssets.mm \
+  -framework Foundation -framework CoreML -framework AVFoundation -o "$build/WorkflowFormatTests"
 
 echo "== compile ClipEditorTests"
 "${cxx[@]}" -fobjc-arc -I. tests/ClipEditorTests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
@@ -45,6 +49,9 @@ echo "== run AssetImportTests"
 
 echo "== run AssetStoreTests"
 "$build/AssetStoreTests"
+
+echo "== run WorkflowFormatTests"
+"$build/WorkflowFormatTests"
 
 echo "== run ClipEditorTests"
 "$build/ClipEditorTests"

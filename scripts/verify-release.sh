@@ -33,7 +33,7 @@ echo "== self-test"
 echo "== example graphs"
 count=0
 for example in "$root"/examples/*.json; do
-    if ! grep -Eq '"version"[[:space:]]*:[[:space:]]*3' "$example"; then
+    if ! grep -Eq '"version"[[:space:]]*:[[:space:]]*[34]' "$example"; then
         echo "   skip legacy format: $(basename "$example")"
         continue
     fi
@@ -55,6 +55,11 @@ mkdir -p "$out/stems"
 "$app/Contents/MacOS/Soundnet" --export-stems "$root/examples/audio-clip-compressor.json" "$out/stems" 1 48000 24 >/dev/null
 stem_count=$(find "$out/stems" -name 'stem-*.wav' | wc -l | tr -d ' ')
 test "$stem_count" -ge 1
+echo "== format migration equivalence"
+"$app/Contents/MacOS/Soundnet" --export "$root/examples/three-voice-arrangement.json" "$out/migrate-v3.wav" 2 >/dev/null
+"$app/Contents/MacOS/Soundnet" --export "$root/examples/three-voice-arrangement.v4.json" "$out/migrate-v4.wav" 2 >/dev/null
+cmp "$out/migrate-v3.wav" "$out/migrate-v4.wav"
+echo "== v3 and v4 render bit-identical"
 echo "== $count example graphs, MIDI/stem/format exports passed"
 if command -v auval >/dev/null 2>&1; then
     echo "== installed Audio Unit validation (may target an older install)"

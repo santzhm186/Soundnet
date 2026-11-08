@@ -172,70 +172,274 @@ bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NS
     return true;
 }
 
-bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, bool decodeAssets) {
-    if(![document isKindOfClass:NSDictionary.class] || ![document[@"version"] isEqual:@3] ||
-       ![document[@"nodes"] isKindOfClass:NSArray.class] || ![document[@"edges"] isKindOfClass:NSArray.class])
-        return fail(why,@"请选择版本 3 的 Soundnet 工作流。");
+namespace {
+// Resolve a document node to a registered kernel type. v4 identifies a node by
+// `nodeKey`; v3 identified it by a numeric `type`. Unknown keys are tolerated for
+// the editor (so a newer project still opens) but never for export.
+bool documentNodeType(NSDictionary *obj,bool allowUnknown,int& type,bool& unavailable,NSString **why) {
+    id key=obj[@"nodeKey"],legacy=obj[@"type"];
+    if([key isKindOfClass:NSString.class] && [key length] && [key length]<=160) {
+        const int resolved=tri::nodeTypeForKey([key UTF8String]);
+        if(resolved) {
+            const tri::NodeSpec *spec=tri::nodeSpec(resolved);
+            if(spec && !spec->instantiable)return fail(why,@"该节点类型不能出现在工程中。");
+            type=resolved;return true;
+        }
+        if(allowUnknown) {type=0;unavailable=true;return true;}
+        return fail(why,[NSString stringWithFormat:@"未知的节点类型：%@",key]);
+    }
+    if(numeric(legacy)) {
+        const double value=[legacy doubleValue];
+        if(value!=std::trunc(value)||value<1||value>1.0e9)return fail(why,@"节点类型编号无效。");
+        const tri::NodeSpec *spec=tri::nodeSpec(int(value));
+        if(!spec||!spec->instantiable)return fail(why,@"节点类型编号无效或不可实例化。");
+        type=int(value);return true;
+    }
+    return fail(why,@"节点缺少 nodeKey。");
+}
+// A v4 parameter key is the stable alias; a v3 key is the numeric ID. Both are
+// accepted so migration never depends on field order.
+int documentParamID(NSString *key,int type,bool strict,NSString **why) {
+    const int byKey=tri::paramIdForKey(key.UTF8String);
+    if(byKey>=0)return byKey;
+    NSScanner *scan=[NSScanner scannerWithString:key];
+    int pid=0;
+    if([scan scanInt:&pid] && scan.isAtEnd) {
+        if(!strict && tri::nodeAcceptsParam(type,pid))return pid;
+        if(strict && tri::paramSpec(pid))return pid;
+    }
+    if(strict) {
+        fail(why,[NSString stringWithFormat:@"未知的参数名称：%@",key]);
+        return -1;
+    }
+    return -1;
+}
+}
+
+bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, bool decodeAssets,
+                 bool allowUnknownNodes, std::vector<tri::Diagnostic>* diagnostics) {
+    if(![document isKindOfClass:NSDictionary.class] || ![document[@"nodes"] isKindOfClass:NSArray.class] ||
+       ![document[@"edges"] isKindOfClass:NSArray.class])
+        return fail(why,@"请选择 Soundnet 工作流文件。");
+    const int version=[document[@"version"] intValue];
+    if(!numeric(document[@"version"]) || (version!=3 && version!=4))
+        return fail(why,@"请选择版本 3 或 4 的 Soundnet 工作流。");
+    const bool strict=version>=4;
     auto integer=[](id v,double min,double max) {
         return numeric(v) && std::isfinite([v doubleValue]) && [v doubleValue]>=min &&
             [v doubleValue]<=max && std::trunc([v doubleValue])==[v doubleValue];
     };
     tri::GraphSpec next;
-    if([document[@"nodes"] count]>tri::maxGraphNodes) { fail(why,@"节点数量超过上限。"); return false; }
-    if([document[@"edges"] count]>tri::maxGraphEdges) { fail(why,@"连线数量超过上限。"); return false; }
+    std::vector<tri::Diagnostic> early;
+    if([document[@"projectId"] isKindOfClass:NSString.class])
+        next.projectId=[document[@"projectId"] UTF8String] ?: "";
+    if([document[@"nodes"] count]>tri::maxGraphNodes)return fail(why,@"节点数量超过上限。");
+    if([document[@"edges"] count]>tri::maxGraphEdges)return fail(why,@"连线数量超过上限。");
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
-        if(!integer(obj[@"id"],1,9007199254740991.) || !integer(obj[@"type"],1,tri::CommentNode) ||
-           !numeric(obj[@"x"]) || !numeric(obj[@"y"]) || !std::isfinite([obj[@"x"] doubleValue]) ||
-           !std::isfinite([obj[@"y"] doubleValue]) || ![obj[@"parameters"] isKindOfClass:NSDictionary.class])
-            return fail(why,@"节点的实例 ID、类型或坐标无效。");
+        if(!integer(obj[@"id"],1,9007199254740991.) || !numeric(obj[@"x"]) || !numeric(obj[@"y"]) ||
+           !std::isfinite([obj[@"x"] doubleValue]) || !std::isfinite([obj[@"y"] doubleValue]))
+            return fail(why,@"节点的实例 ID 或坐标无效。");
+        id parameters=obj[@"parameters"] ?: @{};
+        if(![parameters isKindOfClass:NSDictionary.class])return fail(why,@"节点参数应为对象。");
         tri::GraphNode node;
-        node.id=[obj[@"id"] unsignedLongLongValue];node.type=[obj[@"type"] intValue];
+        node.id=[obj[@"id"] unsignedLongLongValue];
         node.x=[obj[@"x"] floatValue];node.y=[obj[@"y"] floatValue];
+        bool unavailable=false;
+        if(!documentNodeType(obj,allowUnknownNodes,node.type,unavailable,why))return false;
+        node.unavailable=unavailable;
+        if(unavailable) {
+            node.key=[obj[@"nodeKey"] UTF8String] ?: "";
+            node.unavailableReason="缺失节点类型："+node.key;
+            next.nodes.push_back(std::move(node));
+            continue;
+        }
+        const tri::NodeSpec *spec=tri::nodeSpec(node.type);
+        node.key=spec->key;
+        if(numeric(obj[@"nodeVersion"]))node.nodeVersion=uint16_t([obj[@"nodeVersion"] intValue]);
+        if(node.nodeVersion==0)node.nodeVersion=spec->nodeVersion;
+        if(node.nodeVersion>spec->nodeVersion) {
+            // Behaviour written by a newer build: the parameters may mean
+            // something else. Editing can keep it, export cannot pretend.
+            const std::string message=std::string("节点 ")+spec->key+" 的行为版本 "+
+                std::to_string(node.nodeVersion)+" 高于当前支持的 "+std::to_string(spec->nodeVersion);
+            // `allowUnknownNodes` is the editor's forward-compatibility switch;
+            // strict callers (export, host publication) must not guess.
+            if(!allowUnknownNodes)return fail(why,[NSString stringWithUTF8String:message.c_str()]);
+            early.push_back({node.id,message,false});
+        }
         if(obj[@"bypass"]) {
             if(![obj[@"bypass"] isKindOfClass:NSNumber.class])return fail(why,@"节点旁通值无效。");
             node.bypass=[obj[@"bypass"] boolValue];
+            if(node.bypass && !tri::nodeHas(spec->capabilities,tri::CapBypassable))
+                return fail(why,[NSString stringWithFormat:@"节点不支持旁通：%s",spec->title]);
         }
-        for(id key in obj[@"parameters"]) {
-            if(![key isKindOfClass:NSString.class])return fail(why,@"参数标识无效。");
-            NSScanner *scan=[NSScanner scannerWithString:key];int pid=0;
-            id value=obj[@"parameters"][key];
-            if(![scan scanInt:&pid] || !scan.isAtEnd || !tri::validGraphParam(node.type,pid) ||
-                !numeric(value))return fail(why,@"参数标识或值无效。");
-            if(tri::arrangerParam(pid)) {
-                const auto& spec=tri::graphParamInfo(pid);
-                if(!integer(value,spec.min,spec.max))return fail(why,@"声部音域和织体须使用有效范围内的整数。");
+        for(id rawKey in parameters) {
+            if(![rawKey isKindOfClass:NSString.class])return fail(why,@"参数标识无效。");
+            id value=parameters[rawKey];
+            const int pid=documentParamID(rawKey,node.type,strict,why);
+            if(pid<0) {
+                if(strict)return false;
+                continue;   // v3 carried parameters that the node never declared.
             }
-            node.parameters[pid]=[value floatValue];
+            const tri::ParamSpec *param=tri::nodeParamSpec(node.type,pid);
+            if(!param) {
+                if(strict)return fail(why,[NSString stringWithFormat:@"参数不属于该节点：%@",rawKey]);
+                continue;
+            }
+            if(!numeric(value))return fail(why,@"参数值应为数字。");
+            const double number=[value doubleValue];
+            const tri::ParamInfo& info=*param->info;
+            if(!std::isfinite(number)||number<info.min||number>info.max)
+                return fail(why,[NSString stringWithFormat:@"参数超出范围：%@",rawKey]);
+            if(param->discrete && number!=std::trunc(number))
+                return fail(why,[NSString stringWithFormat:@"参数必须为整数：%@",rawKey]);
+            node.parameters[pid]=float(number);
         }
         if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
             return fail(why,@"同一声部的最低音不能高于最高音。");
         if(obj[@"asset"]) {
-            NSString *kind=node.type==tri::ClipNode?@"clip":node.type==tri::ModelNode?@"model":
-                node.type==tri::SamplerNode?@"audio":node.type==tri::AudioClipNode?@"audio":nil;
+            const char* kind=spec->assetKind;
             if(!kind)return fail(why,@"该节点类型不能包含素材。");
             if(decodeAssets) {
-                if(node.type==tri::SamplerNode || node.type==tri::AudioClipNode) {
+                if(std::string(kind)=="audio") {
                     std::shared_ptr<tri::AudioSample> audio;
                     if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
                     node.sample=std::move(audio);
-                } else if(!decode(@{kind:obj[@"asset"]},node.clip,node.model,why)) {
+                } else if(!decode(@{[NSString stringWithUTF8String:kind]:obj[@"asset"]},
+                                   node.clip,node.model,why)) {
                     return fail(why,@"节点素材无效。");
                 }
             }
         }
+        if(!obj[@"asset"] && spec->assetKind && decodeAssets)
+            early.push_back({node.id,"素材缺失，节点输出保持静音。",false});
         next.nodes.push_back(std::move(node));
     }
     for(id edge in document[@"edges"]) {
         if(![edge isKindOfClass:NSDictionary.class] || !integer(edge[@"source"],1,9007199254740991.) ||
-            !integer(edge[@"target"],1,9007199254740991.) || !integer(edge[@"port"],0,3))return fail(why,@"连线格式无效。");
-        if(edge[@"sourcePort"] && !integer(edge[@"sourcePort"],0,INT_MAX))return fail(why,@"输出端口无效。");
-        next.edges.push_back({[edge[@"source"] unsignedLongLongValue],[edge[@"target"] unsignedLongLongValue],[edge[@"port"] intValue],[edge[@"sourcePort"] intValue]});
+            !integer(edge[@"target"],1,9007199254740991.))return fail(why,@"连线格式无效。");
+        tri::GraphEdge parsed;
+        parsed.source=[edge[@"source"] unsignedLongLongValue];
+        parsed.target=[edge[@"target"] unsignedLongLongValue];
+        // Ports may be named (v4) or positional (v3). A named port is resolved
+        // through the descriptor; an unknown name is an error, never a silent 0.
+        const tri::GraphNode* target=nullptr;
+        const tri::GraphNode* source=nullptr;
+        for(const auto& node:next.nodes) {
+            if(node.id==parsed.target)target=&node;
+            if(node.id==parsed.source)source=&node;
+        }
+        if(!target||!source)return fail(why,@"连线引用了不存在的节点。");
+        if(target->unavailable||source->unavailable) {
+            if([edge[@"port"] isKindOfClass:NSString.class])parsed.portId=[edge[@"port"] UTF8String] ?: "";
+            if([edge[@"sourcePort"] isKindOfClass:NSString.class])parsed.sourcePortId=[edge[@"sourcePort"] UTF8String] ?: "";
+            next.edges.push_back(std::move(parsed));
+            continue;
+        }
+        id port=edge[@"port"],sourcePort=edge[@"sourcePort"];
+        if([port isKindOfClass:NSString.class]) {
+            parsed.portId=[port UTF8String] ?: "";
+            parsed.port=tri::nodePortIndex(target->type,true,parsed.portId.c_str());
+            if(parsed.port<0)return fail(why,[NSString stringWithFormat:@"未知的输入端口：%@",port]);
+        } else if(numeric(port)) {
+            parsed.port=[port intValue];
+            if(parsed.port<0||parsed.port>=tri::nodeInputCount(target->type))
+                return fail(why,@"连线指向不存在的输入端口。");
+        } else {
+            parsed.port=0;
+        }
+        if([sourcePort isKindOfClass:NSString.class]) {
+            parsed.sourcePortId=[sourcePort UTF8String] ?: "";
+            parsed.sourcePort=tri::nodePortIndex(source->type,false,parsed.sourcePortId.c_str());
+            if(parsed.sourcePort<0)return fail(why,[NSString stringWithFormat:@"未知的输出端口：%@",sourcePort]);
+        } else if(numeric(sourcePort)) {
+            parsed.sourcePort=[sourcePort intValue];
+            if(parsed.sourcePort<0||parsed.sourcePort>=tri::nodeOutputCount(source->type))
+                return fail(why,@"连线引用了不存在的输出端口。");
+        } else {
+            parsed.sourcePort=0;
+        }
+        next.edges.push_back(std::move(parsed));
     }
-    std::vector<size_t> order;std::string reason;
-    if(!tri::graphOrder(next,order,&reason))
+    tri::CompiledGraph plan;
+    std::string reason;
+    if(!tri::compileGraph(next,plan,&reason,allowUnknownNodes))
         return fail(why,reason.empty()?@"工作流图无效。":[NSString stringWithUTF8String:reason.c_str()]);
-    graph=std::move(next);return true;
+    if(!early.empty())plan.diagnostics.insert(plan.diagnostics.begin(),early.begin(),early.end());
+    if(diagnostics)*diagnostics=plan.diagnostics;
+    graph=std::move(next);
+    return true;
+}
+
+NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
+    if(![document isKindOfClass:NSDictionary.class]) {
+        fail(why,@"工作流应为对象。");
+        return nil;
+    }
+    if([document[@"version"] intValue]==4) {
+        // Already canonical; still validate so a corrupt v4 file never reaches
+        // the engine through the editor.
+        tri::GraphSpec graph;
+        if(!decodeGraph(document,graph,why,false,true))return nil;
+        return document;
+    }
+    tri::GraphSpec graph;
+    if(!decodeGraph(document,graph,why,false,true))return nil;
+    NSMutableArray *nodes=[NSMutableArray arrayWithCapacity:graph.nodes.size()];
+    for(const auto& node:graph.nodes) {
+        NSMutableDictionary *row=[NSMutableDictionary new];
+        row[@"id"]=@(node.id);
+        if(node.unavailable) {
+            row[@"nodeKey"]=[NSString stringWithUTF8String:node.key.c_str()];
+            row[@"unavailable"]=@YES;
+        } else {
+            const tri::NodeSpec *spec=tri::nodeSpec(node.type);
+            row[@"nodeKey"]=[NSString stringWithUTF8String:spec->key];
+            row[@"nodeVersion"]=@(node.nodeVersion);
+            row[@"stateVersion"]=@(spec->stateVersion);
+            NSMutableDictionary *parameters=[NSMutableDictionary new];
+            for(const auto& [pid,value]:node.parameters)
+                parameters[[NSString stringWithUTF8String:tri::paramKey(pid)]]=@(value);
+            row[@"parameters"]=parameters;
+        }
+        row[@"x"]=@(node.x);row[@"y"]=@(node.y);
+        if(node.bypass)row[@"bypass"]=@YES;
+        // Re-attach the original asset payload untouched.
+        for(id original in document[@"nodes"]) {
+            if([original isKindOfClass:NSDictionary.class] &&
+               [original[@"id"] unsignedLongLongValue]==node.id && original[@"asset"])
+                row[@"asset"]=original[@"asset"];
+        }
+        [nodes addObject:row];
+    }
+    NSMutableArray *edges=[NSMutableArray arrayWithCapacity:graph.edges.size()];
+    for(const auto& edge:graph.edges) {
+        NSMutableDictionary *row=[NSMutableDictionary new];
+        row[@"source"]=@(edge.source);row[@"target"]=@(edge.target);
+        const tri::GraphNode* source=nullptr;
+        for(const auto& node:graph.nodes)if(node.id==edge.source)source=&node;
+        std::string sourcePort=edge.sourcePortId;
+        if(sourcePort.empty()&&source&&!source->unavailable)
+            sourcePort=tri::nodePortId(source->type,false,size_t(edge.sourcePort));
+        std::string port=edge.portId;
+        if(port.empty()) {
+            for(const auto& node:graph.nodes)
+                if(node.id==edge.target&&!node.unavailable)
+                    port=tri::nodePortId(node.type,true,size_t(edge.port));
+        }
+        if(!sourcePort.empty())row[@"sourcePort"]=[NSString stringWithUTF8String:sourcePort.c_str()];
+        if(!port.empty())row[@"port"]=[NSString stringWithUTF8String:port.c_str()];
+        [edges addObject:row];
+    }
+    NSMutableDictionary *result=[NSMutableDictionary new];
+    result[@"version"]=@4;
+    result[@"projectId"]=document[@"projectId"] ?: @"local";
+    result[@"nodes"]=nodes;
+    result[@"edges"]=edges;
+    if([document[@"groups"] isKindOfClass:NSArray.class])result[@"groups"]=document[@"groups"];
+    if([document[@"settings"] isKindOfClass:NSDictionary.class])result[@"settings"]=document[@"settings"];
+    return result;
 }
 
 bool validate(NSDictionary *assets, NSString **why) {

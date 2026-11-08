@@ -340,10 +340,14 @@ static int runValidate(const char *input) {
             return 1;
         }
         tri::GraphSpec graph;NSString *why=nil;
-        if(!triassets::decodeGraph(object,graph,&why)) {
+        std::vector<tri::Diagnostic> diagnostics;
+        if(!triassets::decodeGraph(object,graph,&why,false,false,&diagnostics)) {
             std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
         }
+        for(const auto& diagnostic:diagnostics)
+            std::fprintf(stderr,"Soundnet: warning: node %llu: %s\n",
+                         (unsigned long long)diagnostic.node,diagnostic.message.c_str());
         std::printf("OK: %zu nodes, %zu edges\n",graph.nodes.size(),graph.edges.size());
     }
     return 0;

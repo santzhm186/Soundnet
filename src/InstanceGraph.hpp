@@ -141,7 +141,12 @@ class InstanceGraph {
             if(triggerDispatch)triggerDispatch(triggerContext,this,event);
         }
         NotePort& notePort(int index) {
-            return index==0 ? static_cast<NotePort&>(*this) : arranger->otherVoices[index-1];
+            // Only multi-output nodes (the arranger) own extra note ports. A
+            // stale index must not read past the array.
+            if(index<=0 || !arranger) return static_cast<NotePort&>(*this);
+            const size_t slot=size_t(index-1);
+            if(slot>=arranger->otherVoices.size()) return static_cast<NotePort&>(*this);
+            return arranger->otherVoices[slot];
         }
         Runtime(const GraphNode& node,double rate,uint64_t gen):type(node.type),generation(gen) {
             if(type==ArrangerNode) {
@@ -251,8 +256,13 @@ class InstanceGraph {
     };
     struct Entry {
         std::shared_ptr<Runtime> state;
-        std::array<int,4> inputs{{-1,-1,-1,-1}};
-        int noteSourcePort=0;
+        const NodeSpec* spec=nullptr;
+        // One link per declared input port; the port order and meaning come
+        // from NodeSpec, never from a fixed array position.
+        std::vector<PortLink> inputs;
+        std::vector<std::vector<int>> triggerInputs;
+        PortLink mainNote{-1,-1},clock{-1,-1},sidechain{-1,-1};
+        bool outputSink=false;
         std::array<ArrangerVoice,3> voices;
         float gain=1,bpm=112,wait=1;
         int pulse=0,count=4;
@@ -275,8 +285,9 @@ class InstanceGraph {
         bool delaySync=false;int delayDivision=1;
         bool tremoloSync=false;int tremoloDivision=0;
         int echoRepeats=3,echoPitch=0;
-        std::array<bool,4> triggerPorts{};
-        std::vector<int> triggerInputs;
+        int inputSource(int port) const {
+            return port>=0&&size_t(port)<inputs.size()?inputs[size_t(port)].node:-1;
+        }
     };
     struct Plan { std::vector<Entry> entries; std::vector<std::shared_ptr<Runtime>> retired; };
     RealtimeAsset<Plan> plans;
@@ -299,38 +310,82 @@ class InstanceGraph {
     const Plan* renderingPlan=nullptr;
     Runtime* renderingNode=nullptr;
     uint64_t samplePosition=0;
+    // Fixed capacity: the audio thread must never allocate. Overflow is counted
+    // and reported through the same path as an event-queue overflow.
+    // Ring FIFO with a head/tail cursor: pushes during processing land after
+    // the frame boundary read this block, so nothing is copied and no event is
+    // ever delivered twice.
+    struct DeferredTrigger { size_t index=0; Trigger event{}; };
+    std::array<DeferredTrigger,eventCapacity> deferredSlots{};
+    size_t deferredHead=0,deferredTail=0;
+    uint32_t deferredOverflow=0;
+    static constexpr size_t dispatchDepthLimit=64;
+    std::array<Runtime*,256> dispatchStack{};
+    size_t dispatchSize=0;
+    static PortLink linkByRole(const PlanNode& plan,Signal signal,PortRole role) {
+        if(!plan.spec)return PortLink{};
+        for(size_t p=0;p<plan.spec->inputs.size();++p)
+            if(plan.spec->inputs[p].signal==signal && plan.spec->inputs[p].role==role)
+                return plan.inputs[p];
+        return PortLink{};
+    }
+    // Feedback queue exhausted. Dropping the backlog is preferable to growing
+    // it on the audio thread; the node event counters still report the loss and
+    // sounding notes keep their own release path.
+    void clearDeferredEvents() {
+        deferredHead=deferredTail=0;
+        ++deferredOverflow;
+    }
+    void deliver(Runtime& target,const Entry& entry,Trigger event) {
+        if(target.type==StartNode || target.type==StopNode)
+            target.trigger({event.frame,target.type==StartNode});
+        else if(target.type==RandomNode) {
+            if(target.random && target.random->next01()<entry.randomChance)
+                dispatch(&target,event);
+        } else if(target.type==CountNode) {
+            if(++target.count>=entry.count){target.count=0;target.trigger(event);}
+        } else if(target.type==WaitNode) {
+            if(target.waitingSize<eventCapacity)
+                target.waiting[target.waitingSize++]={samplePosition+uint64_t(event.frame)+uint64_t(entry.wait*rate),event.start};
+            else target.overflow=true;
+        } else if(target.type==MetronomeNode) {
+            auto& state=*target.metronome;
+            if(event.start){state.running=true;state.phase=0;state.beat=0;state.envelope=1;state.clickPhase=0;}
+            else state.running=false;
+        } else if(target.type==AudioClipNode) {
+            auto& clip=*target.audioClip;
+            if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
+            else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
+        } else if(&target==renderingNode) {
+            int p=target.type==ClipNode?ClipRun:target.type==ProgressNode?ProgressRun:ArpOn;
+            target.engine->set(p,event.start?1:0);
+        } else if(target.controlSize<eventCapacity)target.controls[target.controlSize++]=event;
+        else target.overflow=true;
+    }
+    // Causal dispatch. Trigger-emitting nodes (start/stop/count/wait/random) call
+    // back into dispatch through their own Trigger, which carries the converted
+    // polarity. The stack only bounds that chain: a re-entered node receives the
+    // event but does not recurse, and pathological chains stop instead of
+    // overflowing the audio thread.
     void dispatch(Runtime* source,Trigger event) {
-        if(!renderingPlan)return;
-        for(const auto& entry:renderingPlan->entries) {
-            auto& target=*entry.state;
-            for(int input:entry.triggerInputs) {
-                if(renderingPlan->entries[input].state.get()!=source)continue;
-                if(target.type==StartNode || target.type==StopNode)
-                    target.trigger({event.frame,target.type==StartNode});
-                else if(target.type==RandomNode) {
-                    if(target.random && target.random->next01()<entry.randomChance)
-                        dispatch(&target,event);
-                } else if(target.type==CountNode) {
-                    if(++target.count>=entry.count){target.count=0;target.trigger(event);}
-                } else if(target.type==WaitNode) {
-                    if(target.waitingSize<eventCapacity)
-                        target.waiting[target.waitingSize++]={samplePosition+uint64_t(event.frame)+uint64_t(entry.wait*rate),event.start};
-                    else target.overflow=true;
-                } else if(target.type==MetronomeNode) {
-                    auto& state=*target.metronome;
-                    if(event.start){state.running=true;state.phase=0;state.beat=0;state.envelope=1;state.clickPhase=0;}
-                    else state.running=false;
-                } else if(target.type==AudioClipNode) {
-                    auto& clip=*target.audioClip;
-                    if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
-                    else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
-                } else if(&target==renderingNode) {
-                    int p=target.type==ClipNode?ClipRun:target.type==ProgressNode?ProgressRun:ArpOn;
-                    target.engine->set(p,event.start?1:0);
-                } else if(target.controlSize<eventCapacity)target.controls[target.controlSize++]=event;
-                else target.overflow=true;
+        if(!renderingPlan || !source)return;
+        if(dispatchSize>=dispatchDepthLimit)return;
+        const auto& entries=renderingPlan->entries;
+        dispatchStack[dispatchSize++]=source;
+        for(size_t index=0;index<entries.size();++index) {
+            const auto& entry=entries[index];
+            for(size_t p=0;p<entry.triggerInputs.size();++p) {
+                bool matched=false;
+                for(int input:entry.triggerInputs[p])
+                    if(entries[size_t(input)].state.get()==source) {matched=true;break;}
+                if(!matched)continue;
+                // Delivering to a node that is already dispatching is valid: a
+                // clip stopping itself at its own loop boundary depends on it.
+                // Only the recursion depth is bounded, never the delivery.
+                deliver(*entry.state,entry,event);
             }
         }
+        --dispatchSize;
     }
     static int quantizePitch(int note,int root,int scale,int mode) {
         static constexpr uint16_t masks[5]={
@@ -363,7 +418,7 @@ class InstanceGraph {
         }
         return note;
     }
-    static void renderChannelFilter(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
+    static void renderChannelFilter(const Entry& entry,Runtime& node,Runtime* source,NotePort* input,int sourcePort) {
         (void)source;
         auto& state=*node.channelFilter;
         bool force=!input || state.channel!=entry.channelFilter || state.bypassed!=entry.bypass;
@@ -381,16 +436,16 @@ class InstanceGraph {
         node.controlSize=0;
     }
 
-    static void renderQuantize(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
+    static void renderQuantize(const Entry& entry,Runtime& node,Runtime* source,NotePort* input,int sourcePort) {
         auto& state=*node.quantizer;
         const bool bypassed=entry.bypass;
         const int root=std::max(0,std::min(11,entry.quantizeRoot));
         const int scale=std::max(0,std::min(4,entry.quantizeScale));
         const int mode=std::max(0,std::min(2,entry.quantizeMode));
-        bool force=source!=state.source || entry.noteSourcePort!=state.sourcePort || !source;
+        bool force=source!=state.source || sourcePort!=state.sourcePort || !source;
         if(root!=state.root || scale!=state.scale || mode!=state.mode || bypassed!=state.bypassed)force=true;
         state.root=root;state.scale=scale;state.mode=mode;state.bypassed=bypassed;
-        state.source=source;state.sourcePort=entry.noteSourcePort;
+        state.source=source;state.sourcePort=sourcePort;
         auto emitOff=[&](int key) {
             node.emit({0,uint8_t(0x80|(key%16)),uint8_t(key/16),0});
         };
@@ -550,7 +605,7 @@ class InstanceGraph {
             }
         }
     }
-    static void renderSampler(const Entry& entry,Runtime* source,NotePort* input,int frames,bool force,double rate) {
+    static void renderSampler(const Entry& entry,Runtime* source,NotePort* input,int frames,bool force,double rate,int sourcePort) {
         auto& node=*entry.state;
         auto& state=*node.sampler;
         const AudioSample* sample=entry.sample.get();
@@ -559,11 +614,11 @@ class InstanceGraph {
             return;
         }
         const uint64_t generation=source?source->generation:0;
-        const bool reconnected=state.generation!=generation || state.sourcePort!=entry.noteSourcePort;
+        const bool reconnected=state.generation!=generation || state.sourcePort!=sourcePort;
         bool sync=force || reconnected || state.sample!=sample;
         if(sync) {
             samplerStop(state);
-            state.generation=generation;state.sourcePort=entry.noteSourcePort;
+            state.generation=generation;state.sourcePort=sourcePort;
             state.sample=sample;state.serial=0;
             if(input)for(int k=0;k<2048;++k)
                 if(input->before[k].velocity)
@@ -652,12 +707,12 @@ class InstanceGraph {
         }
         renderTo(frames);
     }
-    static void renderArranger(const Entry& entry,Runtime* source,NotePort* input,bool planChanged) {
+    static void renderArranger(const Entry& entry,Runtime* source,NotePort* input,bool planChanged,int sourcePort) {
         auto& node=*entry.state;
         auto& state=*node.arranger;
         uint64_t generation=source ? source->generation : 0;
-        bool reconnected=state.sourceGeneration!=generation || state.sourcePort!=entry.noteSourcePort;
-        state.sourceGeneration=generation;state.sourcePort=entry.noteSourcePort;
+        bool reconnected=state.sourceGeneration!=generation || state.sourcePort!=sourcePort;
+        state.sourceGeneration=generation;state.sourcePort=sourcePort;
         if(reconnected)state.previousToken=0;
         uint64_t token=input ? input->beforeSerial : 0;
         bool sync=planChanged || state.retry || reconnected;
@@ -696,86 +751,110 @@ class InstanceGraph {
     }
 public:
     bool enabled() const {return active.load(std::memory_order_acquire);}
+    // Observability for tests and diagnostics: count of feedback events dropped
+    // because the deferred queue was full.
+    uint32_t droppedFeedbackEvents() const {return deferredOverflow;}
     void setHosted(bool v) {hosted.store(v,std::memory_order_release);}
-    bool publish(const GraphSpec& spec) {
-        std::vector<size_t> order;
-        if(!graphOrder(spec,order))return false;
+    // Publish a complete topology snapshot. The plan is compiled from NodeSpec
+    // descriptors; this function only fills kernel-facing entries.
+    bool publish(const GraphSpec& spec,bool allowUnknownNodes=false) {
+        CompiledGraph compiled;
+        if(!compileGraph(spec,compiled,nullptr,allowUnknownNodes))return false;
         std::lock_guard<std::mutex> lock(edits);
         Plan plan;
         std::map<InstanceID,std::shared_ptr<Runtime>> replacement;
-        std::map<InstanceID,int> indices;
-        for(size_t i:order) {
+        std::vector<int> entryOf(spec.nodes.size(),-1);
+        for(size_t i:compiled.order) {
             const auto& n=spec.nodes[i];
+            const PlanNode& node=compiled.nodes[i];
+            if(!node.spec)continue;                 // unavailable node: preserved, not executed
+            const int type=node.type;
+            GraphNode normalized=n;
+            normalized.type=type;
+            if(normalized.key.empty())normalized.key=node.spec->key;
             auto old=controlNodes.find(n.id);
-            bool reuse=old!=controlNodes.end() && old->second->type==n.type;
-            if(reuse && (old->second->engine || old->second->processor) && !sameEngineConfig(old->second->saved,n))reuse=false;
-            auto runtime=reuse ? old->second : std::make_shared<Runtime>(n,rate,nextGeneration++);
-            if(!reuse)runtime->configure(n);
+            bool reuse=old!=controlNodes.end() && old->second->type==type;
+            if(reuse && (old->second->engine || old->second->processor) && !sameEngineConfig(old->second->saved,normalized))reuse=false;
+            auto runtime=reuse ? old->second : std::make_shared<Runtime>(normalized,rate,nextGeneration++);
+            if(!reuse)runtime->configure(normalized);
             Entry entry;
             entry.state=runtime;
-            entry.gain=graphParamValue(n,Master);
-            entry.bpm=graphParamValue(n,ClockBPM);
-            entry.wait=graphParamValue(n,WaitSeconds);entry.count=int(graphParamValue(n,TriggerCount));entry.pulse=int(graphParamValue(n,TriggerPulse));
-            if(n.type==ArrangerNode)for(int v=0;v<3;++v) {
+            entry.spec=node.spec;
+            entry.inputs=node.inputs;
+            entry.triggerInputs=node.triggerInputs;
+            entry.mainNote=linkByRole(node,Signal::Midi,RoleMain);
+            entry.clock=linkByRole(node,Signal::Clock,RoleClock);
+            entry.sidechain=linkByRole(node,Signal::Audio,RoleSidechain);
+            entry.outputSink=nodeHas(node.spec->capabilities,CapOutputSink);
+            entry.gain=graphParamValue(normalized,Master);
+            entry.bpm=graphParamValue(normalized,ClockBPM);
+            entry.wait=graphParamValue(normalized,WaitSeconds);
+            entry.count=int(graphParamValue(normalized,TriggerCount));
+            entry.pulse=int(graphParamValue(normalized,TriggerPulse));
+            if(type==ArrangerNode)for(int v=0;v<3;++v) {
                 int p=ArrHighMin+3*v;
-                entry.voices[v]={int(graphParamValue(n,p)),int(graphParamValue(n,p+1)),
-                                 ArrangerTexture(int(graphParamValue(n,p+2)))};
+                entry.voices[v]={int(graphParamValue(normalized,p)),int(graphParamValue(normalized,p+1)),
+                                 ArrangerTexture(int(graphParamValue(normalized,p+2)))};
             }
-            entry.hostClock=n.type==DawClockNode;
-            entry.bypass=n.bypass;
+            entry.hostClock=type==DawClockNode;
+            entry.bypass=node.bypass;
             entry.sample=n.sample;
-            entry.samplerRoot=graphParamValue(n,SamplerRoot);
-            entry.samplerGain=graphParamValue(n,SamplerGain);
-            entry.samplerLoop=graphParamValue(n,SamplerLoop)>=.5f;
-            entry.samplerAttack=graphParamValue(n,SamplerAttack);
-            entry.samplerRelease=graphParamValue(n,SamplerRelease);
-            entry.samplerStart=graphParamValue(n,SamplerStart);
-            entry.samplerEnd=graphParamValue(n,SamplerEnd);
-            entry.samplerReverse=graphParamValue(n,SamplerReverse)>=.5f;
-            entry.samplerVelocity=graphParamValue(n,SamplerVelocity);
-            entry.samplerXfade=graphParamValue(n,SamplerXfade)*.001f;
-            entry.audioClipGain=graphParamValue(n,AudioClipGain);
-            entry.audioClipLoop=graphParamValue(n,AudioClipLoop)>=.5f;
-            entry.audioClipStart=graphParamValue(n,AudioClipStart);
-            entry.audioClipEnd=graphParamValue(n,AudioClipEnd);
-            entry.audioClipFade=graphParamValue(n,AudioClipFade);
-                entry.audioClipPitch=graphParamValue(n,AudioClipPitch);
-                entry.audioClipReverse=graphParamValue(n,AudioClipReverse)>0.5f;
-                entry.audioClipXfade=graphParamValue(n,AudioClipXfade)*.001f;
-            entry.quantizeRoot=int(graphParamValue(n,QuantizeRoot));
-            entry.quantizeScale=int(graphParamValue(n,QuantizeScale));
-            entry.quantizeMode=int(graphParamValue(n,QuantizeMode));
-            entry.randomChance=graphParamValue(n,RandomChance);
-            entry.metronomeBPM=graphParamValue(n,MetronomeBPM);
-            entry.metronomeLevel=graphParamValue(n,MetronomeLevel);
-            entry.metronomeAccent=graphParamValue(n,MetronomeAccent);
-            entry.metronomeBeats=int(graphParamValue(n,MetronomeBeats));
-            entry.transposeSemitones=int(graphParamValue(n,TransposeSemitones));
-            entry.echoTime=graphParamValue(n,EchoTime);
-            entry.echoRepeats=int(graphParamValue(n,EchoRepeats));
-            entry.echoFeedback=graphParamValue(n,EchoFeedback);
-            entry.echoPitch=int(graphParamValue(n,EchoPitch));
-            entry.midiOutChannel=int(graphParamValue(n,MidiOutChannel));
-            entry.channelFilter=int(graphParamValue(n,ChannelFilter));
-            entry.outputWidth=graphParamValue(n,OutputWidth);
-            entry.delaySync=graphParamValue(n,DelaySync)!=0;
-            entry.tremoloSync=graphParamValue(n,TremoloSync)!=0;
-            entry.tremoloDivision=int(graphParamValue(n,TremoloDivision));
-            entry.delayDivision=int(graphParamValue(n,DelayDivision));
-            auto ports=inputTypes(n.type);
-            for(size_t p=0;p<ports.size();++p)entry.triggerPorts[p]=ports[p]==Signal::Trigger;
-
-            indices[n.id]=int(plan.entries.size());
-            plan.entries.push_back(entry);
+            entry.samplerRoot=graphParamValue(normalized,SamplerRoot);
+            entry.samplerGain=graphParamValue(normalized,SamplerGain);
+            entry.samplerLoop=graphParamValue(normalized,SamplerLoop)>=.5f;
+            entry.samplerAttack=graphParamValue(normalized,SamplerAttack);
+            entry.samplerRelease=graphParamValue(normalized,SamplerRelease);
+            entry.samplerStart=graphParamValue(normalized,SamplerStart);
+            entry.samplerEnd=graphParamValue(normalized,SamplerEnd);
+            entry.samplerReverse=graphParamValue(normalized,SamplerReverse)>=.5f;
+            entry.samplerVelocity=graphParamValue(normalized,SamplerVelocity);
+            entry.samplerXfade=graphParamValue(normalized,SamplerXfade)*.001f;
+            entry.audioClipGain=graphParamValue(normalized,AudioClipGain);
+            entry.audioClipLoop=graphParamValue(normalized,AudioClipLoop)>=.5f;
+            entry.audioClipStart=graphParamValue(normalized,AudioClipStart);
+            entry.audioClipEnd=graphParamValue(normalized,AudioClipEnd);
+            entry.audioClipFade=graphParamValue(normalized,AudioClipFade);
+            entry.audioClipPitch=graphParamValue(normalized,AudioClipPitch);
+            entry.audioClipReverse=graphParamValue(normalized,AudioClipReverse)>0.5f;
+            entry.audioClipXfade=graphParamValue(normalized,AudioClipXfade)*.001f;
+            entry.quantizeRoot=int(graphParamValue(normalized,QuantizeRoot));
+            entry.quantizeScale=int(graphParamValue(normalized,QuantizeScale));
+            entry.quantizeMode=int(graphParamValue(normalized,QuantizeMode));
+            entry.randomChance=graphParamValue(normalized,RandomChance);
+            entry.metronomeBPM=graphParamValue(normalized,MetronomeBPM);
+            entry.metronomeLevel=graphParamValue(normalized,MetronomeLevel);
+            entry.metronomeAccent=graphParamValue(normalized,MetronomeAccent);
+            entry.metronomeBeats=int(graphParamValue(normalized,MetronomeBeats));
+            entry.transposeSemitones=int(graphParamValue(normalized,TransposeSemitones));
+            entry.echoTime=graphParamValue(normalized,EchoTime);
+            entry.echoRepeats=int(graphParamValue(normalized,EchoRepeats));
+            entry.echoFeedback=graphParamValue(normalized,EchoFeedback);
+            entry.echoPitch=int(graphParamValue(normalized,EchoPitch));
+            entry.midiOutChannel=int(graphParamValue(normalized,MidiOutChannel));
+            entry.channelFilter=int(graphParamValue(normalized,ChannelFilter));
+            entry.outputWidth=graphParamValue(normalized,OutputWidth);
+            entry.delaySync=graphParamValue(normalized,DelaySync)!=0;
+            entry.tremoloSync=graphParamValue(normalized,TremoloSync)!=0;
+            entry.tremoloDivision=int(graphParamValue(normalized,TremoloDivision));
+            entry.delayDivision=int(graphParamValue(normalized,DelayDivision));
+            entryOf[i]=int(plan.entries.size());
+            plan.entries.push_back(std::move(entry));
             replacement[n.id]=runtime;
         }
-        for(auto edge:spec.edges) {
-            auto& entry=plan.entries[indices.at(edge.target)];
-            if(entry.triggerPorts[edge.port])entry.triggerInputs.push_back(indices.at(edge.source));
-            else {
-                entry.inputs[edge.port]=indices.at(edge.source);
-                if(edge.port==0)entry.noteSourcePort=edge.sourcePort;
+        // Plan links point at document indices; the run plan uses entry indices.
+        for(auto& entry:plan.entries) {
+            auto remap=[&](PortLink& link) {
+                link.node=(link.node>=0&&size_t(link.node)<entryOf.size())?entryOf[size_t(link.node)]:-1;
+                if(link.node<0)link.port=-1;
+            };
+            for(auto& link:entry.inputs)remap(link);
+            for(auto& links:entry.triggerInputs) {
+                std::vector<int> kept;
+                for(int index:links) if(index>=0&&size_t(index)<entryOf.size()&&entryOf[size_t(index)]>=0)
+                    kept.push_back(entryOf[size_t(index)]);
+                links=std::move(kept);
             }
+            remap(entry.mainNote);remap(entry.clock);remap(entry.sidechain);
         }
         for(auto& old:controlNodes) if(!replacement.count(old.first) && old.second->type==MidiOutNode) plan.retired.push_back(old.second);
         plans.publish(plan);
@@ -824,6 +903,7 @@ public:
             }
             n.waitingSize=0;n.controlSize=0;n.count=0;
         }
+        deferredHead=deferredTail=0;dispatchSize=0;deferredOverflow=0;
         {
             std::lock_guard<std::mutex> lock(midiLock);
             localCount=dawCount=0;
@@ -857,18 +937,18 @@ public:
             node.left[i]=node.right[i]=v;
         }
     }
-    static void renderEcho(const Entry& entry,Runtime& node,Runtime* source,NotePort* input,uint64_t samplePosition,double rate,int n) {
+    static void renderEcho(const Entry& entry,Runtime& node,Runtime* source,NotePort* input,uint64_t samplePosition,double rate,int n,int sourcePort) {
         auto& state=*node.echo;
         const float time=std::clamp(entry.echoTime,.05f,2.f);
         const int repeats=std::clamp(entry.echoRepeats,1,8);
         const float feedback=std::clamp(entry.echoFeedback,0.f,1.f);
         const int pitch=std::clamp(entry.echoPitch,-12,12);
-        bool force=source!=state.source || entry.noteSourcePort!=state.sourcePort || !source;
+        bool force=source!=state.source || sourcePort!=state.sourcePort || !source;
         if(time!=state.time || feedback!=state.feedback || repeats!=state.repeats || pitch!=state.pitch || entry.bypass!=state.bypassed)force=true;
         if(force) {
             for(int k=0;k<2048;++k)if(node.after[k].velocity)node.emit({0,uint8_t(0x80|(k%16)),uint8_t(k/16),0});
             state.count=0;
-            state.source=source;state.sourcePort=entry.noteSourcePort;
+            state.source=source;state.sourcePort=sourcePort;
             state.time=time;state.feedback=feedback;state.repeats=repeats;state.pitch=pitch;state.bypassed=entry.bypass;
             if(entry.bypass && input)for(int k=0;k<2048;++k)if(input->before[k].velocity)
                 node.emit({0,uint8_t(0x90|(k%16)),uint8_t(k/16),input->before[k].velocity});
@@ -910,13 +990,13 @@ public:
             }
         }
     }
-    static void renderTranspose(const Entry& entry,Runtime& node,Runtime* source,NotePort* input) {
+    static void renderTranspose(const Entry& entry,Runtime& node,Runtime* source,NotePort* input,int sourcePort) {
         auto& state=*node.transpose;
         const int semitones=std::clamp(entry.transposeSemitones,-24,24);
         const bool bypassed=entry.bypass;
-        bool force=source!=state.source || entry.noteSourcePort!=state.sourcePort || !source;
+        bool force=source!=state.source || sourcePort!=state.sourcePort || !source;
         if(semitones!=state.semitones || bypassed!=state.bypassed)force=true;
-        state.source=source;state.sourcePort=entry.noteSourcePort;state.semitones=semitones;state.bypassed=bypassed;
+        state.source=source;state.sourcePort=sourcePort;state.semitones=semitones;state.bypassed=bypassed;
         auto emitOff=[&](int key){node.emit({0,uint8_t(0x80|(key%16)),uint8_t(key/16),0});};
         auto mapPitch=[&](int pitch){return std::clamp(pitch+(bypassed?0:semitones),0,127);};
         auto syncHeld=[&](){
@@ -979,15 +1059,39 @@ public:
                     static_cast<InstanceGraph*>(owner)->dispatch(source,event);
                 };
             }
+            // Deferred triggers land at the start of the next block. The read
+            // boundary is captured first, so anything pushed while processing
+            // waits one more block instead of being delivered twice.
+            if(deferredHead<deferredTail) {
+                const size_t boundary=deferredTail;
+                while(deferredHead<boundary) {
+                    const DeferredTrigger item=deferredSlots[deferredHead++];
+                    if(item.index>=entries.size())continue;
+                    Trigger event{item.event.frame,item.event.start};
+                    event.frame=0;
+                    auto& entry=entries[item.index];
+                    deliver(*entry.state,entry,event);
+                    dispatch(entry.state.get(),event);
+                }
+                if(deferredHead==deferredTail)deferredHead=deferredTail=0;
+            }
             for(const auto& entry:entries) {
                 auto& node=*entry.state;
                 node.begin();
                 if(node.arranger)for(auto& port:node.arranger->otherVoices)port.begin();
                 node.left.fill(0);node.right.fill(0);
                 int type=node.type;
-                int noteSource=entry.inputs[0];
-                auto* source=noteSource>=0?entries[noteSource].state.get():nullptr;
-                auto* noteInput=source ? &source->notePort(entry.noteSourcePort) : nullptr;
+                // The payload input is discovered from port roles, not from a
+                // fixed slot. Trigger, clock and sidechain never land here.
+                PortLink primary;Signal primarySignal=Signal::None;
+                for(size_t p=0;p<entry.inputs.size()&&p<entry.spec->inputs.size();++p) {
+                    if(!entry.inputs[p].connected())continue;
+                    const Signal signal=entry.spec->inputs[p].signal;
+                    if(signal==Signal::Audio||signal==Signal::Midi) {primary=entry.inputs[p];primarySignal=signal;break;}
+                }
+                auto* source=primary.connected()?entries[size_t(primary.node)].state.get():nullptr;
+                auto* noteInput=(source&&primarySignal==Signal::Midi)?&source->notePort(primary.port):nullptr;
+                const int noteSourcePort=primary.port;
                 if(type==NoiseNode) {
                     if(!entry.bypass && node.processor)
                         node.processor->render(nullptr,nullptr,node.left.data(),node.right.data(),n);
@@ -997,8 +1101,8 @@ public:
                     if(source)for(int i=0;i<n;++i){node.inputL[i]=source->left[i];node.inputR[i]=source->right[i];}
                     else for(int i=0;i<n;++i){node.inputL[i]=0;node.inputR[i]=0;}
                     if(type==CompressorNode && node.processor) {
-                        const int sideIndex=entry.inputs[1];
-                        auto* side=sideIndex>=0 ? entries[sideIndex].state.get() : nullptr;
+                        const int sideIndex=entry.sidechain.node;
+                        auto* side=sideIndex>=0 ? entries[size_t(sideIndex)].state.get() : nullptr;
                         if(side) for(int i=0;i<n;++i){node.sidechainL[i]=side->left[i];node.sidechainR[i]=side->right[i];}
                         node.processor->setSidechain(side?node.sidechainL.data():nullptr,
                                                      side?node.sidechainR.data():nullptr,n);
@@ -1022,17 +1126,17 @@ public:
                         node.sampler->bypassed=true;
                     } else {
                         node.sampler->bypassed=false;
-                        renderSampler(entry,source,noteInput,n,wasBypassed,rate);
+                        renderSampler(entry,source,noteInput,n,wasBypassed,rate,noteSourcePort);
                     }
                     continue;
                 }
                 if(type==QuantizeNode) {
-                    renderQuantize(entry,node,source,noteInput);
+                    renderQuantize(entry,node,source,noteInput,noteSourcePort);
                     continue;
                 }
-                if(type==ChannelFilterNode) {renderChannelFilter(entry,node,source,noteInput);continue;}
-                if(type==TransposeNode) {renderTranspose(entry,node,source,noteInput);continue;}
-                if(type==EchoNode) {renderEcho(entry,node,source,noteInput,samplePosition,rate,n);continue;}
+                if(type==ChannelFilterNode) {renderChannelFilter(entry,node,source,noteInput,noteSourcePort);continue;}
+                if(type==TransposeNode) {renderTranspose(entry,node,source,noteInput,noteSourcePort);continue;}
+                if(type==EchoNode) {renderEcho(entry,node,source,noteInput,samplePosition,rate,n,noteSourcePort);continue;}
                 if(type==MetronomeNode) {
                     if(entry.bypass){node.metronome->running=false;node.metronome->envelope=0;std::fill(node.left.begin(),node.left.begin()+n,0.f);std::fill(node.right.begin(),node.right.begin()+n,0.f);}
                     else renderMetronome(entry,node,n,rate);
@@ -1050,7 +1154,7 @@ public:
                     continue;
                 }
                 if(type==ArrangerNode) {
-                    renderArranger(entry,source,noteInput,planChanged && offset==0);
+                    renderArranger(entry,source,noteInput,planChanged && offset==0,noteSourcePort);
                     continue;
                 }
                 if(type==StartNode || type==StopNode) {
@@ -1075,8 +1179,13 @@ public:
                     if(receives)for(int i=0;i<n;++i){node.left[i]=inL?inL[offset+i]:0;node.right[i]=inR?inR[offset+i]:node.left[i];}
                     continue;
                 }
-                if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) {
-                    bool sends=type==OutputNode || (hosted?type==DawOutputNode:type==HardwareOutputNode);
+                if(entry.outputSink) {
+                    // Any node that declares the output-sink capability is summed
+                    // into the graph output. Only device-bound sinks care about
+                    // whether the current session is hosted.
+                    bool sends=true;
+                    if(type==HardwareOutputNode)sends=!hosted;
+                    else if(type==DawOutputNode)sends=hosted;
                     if(source && sends && !entry.bypass)for(int i=0;i<n;++i){
                         float mid=(source->left[i]+source->right[i])*.5f;
                         float side=(source->left[i]-source->right[i])*.5f*entry.outputWidth;
@@ -1085,17 +1194,19 @@ public:
                     continue;
                 }
                 if(type==MixNode) {
-                    for(int input:entry.inputs)if(input>=0)for(int i=0;i<n;++i){
-                        node.left[i]+=entries[input].state->left[i];node.right[i]+=entries[input].state->right[i];
+                    for(const auto& link:entry.inputs) if(link.connected()) {
+                        auto& upstream=*entries[size_t(link.node)].state;
+                        for(int i=0;i<n;++i){node.left[i]+=upstream.left[i];node.right[i]+=upstream.right[i];}
                     }
                     continue;
                 }
-                int clockSlot=type==ArpNode || type==VelocityNode?1:0;
-                int clockIndex=entry.inputs[clockSlot];
-                bool timed=type==ClipNode || type==ProgressNode || type==ArpNode || type==VelocityNode;
+                const int clockIndex=entry.clock.node;
+                // Timed execution is declared: a kernel that needs content time
+                // and owns an engine follows the clock port, otherwise the host.
+                const bool timed=node.engine && entry.spec && entry.spec->timeMode==TimeMode::Timed;
                 if(node.engine) {
-                    bool follows=timed && (clockIndex<0 || entries[clockIndex].hostClock);
-                    double tempo=follows?bpm:(clockIndex>=0?entries[clockIndex].bpm:112);
+                    bool follows=timed && (clockIndex<0 || entries[size_t(clockIndex)].hostClock);
+                    double tempo=follows?bpm:(clockIndex>=0?entries[size_t(clockIndex)].bpm:112);
                     node.engine->setHostTempo(tempo);
                     if(transport && follows)node.engine->setHostTransport(playing,beat+offset*(bpm>0?bpm:112)/(60*rate));
                     else node.engine->clearHostTransport();
@@ -1120,7 +1231,7 @@ public:
                         if(entry.midiOutChannel>0 && (status&0xf0)>=0x80 && (status&0xf0)<=0xe0)
                             status=uint8_t((status&0xf0)|((entry.midiOutChannel-1)&15));
                         if(output)output(outputContext,offset+e.frame,status,e.a,e.b);
-                    } else node.engine->midi(e.status,e.a,e.b);
+                    } else if(node.engine) node.engine->midi(e.status,e.a,e.b);
                 };
                 auto renderSpan=[&](int begin,int end) {
                     if(!node.engine || end<=begin)return;
@@ -1179,10 +1290,7 @@ public:
             for(int i=0;i<n;++i) {
                 float left=0,right=0;
                 for(const auto& entry:entries) {
-                    int type=entry.state->type;
-                    if(type==OutputNode || type==HardwareOutputNode || type==DawOutputNode) {
-                        left+=entry.state->left[i];right+=entry.state->right[i];
-                    }
+                    if(entry.outputSink) {left+=entry.state->left[i];right+=entry.state->right[i];}
                 }
                 outL[offset+i]=left;outR[offset+i]=right;
             }

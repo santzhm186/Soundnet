@@ -486,7 +486,7 @@ int main() {
     // Delay sync parameters are accepted and the synced delay renders.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,Osc1Node,{{Master,1},{Level1,.7f}});
+        add(graph,1,MidiNode);add(graph,2,Osc1Node,{{Level1,.7f}});
         add(graph,3,DelayNode,{{DelaySync,1},{DelayDivision,1},{DelayFeedback,.3f},{DelayMix,.4f}});
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
@@ -555,7 +555,7 @@ int main() {
     {
         GraphSpec graph;
         add(graph,1,MidiNode);
-        add(graph,2,Osc1Node,{{Master,1},{Level1,.8f}});
+        add(graph,2,Osc1Node,{{Level1,.8f}});
         add(graph,3,ChorusNode,{{ChorusMix,.5f},{ChorusDepth,.6f}});
         add(graph,4,OutputNode,{{Master,1},{OutputWidth,0}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
