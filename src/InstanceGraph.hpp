@@ -1033,6 +1033,15 @@ public:
         if(planChanged) {
             if(output)for(auto& node:plans.current().retired)for(int k=0;k<2048;++k)
                 if(node->incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
+            // A node whose note input disappeared (upstream removed, or now an
+            // unknown type) must release what it already sent downstream.
+            for(const auto& entry:plans.current().entries) {
+                if(entry.mainNote.connected()||entry.state->type!=MidiOutNode)continue;
+                for(int k=0;k<2048;++k) if(entry.state->incoming[k].velocity) {
+                    if(output)output(outputContext,0,0x80|(k%16),k/16,0);
+                    entry.state->incoming[k]={};
+                }
+            }
         }
         if(panicRequested.exchange(false,std::memory_order_acq_rel)) {
             for(const auto& entry:plans.current().entries)if(entry.state->engine)entry.state->engine->panic();

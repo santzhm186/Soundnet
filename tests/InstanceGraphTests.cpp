@@ -62,5 +62,28 @@ int main() {
     for(int id=1;id<=40;++id)many.nodes.push_back({uint64_t(id),Osc1Node});
     assert(synth.setGraph(many));synth.render(nullptr,nullptr,l,r,128);
     assert(synth.setGraph({}));synth.render(nullptr,nullptr,l,r,128);
-    puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start and typed validation.");
+    // Dropping the upstream of a MIDI output must release its sounding notes
+    // instead of leaving a stuck note at the host.
+    {
+        GraphSpec g;
+        g.nodes={{21,MidiNode},{22,MidiOutNode}};
+        g.edges={{21,22,0}};
+        Engine e2;e2.prepare(48000);
+        std::vector<Sent> out;out.reserve(32);
+        e2.setMidiOutput(&out,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});});
+        assert(e2.setGraph(g));
+        e2.midi(0x90,64,100);
+        for(int block=0;block<4;++block)e2.render(nullptr,nullptr,l,r,128);
+        bool held=false;
+        for(auto e:out)if(e.status==0x90&&e.note==64)held=true;
+        assert(held);
+        GraphSpec cut;cut.nodes=g.nodes;    // same nodes, no edge
+        out.clear();
+        assert(e2.setGraph(cut));
+        e2.render(nullptr,nullptr,l,r,128);
+        bool released=false;
+        for(auto e:out)if((e.status&0xf0)==0x80&&e.note==64)released=true;
+        assert(released);
+    }
+    puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start, note release on lost input and typed validation.");
 }
