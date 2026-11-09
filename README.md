@@ -76,7 +76,7 @@ Run `./scripts/test-all.sh` for the regression suite and `./scripts/verify-relea
 
 ## Acknowledgments
 
-Thanks to [hehongze88@gmail.com](mailto:hehongze88@gmail.com) for building the code that sets up the synthesizer nodes, implements modulation and sound-generation logic, and maps sound across the high, middle, and low voices. Qingtian Zhang submitted that contribution to Soundnet.
+Thanks to [hehongze88@gmail.com](mailto:hehongze88@gmail.com) for building the code that sets up the synthesizer nodes, implements modulation and sound-generation logic, and maps sound across the high, middle, and low voices. Santzhm186 submitted that contribution to Soundnet.
 
 ## License
 

@@ -271,7 +271,7 @@ auval -strict -v aumu Tern Trny -oop
 
 ## 致谢
 
-感谢 [hehongze88@gmail.com](mailto:hehongze88@gmail.com) 构建合成器节点的架设、调制与声音逻辑，以及高、中、低声部的声音映射相关代码。该贡献由 Qingtian Zhang 提交到 Soundnet。
+感谢 [hehongze88@gmail.com](mailto:hehongze88@gmail.com) 构建合成器节点的架设、调制与声音逻辑，以及高、中、低声部的声音映射相关代码。该贡献由 Santzhm186 提交到 Soundnet。
 
 ## 许可证
 
