@@ -91,6 +91,9 @@ inline soundnet::TaskService::Job generationJob(GenRequest request,NSString* nod
                     if(!payload->score.length)
                         return soundnet::TaskResult::failure("生成的乐谱不是有效的 UTF-8 文本。");
                 }
+                // A cancellation that arrived after generation must not leave
+                // an archived WAV behind: check before any archive write.
+                if(context.cancelled())return soundnet::TaskResult::cancelled();
                 // Archive: only when the project declared a folder. The node
                 // stays self-contained without one — the take list is still
                 // updated, pointing at the archived path when it exists.
@@ -138,7 +141,6 @@ inline soundnet::TaskService::Job generationJob(GenRequest request,NSString* nod
                         [NSJSONSerialization dataWithJSONObject:takes options:0 error:nil]
                         encoding:NSUTF8StringEncoding] ?: @"";
                 }
-                if(context.cancelled())return soundnet::TaskResult::cancelled();
                 return {soundnet::TaskStatus::Succeeded,payload,{}};
             } @catch(NSException* exception) {
                 return soundnet::TaskResult::failure(exception.reason.UTF8String ?: "生成结果无法读取。");
