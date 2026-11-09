@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <cassert>
 
@@ -22,6 +23,10 @@
 - (NSArray *)activeIDs;
 - (BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 - (BOOL)adoptFile:(NSDictionary *)file;
+- (void)sliderChanged:(NSSlider *)slider;
+- (void)choiceChanged:(NSPopUpButton *)popup;
+- (void)nameChanged:(NSTextField *)field;
+- (void)bypassChanged:(NSButton *)button;
 @end
 
 int main() {
@@ -103,6 +108,45 @@ int main() {
         assert([opened[@"nodes"] count]==9);
         assert([opened[@"nodes"][2][@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
         assert([opened[@"edges"][2][@"sourcePort"] isEqual:@"high"]);
+
+        // Inspector editing: every wired action must exist and reach the
+        // document. These three regressions (dead enum popup, dead name field,
+        // slider rounding 0-1 values) were all silent in the compiled build.
+        {
+            NSDictionary *doc=assets[@"graph"];
+            NSUInteger oscIndex=0;
+            for(NSUInteger i=0;i<[doc[@"nodes"] count];++i)
+                if([doc[@"nodes"][i][@"nodeKey"] isEqual:@"soundnet.oscillator"]){oscIndex=i;break;}
+            uint64_t uid=[doc[@"nodes"][oscIndex][@"id"] unsignedLongLongValue];
+            [editor setValue:@(uid) forKey:@"selected"];
+            [editor inspect];
+            NSView *inspector=[editor valueForKey:@"inspector"];
+            std::function<id(NSView*,Class,int)> find;
+            find=[&](NSView *root,Class cls,int tag)->id{
+                for(NSView *v in root.subviews) {
+                    if([v isKindOfClass:cls]&&(tag<0||v.tag==tag))return v;
+                    id deep=find(v,cls,tag);
+                    if(deep)return deep;
+                }
+                return nil;
+            };
+            NSSlider *level=(NSSlider *)find(inspector,[NSSlider class],tri::Level1+100000);
+            assert(level);
+            level.doubleValue=0.42;
+            [editor sliderChanged:level];
+            double stored=[assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.level"] doubleValue];
+            assert(std::abs(stored-0.42)<1e-5);
+            NSPopUpButton *wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            assert(wave && wave.numberOfItems==4);
+            [wave selectItemAtIndex:1];
+            [editor choiceChanged:wave];
+            assert([assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.wave"] intValue]==1);
+            NSTextField *name=(NSTextField *)find(inspector,[NSTextField class],990001);
+            assert(name);
+            name.stringValue=@"Lead";
+            [editor nameChanged:name];
+            assert([assets[@"graph"][@"nodes"][oscIndex][@"name"] isEqual:@"Lead"]);
+        }
 
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
         assert(triassets::validate([NSJSONSerialization JSONObjectWithData:serialized options:0 error:nil],nullptr));

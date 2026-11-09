@@ -855,11 +855,38 @@ std::vector<ParamPreset> presetsFor(int type) {
     if([slider isKindOfClass:[NSSlider class]])slider.doubleValue=value;
     [self commit:previous];[self.window makeFirstResponder:_canvas];
 }
+-(void)choiceChanged:(NSPopUpButton *)popup {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    const int p=(int)popup.tag;
+    const auto& info=tri::graphParamInfo(p);
+    // Enumerated parameters store the plain value, not the menu index.
+    double value=info.min+popup.indexOfSelectedItem;
+    if(value<info.min||value>info.max)return;
+    NSDictionary *previous=copyJSON(_document);
+    setParam(node,p,value);
+    NSTextField *field=[_inspector viewWithTag:p];
+    if([field isKindOfClass:[NSTextField class]])
+        field.stringValue=[NSString stringWithFormat:@"%.3g",value];
+    [self commit:previous];
+}
+-(void)nameChanged:(NSTextField *)field {
+    NSMutableDictionary *node=[self node:_selected];if(!node)return;
+    NSString *name=[field.stringValue stringByTrimmingCharactersInSet:
+                    NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *current=node[@"name"] ?: @"";
+    if([name isEqualToString:current])return;
+    NSDictionary *previous=copyJSON(_document);
+    if(name.length)node[@"name"]=name;
+    else [node removeObjectForKey:@"name"];
+    [self commit:previous];[self inspect];
+}
 -(void)sliderChanged:(NSSlider *)slider {
     NSMutableDictionary *node=[self node:_selected];if(!node)return;
     int p=(int)slider.tag-100000;const auto& info=tri::graphParamInfo(p);
     double value=slider.doubleValue;
-    if(tri::discreteParam(p)||info.max-info.min<=12)value=std::round(value);
+    // Only declared discrete parameters are integral. The old range-width
+    // heuristic snapped every 0–1 parameter (level, mix, gain, depth) to 0 or 1.
+    if(tri::discreteParam(p))value=std::round(value);
     if(value<info.min||value>info.max)return;
     NSTextField *field=[_inspector viewWithTag:p];
     if([field isKindOfClass:[NSTextField class]])field.stringValue=[NSString stringWithFormat:@"%.3g",value];

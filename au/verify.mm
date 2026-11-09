@@ -65,7 +65,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x25001,"system found installed Soundnet 2.80.1");
+            check(version==0x25002,"system found installed Soundnet 2.80.2");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);

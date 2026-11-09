@@ -30,6 +30,11 @@ echo "== compile WorkflowFormatTests"
 "${cxx[@]}" -fobjc-arc -I. tests/WorkflowFormatTests.mm src/WorkflowAssets.mm \
   -framework Foundation -framework CoreML -framework AVFoundation -o "$build/WorkflowFormatTests"
 
+echo "== compile InstanceEditorTest"
+"${cxx[@]}" -fobjc-arc -I. tools/InstanceEditorTest.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
+  -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
+  -framework AVFoundation -o "$build/InstanceEditorTest"
+
 echo "== compile ClipEditorTests"
 "${cxx[@]}" -fobjc-arc -I. tests/ClipEditorTests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
   -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
@@ -52,6 +57,10 @@ echo "== run AssetStoreTests"
 
 echo "== run WorkflowFormatTests"
 "$build/WorkflowFormatTests"
+
+echo "== run InstanceEditorTest"
+mkdir -p "$root/build/qa"
+SOUNDNET_NO_AUTOSAVE=1 "$build/InstanceEditorTest"
 
 echo "== run ClipEditorTests"
 "$build/ClipEditorTests"
