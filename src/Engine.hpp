@@ -16,19 +16,15 @@ class Engine : public LegacyEngine {
         if(legacyResetRequested.exchange(false,std::memory_order_acq_rel))LegacyEngine::reset();
     }
 public:
-    bool setGraph(const GraphSpec& spec) {return graph.publish(spec);}
+    bool setGraph(const GraphSpec& spec,bool allowUnknownNodes=false) {return graph.publish(spec,allowUnknownNodes);}
+    void seekTimecode(uint64_t frame) {graph.seekTimecode(frame);}
+    KernelTimecode timecodeSnapshot() const {return graph.timecodeSnapshot();}
     void clearGraph() {graph.disable();}
-    void setHosted(bool value) {graph.setHosted(value);}
     void prepare(double sr) {LegacyEngine::prepare(sr);graph.prepare(sr);}
     void reset() {LegacyEngine::reset();graph.reset();}
     // UI/control threads only publish requests. Destructive state changes run
     // at the next audio boundary, including a stop/resume between two blocks.
     void panic() {legacyPanicRequested.store(true,std::memory_order_release);graph.panic();}
-    // CapTask control surface. Generation runs on the control thread; the graph
-    // only carries request counters and the node-level stop request.
-    std::vector<InstanceGraph::AiTaskSnapshot> aiTasks() const {return graph.aiTaskSnapshot();}
-    bool setAiTaskState(InstanceID id,int status,int progress) {return graph.setAiTaskState(id,status,progress);}
-    void cancelAiTask(InstanceID id) {graph.cancelAiTask(id);}
     void stopNode(InstanceID id) {graph.requestNodeStop(id);}
     bool processingEnabled() const {return processing.load(std::memory_order_acquire);}
     uint64_t processingGeneration() const {return stopGeneration.load(std::memory_order_acquire);}
@@ -53,6 +49,7 @@ public:
     }
     void setHostTempo(double bpm) {LegacyEngine::setHostTempo(bpm);graph.setHostTempo(bpm);}
     void setHostTransport(bool playing,double beat) {LegacyEngine::setHostTransport(playing,beat);graph.setHostTransport(playing,beat);}
+    void setHostTimecode(bool playing,uint64_t frame) {graph.setHostTimecode(playing,frame);}
     void clearHostTransport() {LegacyEngine::clearHostTransport();graph.clearHostTransport();}
     void setMidiOutput(void* ptr,void (*fn)(void*,int,uint8_t,uint8_t,uint8_t)) {
         LegacyEngine::setMidiOutput(ptr,fn);graph.setMidiOutput(ptr,fn);

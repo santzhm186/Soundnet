@@ -55,6 +55,7 @@
     {
       "id": 5,
       "type": 19,
+      "nodeVersion": 2,
       "x": 780,
       "y": 220,
       "parameters": {

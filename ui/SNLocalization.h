@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <mutex>
+#include "../nodes/GeneratedRegistry.hpp"
 
 // Display strings only. Stable node/port/parameter IDs and user-authored names
 // must never pass through this table. Shared by the standalone app and AU UI.
@@ -70,6 +71,62 @@ inline NSDictionary<NSString *, NSString *> *SNEnglishStrings() {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         strings=@{
+            // Platform 2.9.1 and independently registered node modules.
+            @"时间码": @"Timecode",
+            @"工程": @"Project",
+            @"项目设定": @"Project Settings",
+            @"MIDI 音区分流": @"MIDI Note Split",
+            @"低音区": @"Low Range",
+            @"高音区": @"High Range",
+            @"输入设备": @"Input Device",
+            @"输出设备": @"Output Device",
+            @"项目采样率": @"Sample rate",
+            @"导出位深": @"Export bit depth",
+            @"处理精度": @"Processing precision",
+            @"分界音高": @"Split note",
+            @"后台任务示例": @"Background Task Example",
+            @"开发": @"Development",
+            @"输入文本": @"Input Text",
+            @"处理结果": @"Result",
+            @"跟随系统默认": @"Follow System Default",
+            @"设备不可用": @"Device Unavailable",
+            @"音频设备与采样率由宿主管理": @"Audio devices and sample rate are managed by the host",
+            @"设备": @"Device",
+            @"正在处理…": @"Processing…",
+            @"开始": @"Start",
+            @"已取消生成。": @"Generation cancelled.",
+            @"工程环境节点不能删除。": @"Project environment nodes cannot be deleted.",
+            @"节点类型编号与稳定标识不一致。": @"The node type number does not match its stable ID.",
+            @"节点 SDK 版本不受当前平台支持。": @"This node SDK version is not supported by the platform.",
+            @"节点不能同时使用旧内核适配与 SDK 内核工厂。": @"A node cannot use both a legacy adapter and an SDK kernel factory.",
+            @"节点声明了执行能力，但未注册内核工厂。": @"The node declares execution capabilities but has no kernel factory.",
+            @"工程中每种环境节点只能有一个实例。": @"A project can contain only one instance of each environment node.",
+            @"节点声明了当前 SDK 不支持的流端口。": @"The node declares a stream port that this SDK does not support.",
+            @"文本参数不属于该节点。": @"The text parameter does not belong to this node.",
+            @"文本参数过长。": @"The text parameter is too long.",
+            @"工程必须包含一个时间码节点和一个项目设定节点。": @"The project requires one Timecode node and one Project Settings node.",
+            @"工程环境要求应为布尔值。": @"The project environment requirement must be a Boolean value.",
+            @"节点行为版本必须为 1–65535 的整数。": @"The node behavior version must be an integer from 1 to 65535.",
+            @"节点状态版本必须为 1–255 的整数。": @"The node state version must be an integer from 1 to 255.",
+            @"节点文本参数应为对象。": @"Node text parameters must be an object.",
+            @"文本参数标识无效。": @"Invalid text parameter ID.",
+            @"文本参数值应为字符串。": @"Text parameter values must be strings.",
+            @"文本参数不属于该节点：%@": @"The text parameter does not belong to this node: %@",
+            @"文本参数不是有效的 UTF-8。": @"The text parameter is not valid UTF-8.",
+            @"文本参数总长度超限。": @"The combined text parameters exceed the size limit.",
+            @"输入端口序号必须为非负整数。": @"The input port index must be a nonnegative integer.",
+            @"输出端口序号必须为非负整数。": @"The output port index must be a nonnegative integer.",
+            @"工程只能有一个项目设定节点。": @"A project can contain only one Project Settings node.",
+            @"项目设定节点不可用，无法建立运行环境。": @"Project Settings is unavailable, so the runtime environment cannot be prepared.",
+            @"项目采样率必须在 8–192 kHz 之间。": @"The project sample rate must be between 8 and 192 kHz.",
+            @"导出位深必须为 16、24 或 32。": @"Export bit depth must be 16, 24, or 32.",
+            @"当前音频处理接口使用 32 位浮点数。": @"The audio processing interface currently uses 32-bit floating point.",
+            @"音频设备 UID 过长。": @"The audio device UID is too long.",
+            @"无法使用%@设备 %@（%d）。": @"Could not use the %@ device %@ (%d).",
+            @"请先停止录音，再修改项目音频环境。": @"Stop recording before changing the project audio configuration.",
+            @"找不到音频设备：%@": @"Audio device not found: %@",
+            @"音频起止位置无效：开始必须早于结束。": @"Invalid audio region: start must be before end.",
+
             @"缺失节点": @"Missing Node",
             @"节点": @"Node",
             @"高声部": @"High Voice",
@@ -209,7 +266,7 @@ inline NSDictionary<NSString *, NSString *> *SNEnglishStrings() {
             @"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益；Pitch 为半音移调，Reverse 反向播放。": @"Start/stop triggers control playback. Loop repeats the Start/End region; Fade smooths the edges. Gain sets level, Pitch transposes in semitones, and Reverse plays backwards.",
             @"和弦 / 走向，可手动输入": @"Chord / Progression",
             @"预制 Cmaj7 / 爵士走向": @"Cmaj7 / Jazz Progression",
-            @"启用硬件音频输入": @"Enable Hardware Audio Input",
+            @"启用音频输入": @"Enable Audio Input",
             @"Wave  0 正弦  1 方波  2 锯齿  3 三角": @"Wave: 0 Sine · 1 Square · 2 Saw · 3 Triangle",
             @"Type  0 低通  1 高通  2 带通\nCutoff 20–20000 Hz，Resonance 为 Q 值。": @"Type: 0 Low-pass · 1 High-pass · 2 Band-pass\nCutoff: 20–20000 Hz. Resonance sets Q.",
             @"Mix 干湿比，Size 空间大小，Damping 高频吸收，Width 立体声宽度。": @"Mix sets the dry/wet balance, Size the room size, Damping high-frequency absorption, and Width the stereo spread.",
@@ -849,6 +906,18 @@ inline NSString *SNEnglish(NSString *source) { return SNLocalizedForLanguage(sou
 inline NSString *SNLocalized(NSString *source) { return SNLocalizedForLanguage(source,SNIsEnglish()); }
 inline NSString *SNParameterTitle(NSString *source) { return SNLocalized(source); }
 
+// A node may use the same display source as another node with a different
+// meaning. Resolve its own bilingual table first, then shared platform strings.
+inline NSString *SNNodeLocalizedForLanguage(int type,NSString *source,BOOL english) {
+    if(!source)return @"";
+    if(const char* translated=tri::nodeTranslation(type,source.UTF8String,english))
+        return [NSString stringWithUTF8String:translated] ?: source;
+    return SNLocalizedForLanguage(source,english);
+}
+inline NSString *SNNodeLocalized(int type,NSString *source) {
+    return SNNodeLocalizedForLanguage(type,source,SNIsEnglish());
+}
+
 // Diagnostics are translated only at an explicitly known leading prefix. The
 // remainder may contain user names or stable IDs and is copied without lookup,
 // formatting, or recursive substitution. Unknown diagnostics stay verbatim.
@@ -856,6 +925,9 @@ inline NSString *SNLocalizedDiagnosticForLanguage(NSString *source,BOOL english)
     if(!source)return @"";
     struct Prefix { __unsafe_unretained NSString *zh; __unsafe_unretained NSString *en; };
     static const Prefix prefixes[]={
+        {@"节点版本不受当前平台支持：",@"Unsupported node version: "},
+        {@"文本参数不属于该节点：",@"Text parameter does not belong to this node: "},
+        {@"找不到音频设备：",@"Audio device not found: "},
         {@"缺失节点类型：",@"Missing node type: "},
         {@"未知节点类型：",@"Unknown node type: "},
         {@"未知的节点类型：",@"Unrecognized node type: "},

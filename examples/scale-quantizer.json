@@ -13,6 +13,7 @@
     {
       "id": 2,
       "type": 16,
+      "nodeVersion": 2,
       "x": 220,
       "y": 120,
       "parameters": {
@@ -54,6 +55,7 @@
     {
       "id": 5,
       "type": 19,
+      "nodeVersion": 2,
       "x": 740,
       "y": 120,
       "parameters": {
@@ -65,7 +67,7 @@
     {
       "source": 1,
       "target": 2,
-      "port": 1
+      "port": 0
     },
     {
       "source": 2,

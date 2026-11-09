@@ -12,9 +12,10 @@ typedef void (^TRIProcessingWrite)(BOOL enabled);
 // Node-level stop for CapTask nodes: stops playback of one instance without
 // touching the transport or any project parameter. Optional; AU passes nil.
 typedef void (^TRINodeStop)(uint64_t nodeID);
+typedef NSDictionary * (^TRIEnvironmentRead)(void);
 // Fixed 1144 x 650 points. Pass nil for input switches in AU (host routes audio).
 // status is a short connection/engine status, e.g. @"CoreMIDI · 2 sources".
 NSView *TRICreateEditor(TRIRead read, TRIWrite write, TRIMIDI midi, TRIInputRead inputRead, TRIInputWrite inputWrite, TRIStatus status,
                         TRIAssetsRead assetsRead = nullptr, TRIAssetsWrite assetsWrite = nullptr,
                         TRIProcessingRead processingRead = nullptr, TRIProcessingWrite processingWrite = nullptr,
-                        TRINodeStop nodeStop = nullptr);
+                        TRINodeStop nodeStop = nullptr, TRIEnvironmentRead environmentRead = nullptr);

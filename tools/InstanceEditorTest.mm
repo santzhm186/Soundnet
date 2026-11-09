@@ -25,6 +25,7 @@
 - (NSArray *)activeIDs;
 - (BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 - (BOOL)adoptFile:(NSDictionary *)file;
+- (NSDictionary *)migrate:(NSDictionary *)file;
 - (void)sliderChanged:(NSSlider *)slider;
 - (void)choiceChanged:(NSPopUpButton *)popup;
 - (void)nameChanged:(NSTextField *)field;
@@ -86,35 +87,50 @@ int main() {
             },
             ^BOOL { return engine->processingEnabled(); },
             ^(BOOL enabled) { engine->setProcessingEnabled(enabled); });
+        NSDictionary *initialDocument=snapshot(editor);
+        const NSUInteger initialNodeCount=[initialDocument[@"nodes"] count];
+        assert(initialNodeCount==2);
+        assert([initialDocument[@"settings"][@"environmentRequired"] boolValue]);
+        NSSet *environmentKeys=[NSSet setWithArray:[initialDocument[@"nodes"] valueForKey:@"nodeKey"]];
+        assert(([environmentKeys isEqualToSet:[NSSet setWithArray:@[@"soundnet.timecode",@"soundnet.project-settings"]]]));
         for (int i=0; i<25; ++i) {
             NSMenuItem *item = [NSMenuItem new];
             item.tag = tri::Osc1Node;
             [editor insert:item];
         }
-        assert([assets[@"graph"][@"nodes"] count]==25);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+25);
         NSMenuItem *start = [NSMenuItem new];
         start.tag = tri::StartNode;
         [editor insert:start];
-        assert([assets[@"graph"][@"nodes"] count]==26);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         [editor undo:nil];
-        assert([assets[@"graph"][@"nodes"] count]==25);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+25);
         [editor redo:nil];
-        assert([assets[@"graph"][@"nodes"] count]==26);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         [editor selectAll:nil];
-        assert([[editor activeIDs] count]==26);
+        assert([[editor activeIDs] count]==initialNodeCount+26);
+        // Deleting all ordinary nodes retains the exact project environment;
+        // undo still restores every user node as one document transaction.
+        NSDictionary *beforeDeleteAll=snapshot(editor);
+        [editor remove:nil];
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount);
+        assert([assets[@"graph"][@"nodes"] isEqual:initialDocument[@"nodes"]]);
+        [editor undo:nil];assert([snapshot(editor) isEqual:beforeDeleteAll]);
+        [editor selectAll:nil];
         [editor copy:nil];
         [editor paste:nil];
-        assert([assets[@"graph"][@"nodes"] count]==52);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+52);
+        assert([[editor activeIDs] count]==26);
         [editor remove:nil];
-        assert([assets[@"graph"][@"nodes"] count]==26);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         [editor undo:nil];
-        assert([assets[@"graph"][@"nodes"] count]==52);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+52);
         [editor redo:nil];
-        assert([assets[@"graph"][@"nodes"] count]==26);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         NSMenuItem *sampler = [NSMenuItem new];
         sampler.tag = tri::SamplerNode;
         [editor insert:sampler];
-        assert([assets[@"graph"][@"nodes"] count]==27);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+27);
         NSString *samplerKey=[NSString stringWithUTF8String:tri::nodeKey(tri::SamplerNode)];
         NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
             [NSPredicate predicateWithFormat:@"nodeKey == %@", samplerKey]] firstObject];
@@ -127,13 +143,13 @@ int main() {
         NSURL *dropURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:dropPath.c_str()]];
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(100, 100) clipMode:NO]);
         waitForJob(editor);
-        assert([assets[@"graph"][@"nodes"] count]==28);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+28);
         NSDictionary *samplerDrop = [assets[@"graph"][@"nodes"] lastObject];
         assert(samplerDrop && [samplerDrop[@"nodeKey"] isEqual:samplerKey] && samplerDrop[@"asset"][@"name"]);
         assert([samplerDrop[@"x"] doubleValue]==100 && [samplerDrop[@"y"] doubleValue]==100);
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(140, 140) clipMode:YES]);
         waitForJob(editor);
-        assert([assets[@"graph"][@"nodes"] count]==29);
+        assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+29);
         NSDictionary *clipDrop = [assets[@"graph"][@"nodes"] lastObject];
         NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::AudioClipNode)];
         assert(clipDrop && [clipDrop[@"nodeKey"] isEqual:clipKey] && clipDrop[@"asset"][@"name"]);
@@ -148,6 +164,20 @@ int main() {
         [editor cancelProcessing:nil];
         waitForJob(editor);
         assert([snapshot(editor) isEqual:beforeCancelledDrop]);
+
+        // Legacy routes skip retired clocks and use the current I/O defaults.
+        NSMutableDictionary *legacyParams=[NSMutableDictionary new];
+        for(int pid=0;pid<tri::ParamCount;++pid)
+            if(!tri::routeParam(pid))legacyParams[@(tri::params[pid].name)]=@(tri::params[pid].def);
+        NSDictionary *converted=[editor migrate:@{@"format":@"audio.ternary.workflow",@"version":@2,
+            @"parameters":legacyParams,@"nodes":@{@"input":@[@0,@0],@"output":@[@200,@0],
+                @"clock":@[@0,@200],@"velocity":@[@200,@200]},
+            @"connections":@{@"output.audio":@"input",@"velocity.clock":@"clock"}}];
+        tri::GraphSpec legacyGraph;
+        assert(triassets::decodeGraph(converted,legacyGraph,nullptr));
+        assert(legacyGraph.nodes.size()==3 && legacyGraph.edges.size()==1);
+        for(const auto& node:legacyGraph.nodes)if(node.type==tri::AudioOutputNode)
+            assert(node.parameters.at(tri::OutputWidth)==1);
 
         // Opening a v4 project must go through the canonicaliser, not the v1/v2
         // migrator.
@@ -164,9 +194,9 @@ int main() {
         std::remove(dropPath.c_str());
         NSDictionary *opened=[editor valueForKey:@"document"];
         assert([opened[@"version"] isEqual:@4]);
-        assert([opened[@"nodes"] count]==9);
-        assert([opened[@"nodes"][2][@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
-        assert([opened[@"edges"][2][@"sourcePort"] isEqual:@"high"]);
+        assert([opened[@"nodes"] count]==7);
+        assert([opened[@"nodes"][1][@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
+        assert([opened[@"edges"][1][@"sourcePort"] isEqual:@"high"]);
 
         // Inspector editing: every wired action must exist and reach the
         // document. These three regressions (dead enum popup, dead name field,

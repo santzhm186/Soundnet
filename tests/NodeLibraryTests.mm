@@ -49,6 +49,10 @@ int main() {
         assert(items(library).count>0);
         [library setSearchQuery:@"soundnet.oscillator"];
         assert(items(library).count==1);
+        [library setSearchQuery:@"Project Settings"];
+        assert(items(library).count==1 && [items(library).firstObject[@"type"] intValue]==tri::nodeTypeForKey("soundnet.project-settings"));
+        [library setSearchQuery:@"Timecode"];
+        assert(items(library).count==1 && [items(library).firstObject[@"type"] intValue]==tri::nodeTypeForKey("soundnet.timecode"));
         [library setSearchQuery:@"  PROCESS oscillator  "];
         assert(items(library).count>0);
         [library setSearchQuery:@"definitely-no-such-node"];

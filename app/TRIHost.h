@@ -20,6 +20,8 @@
 - (void)stopNode:(uint64_t)nodeID;
 - (NSDictionary *)workflowAssets;
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;
+// Requested processing format, effective device format, and device UID choices.
+- (NSDictionary *)audioEnvironment;
 @property(nonatomic, readonly) NSString *status;
 @property(nonatomic, getter=isInputEnabled) BOOL inputEnabled;
 @property(nonatomic) BOOL processingEnabled;

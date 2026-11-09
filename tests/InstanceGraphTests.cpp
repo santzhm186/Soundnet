@@ -4,6 +4,11 @@
 #include <cstdio>
 using namespace tri;
 struct Sent {int frame;int status,note;};
+static GraphNode audioOutput(InstanceID id) {
+    GraphNode node{id,AudioOutputNode};
+    node.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;
+    return node;
+}
 int main() {
     GraphSpec graph;
     for(int i=1;i<=40;++i)graph.nodes.push_back({uint64_t(i),Osc1Node});
@@ -11,15 +16,15 @@ int main() {
     assert(graphOrder(graph,order) && order.size()==40);
     graph={};
     GraphNode a{1,ClipNode},b{2,ClipNode};
+    a.nodeVersion=b.nodeVersion=nodeSpec(ClipNode)->nodeVersion;
     a.clip={{{0,0x90,60,100},{.1,0x80,60,0}},.25};
     b.clip={{{0,0x90,72,100},{.1,0x80,72,0}},.25};
-    a.parameters={{ClipRun,1},{ClipLoop,1}};
-    b.parameters={{ClipRun,0},{ClipLoop,1}};
-    graph.nodes={a,b,{3,ClockNode},{4,CountNode},{5,StopNode},{6,StartNode},{7,WaitNode},{8,MidiOutNode},{9,MidiOutNode}};
-    graph.nodes[2].parameters={{ClockBPM,120}};
+    a.parameters={{ClipRun,1},{ClipLoop,1},{ClockBPM,120}};
+    b.parameters={{ClipRun,0},{ClipLoop,1},{ClockBPM,120}};
+    graph.nodes={a,b,{3,nodeTypeID("soundnet.timecode")},{4,CountNode},{5,StopNode},{6,StartNode},{7,WaitNode},{8,MidiOutNode},{9,MidiOutNode}};
     graph.nodes[3].parameters={{TriggerCount,3}};
     graph.nodes[6].parameters={{WaitSeconds,.05}};
-    graph.edges={{3,1,0},{3,2,0},{1,4,0,1},{4,5,0},{5,1,1},{6,7,0},{7,2,1},{1,8,0},{2,9,0}};
+    graph.edges={{1,4,0,1},{4,5,0},{5,1,0},{6,7,0},{7,2,0},{1,8,0},{2,9,0}};
     assert(graphOrder(graph,order));
     auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;engine.prepare(48000);
     std::vector<Sent> sent;sent.reserve(100);
@@ -42,7 +47,7 @@ int main() {
     GraphSpec audio;
     GraphNode osc{11,Osc1Node};osc.parameters={{Wave1,0},{Level1,.8f},{Attack,.001f},{Release,.005f}};
     GraphNode quiet=osc;quiet.id=12;quiet.parameters[Level1]=0;
-    audio.nodes={{10,MidiNode},osc,quiet,{13,HardwareOutputNode},{14,HardwareOutputNode}};
+    audio.nodes={{10,MidiNode},osc,quiet,audioOutput(13),audioOutput(14)};
     audio.edges={{10,11,0},{10,12,0},{11,13,0},{12,14,0}};
     auto synthStorage=std::make_unique<Engine>();auto& synth=*synthStorage;synth.prepare(48000);assert(synth.setGraph(audio));
     synth.midi(0x90,69,100);
@@ -92,7 +97,7 @@ int main() {
         GraphSpec side;
         GraphNode noise{31,NoiseNode};
         noise.parameters={{NoiseLevel,.8f}};
-        side.nodes={noise,{32,CompressorNode},{33,HardwareOutputNode}};
+        side.nodes={noise,{32,CompressorNode},audioOutput(33)};
         side.edges={{31,32,1,0},{32,33,0,0}};
         auto compStorage=std::make_unique<Engine>();auto& comp=*compStorage;comp.prepare(48000);assert(comp.setGraph(side));
         float peak=0;
@@ -137,7 +142,7 @@ int main() {
         metronome.parameters={{MetronomeLevel,.8f},{MetronomeBPM,120},{MetronomeBeats,4}};
         chain.nodes.push_back(metronome);
         chain.edges.push_back({169,200,0,0});
-        chain.nodes.push_back({201,HardwareOutputNode});
+        chain.nodes.push_back(audioOutput(201));
         chain.edges.push_back({200,201,0,0});
         auto deepStorage=std::make_unique<Engine>();auto& deep=*deepStorage;assert(deep.setGraph(chain));deep.prepare(48000);
         // The pulse is published like the editor's play button: a value that is
@@ -154,7 +159,7 @@ int main() {
     // Global Stop gates generators, input and host clock until explicit resume.
     {
         GraphSpec g;
-        g.nodes={{1,NoiseNode},{2,HardwareOutputNode}};g.edges={{1,2,0}};
+        g.nodes={{1,NoiseNode},audioOutput(2)};g.edges={{1,2,0}};
         auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
         stopped->render(nullptr,nullptr,l,r,128);
         bool audible=false;for(float sample:l)audible|=std::abs(sample)>.001f;assert(audible);
@@ -195,7 +200,7 @@ int main() {
     // Waiting triggers and a running metronome must not survive a stop/resume.
     {
         GraphSpec g;GraphNode wait{2,WaitNode};wait.parameters={{WaitSeconds,.05f}};
-        g.nodes={{1,StartNode},wait,{3,MetronomeNode},{4,HardwareOutputNode}};
+        g.nodes={{1,StartNode},wait,{3,MetronomeNode},audioOutput(4)};
         g.edges={{1,2,0},{2,3,0},{3,4,0}};
         auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
         g.nodes[0].parameters[TriggerPulse]=1;assert(stopped->setGraph(g));

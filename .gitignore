@@ -6,3 +6,5 @@ build/
 *.component/
 /ui/Ternary.icns
 models/
+__pycache__/
+*.pyc

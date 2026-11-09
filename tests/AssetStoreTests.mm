@@ -33,5 +33,41 @@ int main() { @autoreleasepool {
         for(int i=0;i<128;++i)peak=std::max(peak,std::fabs(outL[i]));
     }
     assert(peak>.01f);
-    puts("PASS: asset store reuses embedded audio for graph-only edits.");
+    // v4 has nodeKey rather than type. An unrelated new node and a parameter
+    // edit must preserve the decoded sample, not just an identical v3 graph.
+    NSString* why=nil;
+    NSDictionary* canonical=triassets::canonicalGraph(graph,&why);
+    assert(canonical);
+    NSData* json=[NSJSONSerialization dataWithJSONObject:canonical options:0 error:nil];
+    NSMutableDictionary* current=[NSJSONSerialization JSONObjectWithData:json
+        options:NSJSONReadingMutableContainers error:nil];
+    assert(tri::PreparedAssets::sameNodeAssets(current,current));
+    assert(store.replace(@{@"graph":current},engine));
+    auto v4Sample=store.lastGraph.nodes[1].sample;
+    current[@"nodes"][1][@"parameters"][@"sampler.gain"]=@.25;
+    [current[@"nodes"] addObject:[@{@"id":@90,@"nodeKey":@"soundnet.comment",@"x":@0,@"y":@0,
+                                  @"parameters":@{}} mutableCopy]];
+    assert(store.replace(@{@"graph":current},engine));
+    assert(store.lastGraph.nodes[1].sample.get()==v4Sample.get());
+    NSDictionary* accepted=store.current;
+    current[@"nodes"][1][@"asset"][@"pcm"]=@"not-base64";
+    assert(!store.replace(@{@"graph":current},engine));
+    assert(store.current==accepted);
+    assert(store.lastGraph.nodes[1].sample.get()==v4Sample.get());
+
+    // The same permissive document policy reaches the actual host store. The
+    // unavailable node and its raw fields survive, while known nodes can run.
+    NSDictionary* unknown=@{@"version":@4,@"nodes":@[
+        @{@"id":@1,@"nodeKey":@"example.missing",@"nodeVersion":@1,@"x":@0,@"y":@0,
+          @"parameters":@{@"future":@7},@"texts":@{@"note":@"retain"}},
+        @{@"id":@2,@"nodeKey":@"soundnet.noise",@"x":@200,@"y":@0,@"parameters":@{}},
+        @{@"id":@3,@"nodeKey":@"soundnet.audio-output",@"nodeVersion":@2,@"x":@400,@"y":@0,@"parameters":@{}}],
+        @"edges":@[@{@"source":@2,@"sourcePort":@"audio",@"target":@3,@"port":@"audio"}]};
+    assert(store.replace(@{@"graph":unknown},engine));
+    assert(store.lastGraph.nodes[0].unavailable);
+    assert([store.current[@"graph"] isEqual:unknown]);
+    engine.render(nullptr,nullptr,outL,outR,128);
+    peak=0;for(float sample:outL)peak=std::max(peak,std::fabs(sample));
+    assert(peak>0.01f);
+    puts("PASS: per-node v4 asset reuse, invalid update rollback and unavailable host nodes.");
 }}

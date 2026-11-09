@@ -12,7 +12,9 @@ NSDictionary *encodeClipAsset(NSString *name, const tri::MidiClip &clip, NSStrin
 bool decode(NSDictionary *assets, tri::MidiClip &clip, tri::NoteModel &model, NSString **why);
 bool decodeGraph(NSDictionary *document, tri::GraphSpec &graph, NSString **why,
                  bool decodeAssets=true, bool allowUnknownNodes=false,
-                 std::vector<tri::Diagnostic> *diagnostics=nullptr);
+                 std::vector<tri::Diagnostic> *diagnostics=nullptr,
+                 const tri::GraphSpec *preparedGraph=nullptr,
+                 NSDictionary *preparedDocument=nil);
 // Upgrade a v3 document to the canonical v4 shape: nodeKey, stable parameter
 // keys, stable port IDs. Unknown nodes and their edges are preserved verbatim.
 NSDictionary *canonicalGraph(NSDictionary *document, NSString **why);

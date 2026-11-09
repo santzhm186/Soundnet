@@ -10,14 +10,15 @@ using namespace tri;
 int main() {
     std::set<int> catalogSeen;
     for(int type:nodeCatalog()) assert(catalogSeen.insert(type).second);
-    for(int type=1;type<=CommentNode;++type) {
-        if(type==Osc2Node || type==Osc3Node)continue;
+    for(const auto& spec:nodeSpecs()) {
+        if(!spec.instantiable)continue;
+        const int type=spec.type;
         const NodeMeta* meta=nodeMeta(type);
         assert(meta && meta->title && *meta->title);
         assert(meta->category && *meta->category);
         GraphSpec graph;
         GraphNode node;
-        node.id=1;node.type=type;
+        node.id=1;node.type=type;node.nodeVersion=spec.nodeVersion;node.stateVersion=spec.stateVersion;
         graph.nodes.push_back(node);
         std::vector<size_t> order;
         assert(graphOrder(graph,order));
@@ -37,7 +38,7 @@ int main() {
     }
     assert(nodeAcceptsParam(FilterNode,FilterCutoff));
     assert(!nodeAcceptsParam(NoiseNode,FilterCutoff));
-    assert(nodeAcceptsParam(OutputNode,OutputWidth));
+    assert(nodeAcceptsParam(AudioOutputNode,OutputWidth));
     assert(nodeAcceptsParam(MidiOutNode,MidiOutChannel));
     puts("PASS: node registry metadata and ports are consistent");
 }

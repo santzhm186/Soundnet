@@ -50,6 +50,7 @@
     {
       "id": 5,
       "type": 19,
+      "nodeVersion": 2,
       "x": 1080,
       "y": 160,
       "parameters": {

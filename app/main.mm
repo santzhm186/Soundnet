@@ -39,7 +39,8 @@
         ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; },
         ^BOOL{ return host.processingEnabled; },
         ^(BOOL enabled){ host.processingEnabled=enabled; },
-        ^(uint64_t nodeID){ [host stopNode:nodeID]; });
+        ^(uint64_t nodeID){ [host stopNode:nodeID]; },
+        ^NSDictionary *{ return host.audioEnvironment; });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];
@@ -380,8 +381,8 @@ int main(int argc, const char **argv) {
         if (argc==2 && strcmp(argv[1],"--self-test")==0) return [TRIHost runOfflineCheck];
         if (argc==2 && (strcmp(argv[1],"--version")==0 || strcmp(argv[1],"-v")==0)) {
             NSDictionary *info=[NSBundle mainBundle].infoDictionary;
-            std::printf("Soundnet %s (%s)\n",[info[@"CFBundleShortVersionString"] UTF8String] ?: "2.37.0",
-                        [info[@"CFBundleVersion"] UTF8String] ?: "43");
+            std::printf("Soundnet %s (%s)\n",[info[@"CFBundleShortVersionString"] UTF8String] ?: "2.9.1",
+                        [info[@"CFBundleVersion"] UTF8String] ?: "91");
             return 0;
         }
         if (argc==3 && strcmp(argv[1],"--validate")==0) return runValidate(argv[2]);

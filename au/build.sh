@@ -2,6 +2,7 @@
 # build.sh OUTPUT_DIRECTORY [INTERMEDIATE_DIRECTORY]
 set -euo pipefail
 src="$(cd "$(dirname "$0")" && pwd)"
+python3 "$src/../scripts/generate-node-registry.py"
 out="${1:-$src/../build-au}"
 obj="${2:-$src/../build-au/sdk}"
 mkdir -p "$out" "$obj"

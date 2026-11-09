@@ -10,7 +10,7 @@
 using namespace tri;
 
 static void add(GraphSpec& graph, InstanceID id, int type, std::map<int, float> parameters = {}) {
-    GraphNode node;node.id=id;node.type=type;node.parameters=std::move(parameters);graph.nodes.push_back(node);
+    GraphNode node;node.id=id;node.type=type;node.nodeVersion=nodeSpec(type)->nodeVersion;node.parameters=std::move(parameters);graph.nodes.push_back(node);
 }
 static void connect(GraphSpec& graph, InstanceID source, InstanceID target, int port = 0, int sourcePort = 0) {
     graph.edges.push_back({source,target,port,sourcePort});
@@ -20,7 +20,7 @@ int main() {
     GraphSpec graph;
     add(graph,1,MidiNode);
     add(graph,2,Osc1Node,{{Wave1,0},{Level1,.3f},{Attack,.001f},{Sustain,1}});
-    add(graph,3,OutputNode,{{Master,.5f}});
+    add(graph,3,AudioOutputNode,{{Master,.5f}});
     connect(graph,1,2);connect(graph,2,3);
     auto engine=std::make_unique<Engine>();
     if(!engine->setGraph(graph))return 1;
@@ -45,6 +45,37 @@ int main() {
     }
     render.join();
     if(failed)return 2;
+    // Regression: reset used to walk controlNodes while publication replaced
+    // that map. Keep adding/removing task nodes while the render thread handles
+    // stop and panic requests. Only published snapshots may be visited there.
+    {
+        auto changing=std::make_unique<Engine>();changing->prepare(48000);
+        GraphSpec tasks;
+        for(int i=0;i<16;++i)add(tasks,100+i,AiMusicNode);
+        if(!changing->setGraph(tasks))return 3;
+        std::atomic<bool> started{false},done{false};
+        std::atomic<unsigned> blocks{0};
+        std::thread audio([&] {
+            float left[128]{},right[128]{};
+            started.store(true,std::memory_order_release);
+            while(!done.load(std::memory_order_acquire)) {
+                changing->render(nullptr,nullptr,left,right,128);
+                blocks.fetch_add(1,std::memory_order_relaxed);
+                for(float value:left)if(!std::isfinite(value))failed=true;
+            }
+        });
+        while(!started.load(std::memory_order_acquire))std::this_thread::yield();
+        for(int edit=0;edit<500;++edit) {
+            auto next=tasks;next.nodes.back().id=1000+edit;
+            if(!changing->setGraph(next))failed=true;
+            changing->panic();
+            if(edit%2==0)changing->setProcessingEnabled(false);
+            else changing->setProcessingEnabled(true);
+            changing->stopNode(next.nodes.back().id);
+        }
+        done.store(true,std::memory_order_release);audio.join();
+        if(!blocks.load()||failed)return 4;
+    }
     puts("PASS: concurrent render, publish, panic and MIDI input");
     return 0;
 }

@@ -65,7 +65,7 @@ int main(int argc,char** argv) {
             check(component,"find installed Ternary");
             UInt32 version=0;
             requireOK(AudioComponentGetVersion(component,&version),"installed version");
-            check(version==0x25A00,"system found installed Soundnet 2.90.0");
+            check(version==0x20901,"system found installed Soundnet 2.9.1");
             __block AudioUnit remote=nullptr;
             __block OSStatus creation=kAudioUnitErr_Uninitialized;
             auto ready=dispatch_semaphore_create(0);
@@ -310,7 +310,7 @@ int main(int argc,char** argv) {
               @{@"id":@101,@"type":@(tri::DawMidiNode),@"x":@0,@"y":@0,@"parameters":@{}},
               @{@"id":@104,@"type":@(tri::ArrangerNode),@"x":@200,@"y":@0,@"parameters":@{}},
               @{@"id":@102,@"type":@(tri::Osc1Node),@"x":@400,@"y":@0,@"parameters":@{}},
-              @{@"id":@103,@"type":@(tri::DawOutputNode),@"x":@600,@"y":@0,@"parameters":@{}}],
+              @{@"id":@103,@"type":@(tri::AudioOutputNode),@"nodeVersion":@2,@"x":@600,@"y":@0,@"parameters":@{}}],
             @"edges":@[@{@"source":@101,@"target":@104,@"port":@0},
                          @{@"source":@104,@"sourcePort":@2,@"target":@102,@"port":@0},
                          @{@"source":@102,@"target":@103,@"port":@0}]};
@@ -320,6 +320,18 @@ int main(int argc,char** argv) {
         requireOK(MusicDeviceMIDIEvent(unit,0x90,69,100,0),"play independent graph");
         render();check(peak()>.001,"arranged low voice reaches the oscillator and DAW audio output");
         requireOK(MusicDeviceMIDIEvent(unit,0x80,69,0,0),"release independent graph");
+        NSDictionary *audioGraph=@{@"version":@4,
+            @"nodes":@[
+              @{@"id":@101,@"nodeKey":@"soundnet.audio-input",@"nodeVersion":@2,
+                @"x":@0,@"y":@0,@"parameters":@{@"input.gain":@.5}},
+              @{@"id":@102,@"nodeKey":@"soundnet.audio-output",@"nodeVersion":@2,
+                @"x":@200,@"y":@0,@"parameters":@{@"output.master":@1,@"output.width":@1}}],
+            @"edges":@[@{@"source":@101,@"sourcePort":@"audio",@"target":@102,@"port":@"audio"}]};
+        requireOK(workflow->setAssets(@{@"graph":audioGraph}),"publish generic audio I/O graph");
+        finishHostTurn();
+        render();
+        check(std::abs(l[450]-.125f)<1e-6f && std::abs(r[450]+.125f)<1e-6f,
+              "generic audio I/O passes both sidechain channels at the node gain");
         if (argc>2) {
             AudioUnitCocoaViewInfo view{};
             bytes=sizeof(view);

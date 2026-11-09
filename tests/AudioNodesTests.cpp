@@ -9,7 +9,7 @@
 using namespace tri;
 
 static size_t add(GraphSpec& graph, InstanceID id, int type, std::map<int,float> parameters={}) {
-    GraphNode node;node.id=id;node.type=type;node.parameters=std::move(parameters);
+    GraphNode node;node.id=id;node.type=type;node.nodeVersion=nodeSpec(type)->nodeVersion;node.parameters=std::move(parameters);
     graph.nodes.push_back(std::move(node));
     return graph.nodes.size()-1;
 }
@@ -33,7 +33,7 @@ int main() {
         add(graph,1,NoiseNode,{{NoiseLevel,.5f},{NoiseType,0}});
         add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,1000},{FilterResonance,1}});
         add(graph,3,ReverbNode,{{ReverbMix,.4f},{ReverbSize,.5f}});
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         std::vector<size_t> order;
         assert(graphOrder(graph,order));
@@ -75,7 +75,7 @@ int main() {
         add(graph,1,NoiseNode,{{NoiseLevel,.6f},{NoiseType,1}});
         add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,1800},{FilterResonance,1.2f}});
         add(graph,3,ReverbNode,{{ReverbMix,.5f},{ReverbSize,.7f},{ReverbDamping,.2f},{ReverbWidth,1}});
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
@@ -91,7 +91,7 @@ int main() {
         add(graph,1,MidiNode);
         add(graph,2,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,3,ReverbNode,{{ReverbMix,1},{ReverbSize,.6f},{ReverbDamping,.2f},{ReverbWidth,1},{ReverbPreDelay,120}});
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -109,7 +109,7 @@ int main() {
         add(graph,10,MidiNode);
         add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,180},{FilterResonance,.7f}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,110);
@@ -132,7 +132,7 @@ int main() {
     {
         GraphSpec graph;
         add(graph,1,NoiseNode,{{NoiseLevel,1}});
-        add(graph,2,OutputNode,{{Master,1}});
+        add(graph,2,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);
         graph.nodes[1].bypass=true;
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
@@ -152,7 +152,7 @@ int main() {
         add(graph,10,MidiNode);
         size_t sampler=add(graph,1,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,1},{SamplerAttack,.001f},{SamplerRelease,.02f},{SamplerStart,0},{SamplerEnd,1},{SamplerXfade,10}});
         graph.nodes[sampler].sample=sample;
-        add(graph,2,OutputNode,{{Master,1}});
+        add(graph,2,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
         std::vector<size_t> order;assert(graphOrder(graph,order));
         assert(!validGraphParam(SamplerNode,NoiseLevel));
@@ -182,7 +182,7 @@ int main() {
         add(graph,10,MidiNode);
         size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1}});
         graph.nodes[sampler].sample=sample;graph.nodes[sampler].bypass=true;
-        add(graph,2,OutputNode,{{Master,1}});
+        add(graph,2,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
@@ -200,7 +200,7 @@ int main() {
         add(graph,10,MidiNode);
         size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1},{SamplerLoop,1}});
         graph.nodes[sampler].sample=sample;
-        add(graph,2,OutputNode,{{Master,1}});
+        add(graph,2,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
@@ -219,7 +219,7 @@ int main() {
         add(graph,10,MidiNode);
         size_t sampler=add(graph,2,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,0},{SamplerAttack,.001f},{SamplerRelease,.01f},{SamplerStart,0},{SamplerEnd,1},{SamplerReverse,1},{SamplerVelocity,1}});
         graph.nodes[sampler].sample=sample;
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,127);
@@ -240,7 +240,7 @@ int main() {
         add(graph,2,StopNode,{{TriggerPulse,0}});
         size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
         graph.nodes[clip].sample=sample;
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,3,0);connect(graph,2,3,0);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
@@ -266,7 +266,7 @@ int main() {
         add(graph,1,StartNode,{{TriggerPulse,0}});
         size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
         graph.nodes[clip].sample=sample;
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,1,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
@@ -290,7 +290,7 @@ int main() {
         add(graph,1,StartNode,{{TriggerPulse,0}});
         size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,0},{AudioClipReverse,1}});
         graph.nodes[clip].sample=sample;
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,1,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
@@ -313,7 +313,7 @@ int main() {
         add(graph,10,MidiNode);
         add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,2,CompressorNode,{{CompThreshold,-30},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -335,7 +335,7 @@ int main() {
             add(graph,1,Osc1Node,{{Wave1,0},{Level1,.005f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
             add(graph,2,CompressorNode,{{CompThreshold,-40},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
             add(graph,4,NoiseNode,{{NoiseLevel,.5f},{NoiseType,0}});
-            add(graph,3,OutputNode,{{Master,1}});
+            add(graph,3,AudioOutputNode,{{Master,1}});
             connect(graph,10,1);connect(graph,1,2,0);connect(graph,2,3);
             if(sidechain)connect(graph,4,2,1);
             return graph;
@@ -356,7 +356,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,NoiseNode,{{NoiseLevel,1},{NoiseType,0}});
         add(graph,2,LimiterNode,{{LimiterThreshold,-6},{LimiterRelease,.05f},{LimiterCeiling,-12},{LimiterGain,2}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(24000),right(24000);
@@ -376,7 +376,7 @@ int main() {
         add(graph,10,MidiNode);
         add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,2,ChorusNode,{{ChorusRate,.8f},{ChorusDepth,.5f},{ChorusMix,1},{ChorusDelay,12}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -399,7 +399,7 @@ int main() {
         add(graph,10,MidiNode);
         add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,2,TremoloNode,{{TremoloRate,8},{TremoloDepth,1},{TremoloMix,1},{TremoloStereo,0}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -426,7 +426,7 @@ int main() {
         add(graph,10,MidiNode);
         add(graph,1,Osc1Node,{{Wave1,0},{Level1,.8f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
         add(graph,2,BitcrusherNode,{{CrushBits,3},{CrushRate,3000},{CrushMix,1}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -489,7 +489,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,MidiNode);add(graph,2,Osc1Node,{{Level1,.7f}});
         add(graph,3,DelayNode,{{DelaySync,1},{DelayDivision,1},{DelayFeedback,.3f},{DelayMix,.4f}});
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
@@ -502,7 +502,7 @@ int main() {
     // Comment nodes are inert and do not affect the graph.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,Osc1Node);add(graph,3,HardwareOutputNode);add(graph,4,CommentNode);
+        add(graph,1,MidiNode);add(graph,2,Osc1Node);add(graph,3,AudioOutputNode);add(graph,4,CommentNode);
         connect(graph,1,2);connect(graph,2,3);
         assert(validGraphParam(CommentNode,0)==false);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
@@ -558,7 +558,7 @@ int main() {
         add(graph,1,MidiNode);
         add(graph,2,Osc1Node,{{Level1,.8f}});
         add(graph,3,ChorusNode,{{ChorusMix,.5f},{ChorusDepth,.6f}});
-        add(graph,4,OutputNode,{{Master,1},{OutputWidth,0}});
+        add(graph,4,AudioOutputNode,{{Master,1},{OutputWidth,0}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(12000),right(12000);
@@ -570,8 +570,7 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double wide=0;for(size_t i=0;i<left.size();++i)wide+=(left[i]-right[i])*(left[i]-right[i]);
         assert(wide>narrow);
-        assert(validGraphParam(OutputNode,OutputWidth));
-        assert(validGraphParam(HardwareOutputNode,OutputWidth));
+        assert(validGraphParam(AudioOutputNode,OutputWidth));
         puts("output width collapses and widens the stereo image");
     }
     // Transpose shifts note-ons and their matching note-offs.
@@ -603,7 +602,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,NoiseNode,{{NoiseLevel,.6f},{NoiseType,0}});
         add(graph,2,GateNode,{{GateThreshold,-20},{GateRange,.8f},{GateAttack,.001f},{GateRelease,.05f}});
-        add(graph,3,OutputNode,{{Master,1}});
+        add(graph,3,AudioOutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
@@ -665,7 +664,7 @@ int main() {
             sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.5f);
             size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
             graph.nodes[clip].sample=sample;
-            add(graph,4,OutputNode,{{Master,1}});
+            add(graph,4,AudioOutputNode,{{Master,1}});
             connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
             return graph;
         };
@@ -687,7 +686,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,StartNode);add(graph,2,StopNode);
         add(graph,3,MetronomeNode,{{MetronomeBPM,120},{MetronomeLevel,.5f},{MetronomeAccent,1},{MetronomeBeats,4}});
-        add(graph,4,OutputNode,{{Master,1}});
+        add(graph,4,AudioOutputNode,{{Master,1}});
         connect(graph,1,3);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));

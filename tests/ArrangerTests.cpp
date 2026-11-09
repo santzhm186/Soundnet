@@ -100,12 +100,16 @@ int main() {
         Session s{2};
         auto& clip = s.graph.nodes.front();
         clip.type = ClipNode;
+        clip.nodeVersion = nodeSpec(ClipNode)->nodeVersion;
         // At 120 BPM and 48 kHz, the events land 24 and 72 samples into the block.
         clip.clip = {{{.001,0x91,60,83},{.003,0x81,60,0}},1};
-        clip.parameters = {{ClipRun,1},{ClipLoop,0}};
-        s.graph.nodes.push_back({20,ClockNode});
-        s.graph.nodes.back().parameters[ClockBPM] = 120;
-        s.graph.edges.push_back({20,1,0}); s.publish(); s.tick();
+        clip.parameters = {{ClipRun,1},{ClipLoop,0},{ClockBPM,120}};
+        s.graph.nodes.push_back({20,nodeTypeID("soundnet.timecode")});
+        s.publish();
+        // The session has already advanced one block. A newly inserted clip
+        // uses the shared timeline rather than implicitly starting its own.
+        s.engine->seekTimecode(0);
+        s.tick();
         assert(s.output.frames.size() == 2);
         assert(std::abs(s.output.frames[0]-24)<=1 && std::abs(s.output.frames[1]-72)<=1);
         s.expect({});

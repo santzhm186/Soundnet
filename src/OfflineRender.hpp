@@ -50,17 +50,8 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     if(cancel())return false;
     if(!(seconds>.05)||seconds>120){why="导出时长需在 0.05–120 秒之间。";return false;}
     if(rate<8000||rate>192000){why="导出采样率需在 8–192 kHz 之间。";return false;}
-    bool hasHardware=false,hasGraphOutput=false,hasDaw=false;
-    double bpm=120;
-    for(const GraphNode& node:graph.nodes) {
-        if(node.type==ClockNode) bpm=graphParamValue(node,ClockBPM);
-        if(node.type==HardwareOutputNode)hasHardware=true;
-        if(node.type==OutputNode)hasGraphOutput=true;
-        if(node.type==DawOutputNode)hasDaw=true;
-    }
-    if(hasDaw&&!hasHardware&&!hasGraphOutput) {
-        for(GraphNode& node:graph.nodes)if(node.type==DawOutputNode)node.type=HardwareOutputNode;
-    }
+    // SMF conversion tempo encodes elapsed seconds; it is not a project BPM.
+    const double bpm=120;
     bool hasStart=false;
     for(GraphNode& node:graph.nodes) {
         if(node.type==StartNode) {node.parameters[TriggerPulse]=0;hasStart=true;}
@@ -123,11 +114,7 @@ inline bool renderStems(GraphSpec graph,double seconds,double rate,
         for(size_t i=0;i<copy.nodes.size();++i) {
             GraphNode& node=copy.nodes[i];
             const bool output=nodeHas(nodeCapabilities(node.type),CapOutputSink);
-            if(i==index) {
-                if(node.type==DawOutputNode) node.type=HardwareOutputNode;
-            } else if(output) {
-                node.bypass=true;
-            }
+            if(i!=index && output)node.bypass=true;
         }
         Result result;
         if(!render(copy,seconds,rate,result,why,cancelled)) {stems.clear();return false;}

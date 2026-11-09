@@ -20,13 +20,13 @@ int main() {
     std::filesystem::create_directories("build/tests-offline");
     GraphSpec graph;
     GraphNode start;start.id=1;start.type=StartNode;start.x=0;start.y=0;graph.nodes.push_back(start);
-    GraphNode clip;clip.id=2;clip.type=ClipNode;clip.x=120;clip.y=0;
+    GraphNode clip;clip.id=2;clip.type=ClipNode;clip.nodeVersion=nodeSpec(ClipNode)->nodeVersion;clip.x=120;clip.y=0;
     clip.clip.lengthBeats=2;
     clip.clip.events={{0,0x90,60,100},{1,0x80,60,0}};
     graph.nodes.push_back(clip);
     GraphNode osc;osc.id=3;osc.type=Osc1Node;osc.x=240;osc.y=0;osc.parameters[Level1]=.6f;graph.nodes.push_back(osc);
-    GraphNode out;out.id=4;out.type=OutputNode;out.x=360;out.y=0;out.parameters[Master]=1;graph.nodes.push_back(out);
-    edge(graph,1,2,1);edge(graph,2,3);edge(graph,3,4);
+    GraphNode out;out.id=4;out.type=AudioOutputNode;out.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;out.x=360;out.y=0;out.parameters[Master]=1;graph.nodes.push_back(out);
+    edge(graph,1,2);edge(graph,2,3);edge(graph,3,4);
     std::vector<size_t> order;assert(graphOrder(graph,order));
 
     offline::Result result;std::string why;
@@ -39,11 +39,13 @@ int main() {
 
     GraphSpec midiGraph;
     GraphNode midiStart;midiStart.id=1;midiStart.type=StartNode;midiGraph.nodes.push_back(midiStart);
-    GraphNode midiClip;midiClip.id=2;midiClip.type=ClipNode;midiClip.clip.lengthBeats=1;
-    midiClip.clip.events={{0,0x90,67,110},{.5,0x80,67,0}};midiGraph.nodes.push_back(midiClip);
+    GraphNode midiClip;midiClip.id=2;midiClip.type=ClipNode;midiClip.nodeVersion=nodeSpec(ClipNode)->nodeVersion;midiClip.clip.lengthBeats=1;
+    midiClip.clip.events={{0,0x90,67,110},{.5,0x80,67,0}};
+    midiClip.parameters[ClockBPM]=90; // tempo belongs to this clip
+    midiGraph.nodes.push_back(midiClip);
     GraphNode midiOut;midiOut.id=3;midiOut.type=MidiOutNode;midiGraph.nodes.push_back(midiOut);
-    edge(midiGraph,1,2,1);edge(midiGraph,2,3);
-    GraphNode midiClock;midiClock.id=4;midiClock.type=ClockNode;midiClock.parameters[ClockBPM]=90;
+    edge(midiGraph,1,2);edge(midiGraph,2,3);
+    GraphNode midiClock;midiClock.id=4;midiClock.type=nodeTypeID("soundnet.timecode");
     midiGraph.nodes.push_back(midiClock);
     std::vector<size_t> midiOrder;assert(graphOrder(midiGraph,midiOrder));
     offline::Result midiResult;
@@ -54,7 +56,12 @@ int main() {
     std::string midiPath="build/tests-offline/export.mid";
     std::vector<smf::TimedEvent> timed;
     for(const auto& e:midiResult.midi)timed.push_back({e.seconds,e.status,e.a,e.b});
-    assert(midiResult.bpm==90);
+    // SMF uses a neutral conversion tempo to preserve absolute event seconds;
+    // it does not impose one project tempo on independently timed nodes.
+    assert(midiResult.bpm==120);
+    double firstRelease=-1;
+    for(const auto& event:midiResult.midi)if((event.status&0xf0)==0x80){firstRelease=event.seconds;break;}
+    assert(std::abs(firstRelease-1.0/3.0)<2.0/48000.0);
     assert(smf::writeMulti(midiPath,timed,2,midiResult.bpm,why));
     std::ifstream in(midiPath,std::ios::binary);std::string midiBytes((std::istreambuf_iterator<char>(in)),{});
     assert(midiBytes.rfind("MThd",0)==0);
@@ -111,19 +118,6 @@ int main() {
     assert(decoded32.frames()==48000 && decoded32.channels==2);
     puts("32-bit float export round-trips through the WAV reader");
 
-    GraphSpec daw;
-    GraphNode dawStart;dawStart.id=1;dawStart.type=StartNode;daw.nodes.push_back(dawStart);
-    GraphNode dawClip;dawClip.id=2;dawClip.type=ClipNode;dawClip.clip.lengthBeats=2;
-    dawClip.clip.events={{0,0x90,64,100},{1,0x80,64,0}};daw.nodes.push_back(dawClip);
-    GraphNode dawOsc;dawOsc.id=3;dawOsc.type=Osc1Node;daw.nodes.push_back(dawOsc);
-    GraphNode dawOut;dawOut.id=4;dawOut.type=DawOutputNode;dawOut.parameters[Master]=1;daw.nodes.push_back(dawOut);
-    edge(daw,1,2,1);edge(daw,2,3);edge(daw,3,4);
-    offline::Result redirected;
-    assert(offline::render(daw,1,48000,redirected,why));
-    double redirectedPeak=0;for(float value:redirected.left)redirectedPeak=std::max(redirectedPeak,double(std::fabs(value)));
-    assert(redirectedPeak>.01);
-    puts("DAW-only graphs export through the hardware path");
-
     offline::Result rateResult;
     assert(offline::render(graph,1,44100,rateResult,why));
     assert(std::abs(rateResult.rate-44100)<.1 && rateResult.left.size()==44100);
@@ -131,9 +125,9 @@ int main() {
 
     GraphSpec stemGraph;
     GraphNode noise;noise.id=1;noise.type=NoiseNode;noise.parameters[NoiseLevel]=.5f;stemGraph.nodes.push_back(noise);
-    GraphNode outA;outA.id=2;outA.type=HardwareOutputNode;outA.parameters[Master]=1;stemGraph.nodes.push_back(outA);
+    GraphNode outA;outA.id=2;outA.type=AudioOutputNode;outA.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;outA.parameters[Master]=1;stemGraph.nodes.push_back(outA);
     GraphNode noiseB;noiseB.id=3;noiseB.type=NoiseNode;noiseB.parameters[NoiseLevel]=.3f;stemGraph.nodes.push_back(noiseB);
-    GraphNode outB;outB.id=4;outB.type=HardwareOutputNode;outB.parameters[Master]=1;stemGraph.nodes.push_back(outB);
+    GraphNode outB;outB.id=4;outB.type=AudioOutputNode;outB.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;outB.parameters[Master]=1;stemGraph.nodes.push_back(outB);
     edge(stemGraph,1,2);edge(stemGraph,3,4);
     std::vector<offline::Stem> stems;
     assert(offline::renderStems(stemGraph,.25,48000,stems,why));
@@ -159,5 +153,5 @@ int main() {
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
     puts("invalid export durations are rejected");
-    puts("PASS: offline rendering, stems, WAV/multi-track MIDI export, MIDI capture and output redirection.");
+    puts("PASS: offline rendering, stems, WAV/multi-track MIDI export and MIDI capture.");
 }

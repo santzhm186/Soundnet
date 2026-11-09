@@ -204,7 +204,7 @@ bool documentNodeType(NSDictionary *obj,bool allowUnknown,int& type,bool& unavai
 // A v4 parameter key is the stable alias; a v3 key is the numeric ID. Both are
 // accepted so migration never depends on field order.
 int documentParamID(NSString *key,int type,bool strict,NSString **why) {
-    const int byKey=tri::paramIdForKey(key.UTF8String);
+    const int byKey=tri::nodeParamIdForKey(type,key.UTF8String);
     if(byKey>=0)return byKey;
     NSScanner *scan=[NSScanner scannerWithString:key];
     int pid=0;
@@ -221,7 +221,8 @@ int documentParamID(NSString *key,int type,bool strict,NSString **why) {
 }
 
 bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, bool decodeAssets,
-                 bool allowUnknownNodes, std::vector<tri::Diagnostic>* diagnostics) {
+                 bool allowUnknownNodes, std::vector<tri::Diagnostic>* diagnostics,
+                 const tri::GraphSpec* preparedGraph, NSDictionary* preparedDocument) {
     if(![document isKindOfClass:NSDictionary.class] || ![document[@"nodes"] isKindOfClass:NSArray.class] ||
        ![document[@"edges"] isKindOfClass:NSArray.class])
         return fail(why,@"请选择 Soundnet 工作流文件。");
@@ -229,7 +230,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
     if(!numeric(rawVersion))
         return fail(why,@"请选择版本 3 或 4 的 Soundnet 工作流。");
     const int version=[rawVersion intValue];
-    if(version!=3 && version!=4)
+    if((version!=3 && version!=4) || [rawVersion doubleValue]!=version)
         return fail(why,@"请选择版本 3 或 4 的 Soundnet 工作流。");
     const bool strict=version>=4;
     auto integer=[](id v,double min,double max) {
@@ -237,7 +238,23 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             [v doubleValue]<=max && std::trunc([v doubleValue])==[v doubleValue];
     };
     tri::GraphSpec next;
+    if([document[@"settings"] isKindOfClass:NSDictionary.class]) {
+        id required=document[@"settings"][@"environmentRequired"];
+        if(required && ![required isKindOfClass:NSNumber.class])return fail(why,@"工程环境要求应为布尔值。");
+        next.environmentRequired=[required boolValue];
+    }
     std::vector<tri::Diagnostic> early;
+    // Resource reuse is per instance, independent of edits to unrelated nodes.
+    // The document comparison protects against replacing an asset in place.
+    std::map<tri::InstanceID,const tri::GraphNode*> preparedNodes;
+    NSMutableDictionary *preparedRows=[NSMutableDictionary new];
+    if(preparedGraph && [preparedDocument isKindOfClass:NSDictionary.class]) {
+        for(const auto& old:preparedGraph->nodes)preparedNodes.emplace(old.id,&old);
+        if([preparedDocument[@"nodes"] isKindOfClass:NSArray.class])
+            for(id row in preparedDocument[@"nodes"])
+                if([row isKindOfClass:NSDictionary.class] && numeric(row[@"id"]))
+                    preparedRows[row[@"id"]]=row;
+    }
     if([document[@"projectId"] isKindOfClass:NSString.class])
         next.projectId=[document[@"projectId"] UTF8String] ?: "";
     if([document[@"nodes"] count]>tri::maxGraphNodes)return fail(why,@"节点数量超过上限。");
@@ -252,6 +269,12 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
         tri::GraphNode node;
         node.id=[obj[@"id"] unsignedLongLongValue];
         node.x=[obj[@"x"] floatValue];node.y=[obj[@"y"] floatValue];
+        if(obj[@"nodeVersion"] && !integer(obj[@"nodeVersion"],1,UINT16_MAX))
+            return fail(why,@"节点行为版本必须为 1–65535 的整数。");
+        if(obj[@"stateVersion"] && !integer(obj[@"stateVersion"],1,UINT8_MAX))
+            return fail(why,@"节点状态版本必须为 1–255 的整数。");
+        node.nodeVersion=obj[@"nodeVersion"]?[obj[@"nodeVersion"] unsignedIntValue]:1;
+        node.stateVersion=obj[@"stateVersion"]?[obj[@"stateVersion"] unsignedIntValue]:1;
         bool unavailable=false;
         if(!documentNodeType(obj,allowUnknownNodes,node.type,unavailable,why))return false;
         node.unavailable=unavailable;
@@ -263,17 +286,15 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
         }
         const tri::NodeSpec *spec=tri::nodeSpec(node.type);
         node.key=spec->key;
-        if(numeric(obj[@"nodeVersion"]))node.nodeVersion=uint16_t([obj[@"nodeVersion"] intValue]);
-        if(node.nodeVersion==0)node.nodeVersion=spec->nodeVersion;
-        if(node.nodeVersion>spec->nodeVersion) {
-            // Behaviour written by a newer build: the parameters may mean
-            // something else. Editing can keep it, export cannot pretend.
-            const std::string message=std::string("节点 ")+spec->key+" 的行为版本 "+
-                std::to_string(node.nodeVersion)+" 高于当前支持的 "+std::to_string(spec->nodeVersion);
-            // `allowUnknownNodes` is the editor's forward-compatibility switch;
-            // strict callers (export, host publication) must not guess.
+        if(node.nodeVersion!=spec->nodeVersion || node.stateVersion!=spec->stateVersion) {
+            // Early development has no implicit migration promise. A version
+            // the module does not support is retained as an inert placeholder.
+            const std::string message=std::string("节点 ")+spec->key+" 的行为版本或状态版本不受当前模块支持。";
             if(!allowUnknownNodes)return fail(why,[NSString stringWithUTF8String:message.c_str()]);
             early.push_back({node.id,message,false});
+            node.unavailable=true;node.type=0;node.unavailableReason=message;
+            next.nodes.push_back(std::move(node));
+            continue;
         }
         if(obj[@"bypass"]) {
             if(![obj[@"bypass"] isKindOfClass:NSNumber.class])return fail(why,@"节点旁通值无效。");
@@ -338,7 +359,16 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             const char* kind=spec->assetKind;
             if(!kind)return fail(why,@"该节点类型不能包含素材。");
             if(decodeAssets) {
-                if(std::string(kind)=="audio") {
+                auto previous=preparedNodes.find(node.id);
+                NSDictionary *oldRow=preparedRows[obj[@"id"]];
+                const bool same=previous!=preparedNodes.end() && previous->second->type==node.type &&
+                    !previous->second->unavailable && oldRow &&
+                    [obj[@"asset"] isEqual:oldRow[@"asset"]];
+                if(same) {
+                    node.sample=previous->second->sample;
+                    node.clip=previous->second->clip;
+                    node.model=previous->second->model;
+                } else if(std::string(kind)=="audio") {
                     std::shared_ptr<tri::AudioSample> audio;
                     if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
                     node.sample=std::move(audio);
@@ -382,6 +412,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             parsed.port=tri::nodePortIndex(target->type,true,parsed.portId.c_str());
             if(parsed.port<0)return fail(why,[NSString stringWithFormat:@"未知的输入端口：%@",port]);
         } else if(numeric(port)) {
+            if(!integer(port,0,INT_MAX))return fail(why,@"输入端口序号必须为非负整数。");
             parsed.port=[port intValue];
             if(parsed.port<0||parsed.port>=tri::nodeInputCount(target->type))
                 return fail(why,@"连线指向不存在的输入端口。");
@@ -393,6 +424,7 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
             parsed.sourcePort=tri::nodePortIndex(source->type,false,parsed.sourcePortId.c_str());
             if(parsed.sourcePort<0)return fail(why,[NSString stringWithFormat:@"未知的输出端口：%@",sourcePort]);
         } else if(numeric(sourcePort)) {
+            if(!integer(sourcePort,0,INT_MAX))return fail(why,@"输出端口序号必须为非负整数。");
             parsed.sourcePort=[sourcePort intValue];
             if(parsed.sourcePort<0||parsed.sourcePort>=tri::nodeOutputCount(source->type))
                 return fail(why,@"连线引用了不存在的输出端口。");

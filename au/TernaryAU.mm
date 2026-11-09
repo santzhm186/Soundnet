@@ -216,7 +216,6 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
     }
 public:
     explicit TernaryUnit(AudioComponentInstance instance) : Base(instance,1,1) {
-        engine.setHosted(true);
         replaceLayout(tri::layout::defaults());
         engine.setMidiOutput(this,emitEvent);
         CreateElements();
@@ -332,7 +331,7 @@ public:
         if (!assets.load(savedAssets ?: @{})) return kAudioUnitErr_InvalidPropertyValue;
         const OSStatus result = Base::RestoreState(state);
         if (result) return result;
-        assetStore.apply(assets,engine);
+        if(!assetStore.apply(assets,engine))return kAudioUnitErr_InvalidPropertyValue;
         engine.setRouting(graph);
         replaceLayout(positions);
         // Older projects omit the oscillator envelopes and repeat count. Reset these
@@ -569,12 +568,15 @@ public:
         const bool hasBeat=CallHostBeatAndTempo(&beat,&bpm)==noErr;
         engine.setHostTempo(hasBeat ? bpm : 0);
         Boolean playing=false;
+        Float64 sampleInTimeline=0;
         auto &callbacks=GetHostCallbackInfo();
         OSStatus transport=callbacks.transportStateProc2
-            ? callbacks.transportStateProc2(callbacks.hostUserData,&playing,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr)
-            : CallHostTransportState(&playing,nullptr,nullptr,nullptr,nullptr,nullptr);
+            ? callbacks.transportStateProc2(callbacks.hostUserData,&playing,nullptr,nullptr,&sampleInTimeline,nullptr,nullptr,nullptr)
+            : CallHostTransportState(&playing,nullptr,&sampleInTimeline,nullptr,nullptr,nullptr);
         if (hasBeat && std::isfinite(beat) && transport==noErr) engine.setHostTransport(playing,beat);
         else engine.clearHostTransport();
+        if(transport==noErr && std::isfinite(sampleInTimeline) && sampleInTimeline>=0 && sampleInTimeline<double(UINT64_MAX))
+            engine.setHostTimecode(playing,uint64_t(sampleInTimeline));
         midiDelivery.consume();
         renderStamp=&ts;
         midiOffset=0;

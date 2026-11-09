@@ -1,144 +1,275 @@
 {
-  "version" : 1,
-  "parameters" : {
-    "Osc 2 Attack" : -1,
-    "Progression Play" : 0,
-    "Osc 3 Attack" : -1,
-    "Progress Quality 6" : 0,
-    "Attack" : 0.012000000104308128,
-    "Osc 3 Level" : 0.18000000715255737,
-    "Velocity Maximum" : 112,
-    "Delay Feedback" : 0.31999999284744263,
-    "Osc 3 Sustain" : -1,
-    "Clock Host Sync" : 1,
-    "Osc 3 Release" : -1,
-    "Osc 2 Wave" : 3,
-    "Delay Time" : 310,
-    "Progress Quality 7" : 0,
-    "Master" : 0.74000000953674316,
-    "Rhythm" : 0,
-    "Osc 1 Tune" : 0,
-    "Progress Root 1" : 60,
-    "EQ Mid" : 0,
-    "Progress Root 2" : 69,
-    "Progress Quality 8" : 0,
-    "Progress Root 3" : 62,
-    "Progress Root 4" : 67,
-    "Chord Root" : 66,
-    "Progress Quality 1" : 3,
-    "Progress Root 5" : 60,
-    "Osc 3 Wave" : 0,
-    "Gate" : 0.60000002384185791,
-    "Chord Quality" : 4,
-    "EQ High" : 0,
-    "Progress Root 6" : 60,
-    "Progress Root 7" : 60,
-    "Progress Root 8" : 60,
-    "Audio Input" : 1,
-    "Velocity Shape" : 0,
-    "Osc 2 Tune" : -12,
-    "Progress Quality 2" : 4,
-    "Progression Length" : 4,
-    "Osc 2 Sustain" : -1,
-    "Osc 2 Release" : -1,
-    "Osc 2 Level" : 0.37999999523162842,
-    "Sustain" : 0.69999998807907104,
-    "Bars Per Chord" : 1,
-    "EQ Low" : 0,
-    "Progress Quality 3" : 4,
-    "Clock BPM" : 112,
-    "Osc 3 Tune" : 12,
-    "Arp Repeat" : 1,
-    "Decay" : 0.2199999988079071,
-    "Progress Quality 4" : 2,
-    "Release" : 0.23999999463558197,
-    "Osc 1 Sustain" : -1,
-    "Osc 1 Release" : -1,
-    "Progress Quality 5" : 0,
-    "Delay Mix" : 0.11999999731779099,
-    "Velocity Beats" : 4,
-    "Velocity Minimum" : 48,
-    "Osc 1 Wave" : 2,
-    "Osc 1 Level" : 0.6600000262260437,
-    "Arpeggiator" : 1,
-    "Tempo" : 112,
-    "Chord Play" : 0,
-    "Osc 1 Attack" : -1
-  },
-  "connections" : {
-    "mix.4" : "input",
-    "osc2.notes" : "arp",
-    "velocity.notes" : "progression",
-    "mix.2" : "osc2",
-    "arp.clock" : "clock",
-    "progression.clock" : "clock",
-    "output.audio" : "delay",
-    "osc1.notes" : "arp",
-    "velocity.clock" : "clock",
-    "mix.3" : "osc3",
-    "osc3.notes" : "arp",
-    "eq.audio" : "mix",
-    "delay.audio" : "eq",
-    "mix.1" : "osc1",
-    "arp.notes" : "velocity"
-  },
-  "nodes" : {
-    "osc1" : [
-      -1,
-      -1
-    ],
-    "velocity" : [
-      -1,
-      -1
-    ],
-    "output" : [
-      -1,
-      -1
-    ],
-    "delay" : [
-      -1,
-      -1
-    ],
-    "eq" : [
-      -1,
-      -1
-    ],
-    "osc3" : [
-      -1,
-      -1
-    ],
-    "input" : [
-      -1,
-      -1
-    ],
-    "midi" : [
-      -1,
-      -1
-    ],
-    "arp" : [
-      -1,
-      -1
-    ],
-    "chord" : [
-      -1,
-      -1
-    ],
-    "osc2" : [
-      -1,
-      -1
-    ],
-    "mix" : [
-      -1,
-      -1
-    ],
-    "progression" : [
-      -1,
-      -1
-    ],
-    "clock" : [
-      -1,
-      -1
-    ]
-  },
-  "format" : "audio.ternary.workflow"
+  "edges": [
+    {
+      "port": "notes",
+      "source": 14,
+      "sourcePort": "notes",
+      "target": 2
+    },
+    {
+      "port": "notes",
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 3
+    },
+    {
+      "port": "notes",
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 4
+    },
+    {
+      "port": "notes",
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 5
+    },
+    {
+      "port": "in1",
+      "source": 3,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in2",
+      "source": 4,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in3",
+      "source": 5,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in4",
+      "source": 6,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "audio",
+      "source": 7,
+      "sourcePort": "audio",
+      "target": 8
+    },
+    {
+      "port": "audio",
+      "source": 8,
+      "sourcePort": "audio",
+      "target": 9
+    },
+    {
+      "port": "audio",
+      "source": 9,
+      "sourcePort": "audio",
+      "target": 10
+    },
+    {
+      "port": "notes",
+      "source": 12,
+      "sourcePort": "notes",
+      "target": 14
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "nodeKey": "soundnet.midi-input",
+      "nodeVersion": 1,
+      "parameters": {},
+      "stateVersion": 1,
+      "x": 0,
+      "y": 160
+    },
+    {
+      "id": 2,
+      "nodeKey": "soundnet.arp",
+      "nodeVersion": 2,
+      "parameters": {
+        "arp.enabled": 1,
+        "arp.gate": 0.6000000238418579,
+        "arp.pattern": 0,
+        "arp.repeat": 1,
+        "clock.bpm": 112
+      },
+      "stateVersion": 1,
+      "x": 210,
+      "y": 160
+    },
+    {
+      "id": 3,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.012000000104308128,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.23999999463558197,
+        "envelope.sustain": 0.699999988079071,
+        "osc1.level": 0.6600000262260437,
+        "osc1.tune": 0,
+        "osc1.wave": 2
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 0
+    },
+    {
+      "id": 4,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.012000000104308128,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.23999999463558197,
+        "envelope.sustain": 0.699999988079071,
+        "osc1.level": 0.3799999952316284,
+        "osc1.tune": -12,
+        "osc1.wave": 3
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 160
+    },
+    {
+      "id": 5,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.012000000104308128,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.23999999463558197,
+        "envelope.sustain": 0.699999988079071,
+        "osc1.level": 0.18000000715255737,
+        "osc1.tune": 12,
+        "osc1.wave": 0
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 320
+    },
+    {
+      "id": 6,
+      "nodeKey": "soundnet.audio-input",
+      "nodeVersion": 2,
+      "parameters": {
+        "input.gain": 1
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 480
+    },
+    {
+      "id": 7,
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "parameters": {},
+      "stateVersion": 1,
+      "x": 640,
+      "y": 160
+    },
+    {
+      "id": 8,
+      "nodeKey": "soundnet.eq",
+      "nodeVersion": 1,
+      "parameters": {
+        "eq.high": 0,
+        "eq.low": 0,
+        "eq.mid": 0
+      },
+      "stateVersion": 1,
+      "x": 850,
+      "y": 160
+    },
+    {
+      "id": 9,
+      "nodeKey": "soundnet.delay",
+      "nodeVersion": 1,
+      "parameters": {
+        "clock.bpm": 112,
+        "delay.division": 1,
+        "delay.feedback": 0.3199999928474426,
+        "delay.mix": 0.11999999731779099,
+        "delay.sync": 0,
+        "delay.time": 310
+      },
+      "stateVersion": 1,
+      "x": 1060,
+      "y": 160
+    },
+    {
+      "id": 10,
+      "nodeKey": "soundnet.audio-output",
+      "nodeVersion": 2,
+      "parameters": {
+        "output.master": 0.7400000095367432,
+        "output.width": 1
+      },
+      "stateVersion": 1,
+      "x": 1270,
+      "y": 160
+    },
+    {
+      "id": 11,
+      "nodeKey": "soundnet.chord",
+      "nodeVersion": 1,
+      "parameters": {
+        "chord.quality": 4,
+        "chord.root": 66,
+        "chord.run": 0,
+        "clock.bpm": 112
+      },
+      "stateVersion": 1,
+      "x": 0,
+      "y": 650
+    },
+    {
+      "id": 12,
+      "nodeKey": "soundnet.progression",
+      "nodeVersion": 2,
+      "parameters": {
+        "clock.bpm": 112,
+        "progression.bars": 1,
+        "progression.length": 4,
+        "progression.quality.1": 3,
+        "progression.quality.2": 4,
+        "progression.quality.3": 4,
+        "progression.quality.4": 2,
+        "progression.quality.5": 0,
+        "progression.quality.6": 0,
+        "progression.quality.7": 0,
+        "progression.quality.8": 0,
+        "progression.root.1": 60,
+        "progression.root.2": 69,
+        "progression.root.3": 62,
+        "progression.root.4": 67,
+        "progression.root.5": 60,
+        "progression.root.6": 60,
+        "progression.root.7": 60,
+        "progression.root.8": 60,
+        "progression.run": 0
+      },
+      "stateVersion": 1,
+      "x": 210,
+      "y": 650
+    },
+    {
+      "id": 14,
+      "nodeKey": "soundnet.velocity",
+      "nodeVersion": 2,
+      "parameters": {
+        "clock.bpm": 112,
+        "velocity.beats": 4,
+        "velocity.maximum": 112,
+        "velocity.minimum": 48,
+        "velocity.shape": 0
+      },
+      "stateVersion": 1,
+      "x": 630,
+      "y": 650
+    }
+  ],
+  "projectId": "composition",
+  "version": 4
 }

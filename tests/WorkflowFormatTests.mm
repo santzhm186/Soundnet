@@ -17,7 +17,7 @@ static NSDictionary *v4Document() {
                               @"low.minimum":@36,@"low.maximum":@54,@"low.texture":@2}},
             @{@"id":@3,@"nodeKey":@"soundnet.oscillator",@"x":@420,@"y":@0,
               @"parameters":@{@"osc1.wave":@2,@"osc1.level":@0.6}},
-            @{@"id":@4,@"nodeKey":@"soundnet.audio-output",@"x":@640,@"y":@0,
+            @{@"id":@4,@"nodeKey":@"soundnet.audio-output",@"nodeVersion":@2,@"x":@640,@"y":@0,
               @"parameters":@{@"output.master":@0.8}}
         ],
         @"edges":@[
@@ -39,7 +39,7 @@ static NSDictionary *v3Document() {
                               @"24":@0.8}},   // Master never belonged to the arranger.
             @{@"id":@3,@"type":@(tri::Osc1Node),@"x":@420,@"y":@0,
               @"parameters":@{@"0":@2,@"1":@0.6}},
-            @{@"id":@4,@"type":@(tri::HardwareOutputNode),@"x":@640,@"y":@0,
+            @{@"id":@4,@"type":@(tri::AudioOutputNode),@"nodeVersion":@2,@"x":@640,@"y":@0,
               @"parameters":@{@"24":@0.8}}
         ],
         @"edges":@[
@@ -243,7 +243,7 @@ int main() {
                 @{@"id":@1,@"nodeKey":@"soundnet.ai-music",@"x":@0,@"y":@0,
                   @"parameters":@{@"ai.model":@1,@"ai.duration":@90.0},
                   @"texts":@{@"ai.prompt":@"warm piano",@"ai.lyrics":@"[Verse]\nhello"}},
-                @{@"id":@2,@"nodeKey":@"soundnet.audio-output",@"x":@200,@"y":@0,@"parameters":@{}}
+                @{@"id":@2,@"nodeKey":@"soundnet.audio-output",@"nodeVersion":@2,@"x":@200,@"y":@0,@"parameters":@{}}
             ],
             @"edges":@[@{@"source":@1,@"sourcePort":@"audio",@"target":@2,@"port":@"audio"}]
         };
@@ -259,5 +259,33 @@ int main() {
         nodes[0]=first;bad[@"nodes"]=nodes;
         assert(!triassets::decodeGraph(bad,graph,&why));   // undeclared key is fatal in v4
     }
-    puts("PASS: v4 documents, v3 migration, unknown nodes, parameter scope and port names");
+    // Version values are checked before narrowing. Unsupported versions become
+    // whole-node placeholders in editor mode, including future fields/ports.
+    for(NSString* field in @[@"nodeVersion",@"stateVersion"]) {
+        for(NSNumber* invalid in @[@0,@-1,@1.5,@65537]) {
+            NSMutableDictionary* document=[v4Document() mutableCopy];
+            NSMutableArray* nodes=[document[@"nodes"] mutableCopy];
+            NSMutableDictionary* node=[nodes[2] mutableCopy];node[field]=invalid;
+            nodes[2]=node;document[@"nodes"]=nodes;
+            tri::GraphSpec graph;NSString* why=nil;
+            assert(!triassets::decodeGraph(document,graph,&why,false,true));
+        }
+        NSMutableDictionary* document=[v4Document() mutableCopy];
+        NSMutableArray* nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary* node=[nodes[2] mutableCopy];node[field]=@2;
+        node[@"parameters"]=@{@"future.parameter":@3};
+        node[@"texts"]=@{@"future.text":@"keep"};
+        nodes[2]=node;document[@"nodes"]=nodes;
+        tri::GraphSpec graph;NSString* why=nil;
+        assert(triassets::decodeGraph(document,graph,&why,false,true));
+        assert(graph.nodes[2].unavailable&&graph.nodes[2].type==0);
+        assert(!triassets::decodeGraph(document,graph,&why,false,false));
+        assert([triassets::canonicalGraph(document,&why) isEqual:document]);
+    }
+    {
+        NSMutableDictionary* document=[v4Document() mutableCopy];document[@"version"]=@4.5;
+        tri::GraphSpec graph;NSString* why=nil;
+        assert(!triassets::decodeGraph(document,graph,&why));
+    }
+    puts("PASS: document versions, inert future nodes, parameter scope and port names");
 }

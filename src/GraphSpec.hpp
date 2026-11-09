@@ -22,6 +22,7 @@ struct GraphNode {
     int type=0;                 // kernel selector, resolved from `key`
     std::string key;            // canonical identity, e.g. "soundnet.oscillator"
     uint16_t nodeVersion=1;
+    uint8_t stateVersion=1;
     float x=0,y=0;
     std::map<int,float> parameters;
     // Text parameters (prompt, lyrics, backend path). Declared by
@@ -48,6 +49,7 @@ struct GraphSpec {
     std::vector<GraphNode> nodes;
     std::vector<GraphEdge> edges;
     std::string projectId;
+    bool environmentRequired=false;
 };
 
 static_assert(int(ParamCount) <= int(ArrHighMin));
@@ -61,6 +63,21 @@ inline float graphParamValue(const GraphNode& node,int id) {
     auto it=node.parameters.find(id);
     return it==node.parameters.end() ? graphParamInfo(id).def : it->second;
 }
+// One resolved configuration for validation and execution. Missing values use
+// descriptor defaults; only declared immutable resource kinds reach a kernel.
+// Resource handles can be absent while validating an undecoded document.
+inline KernelConfig resolvedKernelConfig(const GraphNode& node) {
+    KernelConfig config{node.parameters,node.texts};
+    const NodeSpec* spec=node.type?nodeSpec(node.type):nodeSpecForKey(node.key.c_str());
+    if(!spec)return config;
+    for(int id:spec->params)config.parameters.emplace(id,graphParamInfo(id).def);
+    for(const auto& text:spec->texts)
+        config.texts.emplace(text.id,text.defaultValue?text.defaultValue:"");
+    if(nodeHas(spec->capabilities,CapAssetAudio))config.audio=node.sample;
+    if(nodeHas(spec->capabilities,CapAssetClip))config.clip=std::make_shared<const MidiClip>(node.clip);
+    if(nodeHas(spec->capabilities,CapAssetModel))config.model=std::make_shared<const NoteModel>(node.model);
+    return config;
+}
 inline bool validGraphParam(int type,int id) {return nodeAcceptsParam(type,id);}
 inline bool validArrangerRanges(const GraphNode& node) {
     for(int low : {ArrHighMin,ArrMidMin,ArrLowMin})
@@ -68,7 +85,7 @@ inline bool validArrangerRanges(const GraphNode& node) {
     return true;
 }
 inline bool validAudioRanges(const GraphNode& node) {
-    if(node.type==AudioClipNode)return graphParamValue(node,AudioClipStart)<graphParamValue(node,AudioClipEnd);
+    if(node.type==AudioClipNode || node.type==AiMusicNode)return graphParamValue(node,AudioClipStart)<graphParamValue(node,AudioClipEnd);
     if(node.type==SamplerNode)return graphParamValue(node,SamplerStart)<graphParamValue(node,SamplerEnd);
     return true;
 }
@@ -89,7 +106,7 @@ struct PlanNode {
     int type=0;
     const NodeSpec* spec=nullptr;
     std::vector<PortLink> inputs;                    // one entry per input port
-    std::vector<std::vector<int>> triggerInputs;     // upstream nodes per trigger port
+    std::vector<std::vector<PortLink>> triggerInputs;     // upstream nodes per trigger port
     bool bypass=false;
 };
 
@@ -128,6 +145,12 @@ inline bool normalizeGraph(GraphSpec& graph,std::string* why=nullptr) {
     if(why)why->clear();
     const bool strict=true;
     for(auto& node:graph.nodes) {
+        if(node.unavailable)continue;
+        if(node.type!=0 && !node.key.empty()) {
+            const NodeSpec* declared=nodeSpec(node.type);
+            if(!declared || node.key!=declared->key)
+                return detail::graphFailure(why,"节点类型编号与稳定标识不一致。");
+        }
         if(node.type==0 && !node.key.empty()) node.type=nodeTypeForKey(node.key.c_str());
         if(node.key.empty()) node.key=nodeKey(node.type);
         if(node.type!=0 && node.key.empty()) return detail::graphFailure(why,"节点类型没有稳定标识。");
@@ -190,13 +213,14 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
     }
 
     std::map<InstanceID,size_t> index;
+    std::map<EnvironmentRole,size_t> environmentCounts;
     plan.nodes.resize(graph.nodes.size());
     for(size_t i=0;i<graph.nodes.size();++i) {
         const auto& node=graph.nodes[i];
         if(!node.id)return fail("节点 ID 必须非零。");
         if(!index.emplace(node.id,i).second)return fail("节点 ID 必须唯一。");
         auto& entry=plan.nodes[i];
-        entry.spec=nodeSpec(node.type);
+        entry.spec=node.unavailable?nullptr:nodeSpec(node.type);
         if(!entry.spec) {
             entry.type=0;
             const std::string message="未知节点类型："+(node.key.empty()?std::to_string(node.type):node.key);
@@ -204,6 +228,27 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
             if(!allowUnknownNodes) {plan.ok=false;if(why)*why=message;return false;}
             continue;
         }
+        if(node.nodeVersion==0 || node.nodeVersion!=entry.spec->nodeVersion ||
+           node.stateVersion==0 || node.stateVersion!=entry.spec->stateVersion) {
+            const std::string message="节点版本不受当前平台支持："+node.key;
+            if(!allowUnknownNodes) {plan.ok=false;if(why)*why=message;return false;}
+            plan.diagnostics.push_back({node.id,message,false});
+            entry.spec=nullptr;entry.type=0;
+            continue;
+        }
+        if(entry.spec->sdkVersion!=nodeSDKVersion)return fail("节点 SDK 版本不受当前平台支持。");
+        if(entry.spec->legacyAdapter && entry.spec->kernelFactory)
+            return fail("节点不能同时使用旧内核适配与 SDK 内核工厂。");
+        const uint32_t executionCaps=CapData|CapStream|CapGenerator|CapTriggerSource|CapTriggerTarget|
+                                     CapNoteSource|CapClockSource|CapOutputSink;
+        const bool requiresKernel=(entry.spec->capabilities&executionCaps)!=0 ||
+                                  !entry.spec->inputs.empty() || !entry.spec->outputs.empty();
+        if(requiresKernel && !entry.spec->legacyAdapter && !entry.spec->kernelFactory)
+            return fail("节点声明了执行能力，但未注册内核工厂。");
+        if(entry.spec->environmentRole!=EnvironmentRole::None && ++environmentCounts[entry.spec->environmentRole]>1)
+            return fail("工程中每种环境节点只能有一个实例。");
+        for(bool input:{true,false})for(const auto& port:input?entry.spec->inputs:entry.spec->outputs)
+            if(const char* problem=nodePortContractProblem(*entry.spec,port,input))return fail(problem);
         if(!entry.spec->instantiable) {
             const std::string message=std::string("节点类型不可实例化：")+entry.spec->key;
             plan.diagnostics.push_back({node.id,message,true});
@@ -246,12 +291,28 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
                 return false;
             }
         }
-        if(node.type==ArrangerNode && !validArrangerRanges(node))return fail("编排器音域无效：低声部不能高于高声部。");
-        if(node.type==AudioClipNode && !validAudioRanges(node))return fail("音频片段起止位置无效：开始必须早于结束。");
-        if(node.type==SamplerNode && !validAudioRanges(node))return fail("采样器起止位置无效：开始必须早于结束。");
+        KernelConfig configuration=resolvedKernelConfig(node);
+        for(const auto& text:node.texts) {
+            const TextSpec* declared=nodeTextSpec(node.type,text.first.c_str());
+            if(!declared)return fail("文本参数不属于该节点。");
+            if(text.second.size()>declared->maxBytes)return fail("文本参数过长。");
+        }
+        if(entry.spec->validateConfig) {
+            std::string validationWhy;
+            if(!entry.spec->validateConfig(configuration,validationWhy)) {
+                plan.ok=false;
+                plan.diagnostics.push_back({node.id,validationWhy,true});
+                if(why)*why=validationWhy;
+                return false;
+            }
+        }
         // Asset presence is not checked here: the compiler also runs on documents
         // whose assets were deliberately not decoded. The loader reports it.
     }
+
+    if(graph.environmentRequired &&
+       (environmentCounts[EnvironmentRole::Timecode]!=1 || environmentCounts[EnvironmentRole::ProjectSettings]!=1))
+        return fail("工程必须包含一个时间码节点和一个项目设定节点。");
 
     // Edges.
     std::set<std::pair<InstanceID,int>> occupied;
@@ -279,7 +340,7 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
             return fail("连线引用了不存在的输出端口。");
         const Signal produced=plan.nodes[a->second].spec->outputs[size_t(edge.sourcePort)].signal;
         if(produced!=inputPort.signal)return fail("连接两端的信号类型不匹配。");
-        const bool trigger=inputPort.role==RoleTrigger||inputPort.signal==Signal::Trigger;
+        const bool trigger=inputPort.signal==Signal::Trigger;
         // Ordinary inputs are single-source: the run plan stores one upstream
         // link per port, so accepting a second edge would silently drop one.
         // Trigger inputs accept several distinct sources; identical duplicates
@@ -290,20 +351,33 @@ inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string
         if(trigger) {
             // Identical duplicates used to double-trigger downstream nodes.
             bool duplicate=false;
-            for(int existing:links) if(existing==int(a->second))duplicate=true;
+            for(const auto& existing:links) if(existing.node==int(a->second) && existing.port==edge.sourcePort)duplicate=true;
             if(duplicate) {
                 plan.diagnostics.push_back({targetNode.id,"忽略重复的触发连线。",false});
                 continue;
             }
-            links.push_back(int(a->second));
+            if(!links.empty() && !(inputPort.flags&PortMultiSource))
+                return fail("此触发输入未声明多源，只能有一条连接。");
+            links.push_back({int(a->second),edge.sourcePort});
         } else {
             targetPlan.inputs[size_t(edge.port)]=PortLink{int(a->second),edge.sourcePort};
         }
-        // Feedback boundaries (clip/arp/wait style inputs) are excluded from the
-        // ordering constraint; the engine defers those events by one block.
+        // Only legacy adapters retain historical feedback ordering. SDK 1
+        // rejects this flag until deterministic delayed routing is available.
         if(!(inputPort.flags&PortFeedback)) {
             ++pending[b->second];
             next[a->second].push_back(b->second);
+        }
+    }
+    // Missing required inputs are an editable incomplete graph, not a fatal
+    // document error. SDK kernels must safely process null/empty inputs.
+    for(size_t i=0;i<plan.nodes.size();++i) {
+        const auto& node=plan.nodes[i];
+        if(!node.spec || !node.spec->kernelFactory)continue;
+        for(size_t p=0;p<node.spec->inputs.size();++p) {
+            const auto& input=node.spec->inputs[p];
+            if(!(input.flags&PortOptional) && !node.inputs[p].connected() && node.triggerInputs[p].empty())
+                plan.diagnostics.push_back({graph.nodes[i].id,std::string("必连输入尚未连接：")+input.id,false});
         }
     }
     plan.order.clear();

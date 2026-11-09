@@ -1,11 +1,15 @@
 #import "TriEditor.h"
+#import "../platform/ProjectDocument.hpp"
+#include "../platform/ProjectEnvironment.hpp"
+#include "../nodes/GeneratedEditors.hpp"
 #import "SNLocalization.h"
 #include <atomic>
 #include <memory>
 #import "WorkflowFile.hpp"
 #import "../src/WorkflowAssets.h"
 #import "../src/OfflineRender.hpp"
-#import "../src/GenBackend.hpp"
+#import "../nodes/ai-music/GenerationTask.hpp"
+#include "../platform/TaskService.hpp"
 #import "../src/AbcScore.hpp"
 #import "../src/WavFile.hpp"
 #import "../src/MidiFileWriter.hpp"
@@ -18,11 +22,11 @@ NSArray *catalog() {
     NSMutableArray *rows=[NSMutableArray new];
     for(int type:tri::nodeCatalog()) {
         const tri::NodeMeta *meta=tri::nodeMeta(type);
-        if(meta)[rows addObject:@[@(type),SNLocalized(@(meta->title)),SNLocalized(@(meta->category))]];
+        if(meta)[rows addObject:@[@(type),SNNodeLocalized(type,@(meta->title)),SNNodeLocalized(type,@(meta->category))]];
     }
     return rows;
 }
-NSString *title(int type) { return SNLocalized(@(tri::nodeTitle(type))); }
+NSString *title(int type) { return SNNodeLocalized(type,@(tri::nodeTitle(type))); }
 // v4 documents identify a node by `nodeKey` and a parameter by its stable key.
 // The helpers below are the only place that knows about the wire shape, so an
 // older numeric document still opens and is rewritten canonically on save.
@@ -78,14 +82,14 @@ static NSString *nodeLabel(NSDictionary *node) {
     if(typeOf(node)==0)return SNLocalized(@"缺失节点");
     return title(typeOf(node));
 }
-static NSArray<NSString*> *paramOptions(int p) {
+static NSArray<NSString*> *paramOptions(int type,int p) {
     // Enumerations live in the descriptor: one list for validation, storage and
     // the inspector.
     const tri::ParamSpec *spec=tri::paramSpec(p);
     if(!spec||!spec->options||!spec->optionCount)return nil;
     NSMutableArray *rows=[NSMutableArray arrayWithCapacity:spec->optionCount];
     for(int i=0;i<spec->optionCount;++i)
-        rows[i]=SNLocalized([NSString stringWithUTF8String:spec->options[i]]);
+        rows[i]=SNNodeLocalized(type,[NSString stringWithUTF8String:spec->options[i]]);
     return rows;
 }
 NSArray<NSString *> *voiceNames() { return @[SNLocalized(@"高声部"), SNLocalized(@"中声部"), SNLocalized(@"低声部")]; }
@@ -106,7 +110,7 @@ NSString *pitchName(int note) {
 // never needs an editor change. The signal is only a fallback for unknown types.
 NSString *portLabel(int type,bool input,int port) {
     const tri::PortSpec *spec=tri::nodePort(type,input,size_t(port));
-    if(spec&&spec->label&&*spec->label)return SNLocalized(@(spec->label));
+    if(spec&&spec->label&&*spec->label)return SNNodeLocalized(type,@(spec->label));
     if(spec) {
         if(spec->signal==tri::Signal::Audio)return SNLocalized(@"音频");
         if(spec->signal==tri::Signal::Midi)return SNLocalized(@"音符");
@@ -126,15 +130,21 @@ NSMutableDictionary *copyJSON(id value) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:value options:0 error:nil];
     return [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
 }
+NSDictionary *taskInputSnapshot(NSDictionary *node) {
+    return @{@"nodeKey":node[@"nodeKey"] ?: @"",@"nodeVersion":node[@"nodeVersion"] ?: @1,
+        @"parameters":node[@"parameters"] ?: @{},@"texts":node[@"texts"] ?: @{},
+        @"asset":node[@"asset"] ?: @{},@"state":node[@"state"] ?: @{}};
+}
 std::vector<int> controls(int type) { return tri::nodeParamList(type); }
-NSString *parameterName(int p) {
+NSString *parameterName(int type,int p) {
     switch(p) {
         case tri::TriggerCount:return SNLocalized(@"收到 X 次后触发");
         case tri::WaitSeconds:return SNLocalized(@"等待秒数");
         case tri::ClockBPM:return @"BPM";
+        case tri::InputGain:return SNNodeLocalized(type,@"输入增益");
         case tri::ClipRun:return SNLocalized(@"播放  0 / 1");
         case tri::ClipLoop:return SNLocalized(@"循环  0 / 1");
-        default:return SNParameterTitle(@(tri::graphParamInfo(p).name));
+        default:return SNNodeLocalized(type,@(tri::graphParamInfo(p).name));
     }
 }
 }
@@ -355,10 +365,12 @@ static NSString *autosaveFilePath() {
 @end
 
 @interface SNInstanceEditor : NSView <NSTextFieldDelegate> {
-    // Generation runs on a worker thread; the UI thread only flips the cancel
-    // flag, so the backend object is never touched from two threads at once.
-    std::shared_ptr<std::atomic<bool>> aiCancellation;
-    std::shared_ptr<std::atomic<int>> aiProgressShared;
+    std::unique_ptr<soundnet::TaskService> taskService;
+    std::map<uint64_t,uint64_t> taskInputRevisions;
+    std::map<uint64_t,tri::NodeTaskApply> taskApplications;
+    uint64_t nextTaskInputRevision;
+    NSMutableDictionary<NSNumber *,NSDictionary *> *taskInputs;
+    NSMutableDictionary<NSNumber *,NSString *> *taskMessages;
     // Set by the "regenerate from score" button; consumed by -generateAudio:.
     BOOL aiUseScore;
 }
@@ -370,11 +382,10 @@ static NSString *autosaveFilePath() {
 @property(copy) TRIInputWrite inputWrite;
 @property(copy) TRIAssetsRead assetsRead;
 @property(copy) TRIAssetsWrite assetsWrite;
+@property(copy) TRIEnvironmentRead environmentRead;
 @property(copy) TRIProcessingRead processingRead;
 @property(copy) TRIProcessingWrite processingWrite;
 @property BOOL aiBusy;
-@property uint64_t aiNode;
-@property(strong) NSString *aiStatusText;
 @property(strong) NSTextField *aiStatusField;
 @property(strong) NSProgressIndicator *aiProgressView;
 @property BOOL processingActive;
@@ -476,7 +487,11 @@ static NSString *autosaveFilePath() {
 -(void)aiStop:(id)sender;
 -(void)textChanged:(NSTextField *)field;
 -(void)refreshAiStatus;
--(void)commit:(NSDictionary *)previous;
+-(void)beginTaskSession;
+-(void)reconcileBackgroundTasks;
+-(void)drainBackgroundTasks;
+-(void)configureTaskContext:(tri::NodeEditorContext *)context forNode:(uint64_t)uid;
+-(BOOL)commit:(NSDictionary *)previous;
 -(void)insert:(NSMenuItem *)sender;
 -(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
 -(NSPoint)world:(NSPoint)point;
@@ -570,7 +585,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     [NSColor.separatorColor setFill];NSRectFill(NSMakeRect(12,91,NSWidth(self.bounds)-24,1));
 }
 -(BOOL)isFlipped{return YES;}
--(void)dealloc {[_timer invalidate];[[NSNotificationCenter defaultCenter] removeObserver:self];if(_exportCancellation)_exportCancellation->store(true);}
+-(void)dealloc {[_timer invalidate];[[NSNotificationCenter defaultCenter] removeObserver:self];if(_exportCancellation)_exportCancellation->store(true);if(taskService)taskService->shutdown();}
 -(NSMutableDictionary *)node:(uint64_t)uid {
     for(NSMutableDictionary *node in _document[@"nodes"])if([node[@"id"] unsignedLongLongValue]==uid)return node;
     return nil;
@@ -598,13 +613,15 @@ std::vector<ParamPreset> presetsFor(int type) {
     _selectedEdge=-1;[self inspect];
 }
 -(void)message:(NSString *)text {_status.stringValue=SNLocalizedDiagnostic(text ?: @"");}
--(void)commit:(NSDictionary *)previous {
+-(BOOL)commit:(NSDictionary *)previous {
     tri::GraphSpec graph;NSString *why=nil;
     std::vector<tri::Diagnostic> diagnostics;
+    BOOL applied=NO;
     if(!triassets::decodeGraph(_document,graph,&why,false,true,&diagnostics) ||
        !_assetsWrite || !_assetsWrite(@{@"graph":_document})) {
-        _document=copyJSON(previous) ?: [@{@"version":@4,@"projectId":@"local",@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];[self message:why ?: SNLocalized(@"宿主无法应用节点图。")];
+        _document=copyJSON(previous) ?: tri::newProjectDocument();[self message:why ?: SNLocalized(@"宿主无法应用节点图。")];
     } else {
+        applied=YES;
         if(previous && ![previous isEqual:_document]) {
             [_history addObject:copyJSON(previous)];[_future removeAllObjects];
             while(_history.count>64)[_history removeObjectAtIndex:0];
@@ -622,8 +639,10 @@ std::vector<ParamPreset> presetsFor(int type) {
         }
         [self message:status];
     }
+    [self reconcileBackgroundTasks];
     [self pruneSelection];
     _canvas.needsDisplay=YES;
+    return applied;
 }
 -(void)autosave {
     if(getenv("SOUNDNET_NO_AUTOSAVE"))return;
@@ -652,6 +671,7 @@ std::vector<ParamPreset> presetsFor(int type) {
         [self message:why ?: SNLocalized(@"自动保存文件无效")];return;
     }
     NSDictionary *previous=copyJSON(_document);
+    [self beginTaskSession];
     _document=copyJSON(canonical);
     [_selection removeAllObjects];_selected=0;_selectedEdge=-1;
     [self commit:previous];[self inspect];[self fit:nil];
@@ -686,6 +706,15 @@ std::vector<ParamPreset> presetsFor(int type) {
     return node;
 }
 -(void)insert:(NSMenuItem *)sender {
+    const auto* descriptor=tri::nodeSpec(int(sender.tag));
+    if(descriptor&&descriptor->environmentRole!=tri::EnvironmentRole::None) {
+        for(NSDictionary* existing in _document[@"nodes"]) {
+            const auto* other=tri::nodeSpec(typeOf(existing));
+            if(other&&other->environmentRole==descriptor->environmentRole) {
+                [self selectOnly:[existing[@"id"] unsignedLongLongValue]];return;
+            }
+        }
+    }
     NSDictionary *previous=copyJSON(_document);
     uint64_t next=1;
     for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
@@ -769,7 +798,10 @@ std::vector<ParamPreset> presetsFor(int type) {
 -(void)remove:(id)sender {
     NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
     NSDictionary *previous=copyJSON(_document);
-    NSSet *removed=[NSSet setWithArray:ids];
+    NSMutableSet *removed=[NSMutableSet setWithArray:ids];
+    if([_document[@"settings"][@"environmentRequired"] boolValue])
+        for(NSDictionary* node in _document[@"nodes"])if(tri::isEnvironmentNode(node))[removed removeObject:node[@"id"]];
+    if(!removed.count){[self message:SNLocalized(@"工程环境节点不能删除。")];return;}
     NSMutableArray *remaining=[NSMutableArray array];
     for(NSDictionary *node in _document[@"nodes"])if(![removed containsObject:node[@"id"]])[remaining addObject:node];
     _document[@"nodes"]=remaining;
@@ -799,6 +831,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSMutableArray *copies=[NSMutableArray new];
     for(NSNumber *key in ids) {
         NSDictionary *original=[self node:key.unsignedLongLongValue];if(!original)continue;
+        if(tri::isEnvironmentNode(original)) {mapping[key]=key;continue;}
         NSMutableDictionary *copy=copyJSON(original);
         copy[@"id"]=@(next++);mapping[key]=copy[@"id"];
         copy[@"x"]=@([copy[@"x"] doubleValue]+35);copy[@"y"]=@([copy[@"y"] doubleValue]+45);
@@ -830,7 +863,10 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)cut:(id)sender {
     NSArray<NSNumber *> *ids=[self activeIDs];if(!ids.count)return;
-    [self copy:nil];[self remove:nil];[self message:[NSString stringWithFormat:SNLocalized(@"已剪切 %lu 个节点。"),(unsigned long)ids.count]];
+    const NSUInteger before=[_document[@"nodes"] count];
+    [self copy:nil];[self remove:nil];
+    const NSUInteger after=[_document[@"nodes"] count];
+    if(after<before)[self message:[NSString stringWithFormat:SNLocalized(@"已剪切 %lu 个节点。"),(unsigned long)(before-after)]];
 }
 -(void)paste:(id)sender {
     NSDictionary *source=_clipboard;
@@ -842,6 +878,16 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSMutableArray *copies=[NSMutableArray new];
     for(NSDictionary *node in source[@"nodes"]) {
         if(![node isKindOfClass:[NSDictionary class]] || !node[@"id"])continue;
+        if(tri::isEnvironmentNode(node)) {
+            // Environment entries in the clipboard are references. Reconnect
+            // their wires to this project's role without duplicating its nodes.
+            const auto role=tri::nodeSpec(typeOf(node))->environmentRole;
+            for(NSDictionary* existing in _document[@"nodes"]) {
+                const auto* descriptor=tri::nodeSpec(typeOf(existing));
+                if(descriptor&&descriptor->environmentRole==role) {mapping[node[@"id"]]=existing[@"id"];break;}
+            }
+            continue;
+        }
         NSMutableDictionary *copy=copyJSON(node);
         copy[@"id"]=@(next++);mapping[node[@"id"]]=copy[@"id"];
         copy[@"x"]=@([copy[@"x"] doubleValue]+35);copy[@"y"]=@([copy[@"y"] doubleValue]+45);
@@ -859,8 +905,8 @@ std::vector<ParamPreset> presetsFor(int type) {
     [_document[@"edges"] addObjectsFromArray:edges];
     [_selection removeAllObjects];
     for(NSDictionary *copy in copies){[_selection addObject:copy[@"id"]];_selected=[copy[@"id"] unsignedLongLongValue];}
-    _selectedEdge=-1;[self commit:previous];[self inspect];
-    [self message:[NSString stringWithFormat:SNLocalized(@"已粘贴 %lu 个节点。"),(unsigned long)copies.count]];
+    _selectedEdge=-1;BOOL applied=[self commit:previous];[self inspect];
+    if(applied)[self message:[NSString stringWithFormat:SNLocalized(@"已粘贴 %lu 个节点。"),(unsigned long)copies.count]];
 }
 -(void)selectAll:(id)sender {
     [_selection removeAllObjects];_selected=0;
@@ -908,6 +954,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSDictionary *next=from.lastObject;
     if(_assetsWrite(@{@"graph":next})) {
         [to addObject:copyJSON(_document)];_document=copyJSON(next);[from removeLastObject];
+        [self reconcileBackgroundTasks];
         [self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
     }
 }
@@ -1205,13 +1252,10 @@ std::vector<ParamPreset> presetsFor(int type) {
         if(sa>sb)return NSOrderedDescending;
         return [a[@"pitch"] intValue]<[b[@"pitch"] intValue]?NSOrderedAscending:NSOrderedDescending;
     }];
-    double bpm=120;
-    for(NSDictionary *node in _document[@"nodes"]) {
-        if(typeOf(node)!=tri::ClockNode)continue;
-        NSNumber *value=paramValue(node,tri::ClockBPM);
-        if([value isKindOfClass:NSNumber.class] && value.doubleValue>1)bpm=value.doubleValue;
-        break;
-    }
+    // Audition uses the clip's own musical speed, just like its runtime kernel.
+    NSDictionary *clip=[self node:_clipUID];
+    double bpm=clip?paramValue(clip,tri::ClockBPM).doubleValue:tri::graphParamInfo(tri::ClockBPM).def;
+    if(!std::isfinite(bpm)||bpm<=1)bpm=112;
     const double secondsPerBeat=60.0/bpm;
     for(NSDictionary *note in ordered) {
         int pitch=[note[@"pitch"] intValue],velocity=[note[@"velocity"] intValue];
@@ -1409,28 +1453,158 @@ std::vector<ParamPreset> presetsFor(int type) {
     else [_collapsedParameterGroups addObject:sender.identifier];
     [self inspect];
 }
+-(void)configureTaskContext:(tri::NodeEditorContext *)context forNode:(uint64_t)uid {
+    NSMutableDictionary *node=[self node:uid];
+    if(!node||!tri::nodeHas(tri::nodeCapabilities(typeOf(node)),tri::CapTask))return;
+    __weak SNInstanceEditor *weak=self;
+    NSDictionary *targetDocument=_document,*targetNode=node;
+    NSDictionary *targetInputs=copyJSON(taskInputSnapshot(node));
+    context->submitTask=[weak,targetDocument,targetNode,targetInputs,uid](soundnet::TaskService::Job job,
+                                                           tri::NodeTaskApply apply,std::string& why) {
+        if(!NSThread.isMainThread) {why="Node editor tasks must be submitted on the editor thread.";return false;}
+        SNInstanceEditor *strong=weak;
+        if(!strong||strong.document!=targetDocument||[strong node:uid]!=targetNode||!apply) {
+            why="Node editor is no longer current.";return false;
+        }
+        if(!strong->taskService)strong->taskService=std::make_unique<soundnet::TaskService>(2,16);
+        [strong reconcileBackgroundTasks];
+        if(![strong->taskInputs[@(uid)] isEqual:targetInputs]) {
+            why="Node editor inputs have changed.";return false;
+        }
+        soundnet::TaskBinding binding;
+        if(!strong->taskService->submit(uid,strong->taskInputRevisions[uid],std::move(job),binding,why))return false;
+        strong->taskApplications[binding.id]=std::move(apply);
+        return true;
+    };
+    context->cancelTask=[weak,targetDocument,targetNode,uid] {
+        if(!NSThread.isMainThread)return;
+        SNInstanceEditor *strong=weak;
+        if(strong&&strong.document==targetDocument&&[strong node:uid]==targetNode&&strong->taskService)
+            strong->taskService->cancel(uid);
+    };
+    context->taskSnapshot=[weak,targetDocument,targetNode,uid](soundnet::TaskService::Snapshot& snapshot) {
+        if(!NSThread.isMainThread)return false;
+        SNInstanceEditor *strong=weak;
+        return strong&&strong.document==targetDocument&&[strong node:uid]==targetNode&&strong->taskService&&
+            strong->taskService->snapshot(uid,snapshot);
+    };
+}
+-(void)beginTaskSession {
+    if(taskService)taskService->beginSession();
+    taskInputRevisions.clear();taskApplications.clear();taskInputs=[NSMutableDictionary new];taskMessages=[NSMutableDictionary new];
+}
+-(void)reconcileBackgroundTasks {
+    if(!taskService)return;
+    if(!taskInputs)taskInputs=[NSMutableDictionary new];
+    if(!taskMessages)taskMessages=[NSMutableDictionary new];
+    NSMutableSet<NSNumber *> *alive=[NSMutableSet new];
+    std::map<uint64_t,uint64_t> revisions;
+    for(NSDictionary *node in _document[@"nodes"]) {
+        if(!tri::nodeHas(tri::nodeCapabilities(typeOf(node)),tri::CapTask))continue;
+        NSNumber *uid=node[@"id"];if(!uid)continue;
+        [alive addObject:uid];
+        // Configuration is the immutable input of this generation task. Layout
+        // and unrelated graph edits do not invalidate it. Future task adapters
+        // include their declared resource/input revisions in their own snapshot.
+        NSDictionary *inputs=taskInputSnapshot(node);
+        if(![taskInputs[uid] isEqual:inputs]) {
+            taskInputs[uid]=copyJSON(inputs);
+            taskInputRevisions[uid.unsignedLongLongValue]=++nextTaskInputRevision;
+            [taskMessages removeObjectForKey:uid];
+        }
+        revisions[uid.unsignedLongLongValue]=taskInputRevisions[uid.unsignedLongLongValue];
+    }
+    for(NSNumber *uid in taskInputs.allKeys)if(![alive containsObject:uid]) {
+        [taskInputs removeObjectForKey:uid];[taskMessages removeObjectForKey:uid];
+        taskInputRevisions.erase(uid.unsignedLongLongValue);
+    }
+    taskService->reconcile(revisions);
+    std::set<uint64_t> currentTasks;
+    for(const auto& revision:revisions) {
+        soundnet::TaskService::Snapshot snapshot;
+        if(taskService->snapshot(revision.first,snapshot))currentTasks.insert(snapshot.binding.id);
+    }
+    for(auto it=taskApplications.begin();it!=taskApplications.end();)
+        if(!currentTasks.count(it->first))it=taskApplications.erase(it);else ++it;
+}
+-(void)drainBackgroundTasks {
+    if(!taskService)return;
+    [self reconcileBackgroundTasks];
+    bool changed=false;
+    for(auto& completion:taskService->takeCompleted()) {
+        const uint64_t uid=completion.binding.node;
+        NSMutableDictionary *node=[self node:uid];
+        if(!node)continue;
+        auto application=taskApplications.find(completion.binding.id);
+        if(application!=taskApplications.end()) {
+            auto apply=std::move(application->second);taskApplications.erase(application);
+            NSDictionary *replacement=apply(completion.result,copyJSON(node));
+            if([replacement isKindOfClass:NSDictionary.class]) {
+                NSDictionary *previous=copyJSON(_document);
+                for(NSString *key in @[@"parameters",@"texts",@"asset",@"state"])
+                    if(replacement[key])node[key]=copyJSON(replacement[key]);
+                if(![self commit:previous]) {changed=true;continue;}
+            }
+            if(!completion.result.message.empty()&&uid==_selected)
+                [self message:[NSString stringWithUTF8String:completion.result.message.c_str()]];
+            changed=true;continue;
+        }
+        if(typeOf(node)!=tri::AiMusicNode)continue;
+        NSString *message=nil;
+        if(completion.result.status==soundnet::TaskStatus::Succeeded) {
+            auto payload=std::dynamic_pointer_cast<const tri::nodes::ai_music::GeneratedMusic>(completion.result.payload);
+            if(!payload)continue;
+            NSDictionary *previous=copyJSON(_document);
+            if(payload->asset)node[@"asset"]=copyJSON(payload->asset);
+            if(payload->score.length) {
+                NSMutableDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]
+                    ? [node[@"texts"] mutableCopy] : [NSMutableDictionary new];
+                texts[@"ai.score"]=payload->score;node[@"texts"]=texts;
+            }
+            if(![self commit:previous]) {
+                taskMessages[@(uid)]=_status.stringValue ?: @"";
+                changed=true;continue;
+            }
+            message=!payload->wantAudio?SNLocalized(@"已生成乐谱（仅乐谱模式）。"):
+                (payload->hadScore?SNLocalized(@"生成完成（含乐谱）。"):SNLocalized(@"生成完成。"));
+        } else if(completion.result.status==soundnet::TaskStatus::Cancelled)message=SNLocalized(@"已取消生成。");
+        else message=completion.result.message.empty()?SNLocalized(@"生成失败。"):
+            [NSString stringWithUTF8String:completion.result.message.c_str()];
+        taskMessages[@(uid)]=message ?: @"";
+        if(uid==_selected)[self message:message];
+        changed=true;
+    }
+    if(changed)[self inspect];
+    [self refreshAiStatus];
+}
 -(void)refreshAiStatus {
+    soundnet::TaskService::Snapshot snapshot;
+    const bool found=taskService && taskService->snapshot(_selected,snapshot);
+    _aiBusy=found && snapshot.active();
     if(!_aiStatusField)return;
     if(_aiBusy) {
-        const int p=aiProgressShared?aiProgressShared->load():-1;
-        _aiStatusField.stringValue=p>=0?[NSString stringWithFormat:SNLocalized(@"正在生成 %d%%"),p]:
-                                          SNLocalized(@"正在生成…");
+        const int p=snapshot.progress;
+        _aiStatusField.stringValue=snapshot.cancellationRequested?SNLocalized(@"正在取消生成…"):
+            (p>=0?[NSString stringWithFormat:SNLocalized(@"正在生成 %d%%"),p]:SNLocalized(@"正在生成…"));
         if(_aiProgressView)_aiProgressView.hidden=(p>=0);
     } else {
-        _aiStatusField.stringValue=_aiStatusText.length?_aiStatusText:SNLocalized(@"空闲");
+        NSString *message=taskMessages[@(_selected)];
+        _aiStatusField.stringValue=message.length?message:SNLocalized(@"空闲");
         if(_aiProgressView)_aiProgressView.hidden=YES;
     }
 }
-// Submitting is an explicit action: a two-minute model run must never start
-// because the transport rolled. The trigger port still starts playback.
+// Submitting is explicit. Each node owns one task; the platform bounds worker
+// concurrency and discards results from obsolete sessions or input revisions.
 -(void)generateAudio:(id)sender {
-    if(_aiBusy) {[self message:SNLocalized(@"已有生成任务在进行。")];return;}
     NSMutableDictionary *node=[self node:_selected];
     if(!node||typeOf(node)!=tri::AiMusicNode)return;
+    if(!taskService)taskService=std::make_unique<soundnet::TaskService>(2,16);
+    [self reconcileBackgroundTasks];[self refreshAiStatus];
+    if(_aiBusy) {[self message:SNLocalized(@"已有生成任务在进行。")];return;}
     const BOOL feedback=aiUseScore;aiUseScore=NO;
     NSDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]?node[@"texts"]:@{};
     NSString *prompt=texts[@"ai.prompt"] ?: @"";
-    if(!prompt.length) {[self message:SNLocalized(@"请先填写风格描述。")];return;}
+    if(!prompt.length&&!feedback) {[self message:SNLocalized(@"请先填写风格描述。")];return;}
     tri::GenRequest request;
     request.backend=int(paramValue(node,tri::AiMusicBackend).doubleValue);
     request.model=int(paramValue(node,tri::AiMusicModel).doubleValue);
@@ -1444,97 +1618,22 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSString *extraArgs=texts[@"ai.extraArgs"] ?: @"";
     NSString *score=texts[@"ai.score"] ?: @"";
     if(feedback&&!score.length) {[self message:SNLocalized(@"乐谱为空，请先粘贴或生成乐谱。")];return;}
-    request.prompt=prompt.UTF8String ?: "";
-    request.lyrics=lyrics.UTF8String ?: "";
+    request.prompt=prompt.UTF8String ?: "";request.lyrics=lyrics.UTF8String ?: "";
     request.abcText=feedback?(score.UTF8String ?: ""):"";
-    request.execPath=execPath.UTF8String ?: "";
-    request.modelPath=modelPath.UTF8String ?: "";
+    request.execPath=execPath.UTF8String ?: "";request.modelPath=modelPath.UTF8String ?: "";
     request.extraArgs=extraArgs.UTF8String ?: "";
     NSString *folder=[NSTemporaryDirectory() stringByAppendingPathComponent:
                       [@"soundnet-ai-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    if(![[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES
-                                  attributes:nil error:nil]) {
-        [self message:SNLocalized(@"无法创建生成工作目录。")];return;
-    }
     request.workDir=folder.UTF8String;
     const uint64_t uid=_selected;
-    NSDictionary *documentBefore=copyJSON(_document);
-    auto cancelFlag=std::make_shared<std::atomic<bool>>(false);
-    auto progress=std::make_shared<std::atomic<int>>(-1);
-    aiCancellation=cancelFlag;aiProgressShared=progress;
-    _aiBusy=YES;_aiNode=uid;_aiStatusText=SNLocalized(@"正在生成…");[self refreshAiStatus];
-    auto backend=std::make_shared<tri::AudioCppCliBackend>();
-    __weak SNInstanceEditor *weakSelf=self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-        @autoreleasepool {
-            std::string why;
-            uint64_t task=0;
-            if(!backend->available(why)||!backend->submit(request,task,why)) {
-                NSString *reason=[NSString stringWithUTF8String:why.c_str()];
-                dispatch_async(dispatch_get_main_queue(),^{
-                    SNInstanceEditor *strong=weakSelf;if(!strong)return;
-                    strong->_aiBusy=NO;strong->_aiStatusText=reason ?: SNLocalized(@"无法启动生成。");
-                    [strong refreshAiStatus];[strong message:strong->_aiStatusText];
-                });
-                return;
-            }
-            bool cancelled=false;
-            while(true) {
-                if(cancelFlag->load()) {
-                    if(!cancelled){cancelled=true;backend->cancel(task);}
-                }
-                tri::GenResult result;
-                const auto status=backend->poll(task,result,why);
-                if(status==tri::GenTaskStatus::Running) {
-                    progress->store(backend->progress(task));
-                    [NSThread sleepForTimeInterval:.3];
-                    continue;
-                }
-                if(status==tri::GenTaskStatus::Succeeded) {
-                    NSString *importWhy=nil;
-                    const bool wantAudio=!result.wavPath.empty();
-                    NSDictionary *asset=wantAudio?triassets::importAsset(@"audio",
-                        [NSURL fileURLWithPath:[NSString stringWithUTF8String:result.wavPath.c_str()]],&importWhy):nil;
-                    const bool hadScore=!result.abcPath.empty();
-                    NSString *score=nil;
-                    if(hadScore) {
-                        NSString *path=[NSString stringWithUTF8String:result.abcPath.c_str()];
-                        score=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-                    }
-                    dispatch_async(dispatch_get_main_queue(),^{
-                        SNInstanceEditor *strong=weakSelf;if(!strong)return;
-                        strong->_aiBusy=NO;
-                        NSMutableDictionary *current=[strong node:uid];
-                        if(!asset&&wantAudio) {strong->_aiStatusText=importWhy ?: SNLocalized(@"生成结果无法导入。");[strong refreshAiStatus];[strong message:strong->_aiStatusText];return;}
-                        if(!current||strong.document!=documentBefore) {
-                            strong->_aiStatusText=SNLocalized(@"节点已改变，未应用生成结果。");[strong refreshAiStatus];return;
-                        }
-                        NSDictionary *previous=copyJSON(strong.document);
-                        if(asset) current[@"asset"]=copyJSON(asset);
-                        if(score.length) {
-                            NSMutableDictionary *texts=[current[@"texts"] isKindOfClass:NSDictionary.class]
-                                ? [current[@"texts"] mutableCopy] : [NSMutableDictionary new];
-                            texts[@"ai.score"]=score;
-                            current[@"texts"]=texts;
-                        }
-                        strong->_aiStatusText=!wantAudio?SNLocalized(@"已生成乐谱（仅乐谱模式）。"):
-                            (hadScore?SNLocalized(@"生成完成（含乐谱）。"):SNLocalized(@"生成完成。"));
-                        [strong commit:previous];[strong inspect];
-                        [strong message:strong->_aiStatusText];
-                    });
-                    return;
-                }
-                NSString *reason=[NSString stringWithUTF8String:why.c_str()];
-                dispatch_async(dispatch_get_main_queue(),^{
-                    SNInstanceEditor *strong=weakSelf;if(!strong)return;
-                    strong->_aiBusy=NO;
-                    strong->_aiStatusText=reason ?: SNLocalized(@"生成失败。");
-                    [strong refreshAiStatus];[strong message:strong->_aiStatusText];
-                });
-                return;
-            }
-        }
-    });
+    soundnet::TaskBinding binding;std::string why;
+    const bool submitted=taskService->submit(uid,taskInputRevisions[uid],
+        tri::nodes::ai_music::generationJob(request),binding,why);
+    if(!submitted) {
+        [[NSFileManager defaultManager] removeItemAtPath:folder error:nil];
+        [self message:[NSString stringWithUTF8String:why.c_str()]];return;
+    }
+    taskMessages[@(uid)]=SNLocalized(@"正在生成…");[self inspect];
 }
 // Re-render from the score the user edited instead of planning a new one
 // (audio.cpp `abc_file`). This is the return half of the score loop.
@@ -1594,26 +1693,26 @@ std::vector<ParamPreset> presetsFor(int type) {
     [self message:summary];
 }
 -(void)aiStop:(id)sender {
+    [self refreshAiStatus];
     if(_aiBusy) {
-        if(aiCancellation)aiCancellation->store(true);
-        [self message:SNLocalized(@"正在取消生成…")];
-        return;
+        if(taskService)taskService->cancel(_selected);
+        [self refreshAiStatus];[self message:SNLocalized(@"正在取消生成…")];return;
     }
     if(_nodeStop) {_nodeStop(_selected);[self message:SNLocalized(@"已停止该节点。")];}
     else [self message:SNLocalized(@"当前环境不支持节点级停止。")];
 }
 -(void)textChanged:(NSTextField *)field {
     NSMutableDictionary *node=[self node:_selected];
-    if(!node||typeOf(node)!=tri::AiMusicNode)return;
-    const tri::TextSpec *spec=tri::nodeText(tri::AiMusicNode,size_t(field.tag));
-    if(!spec)return;
+    if(!node)return;
+    const tri::TextSpec *spec=tri::nodeText(typeOf(node),size_t(field.tag));
+    if(!spec||spec->readOnly)return;
     NSMutableDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]
         ? [node[@"texts"] mutableCopy] : [NSMutableDictionary new];
     NSString *key=[NSString stringWithUTF8String:spec->id];
     NSString *value=field.stringValue ?: @"";
     if([(texts[key] ?: @"") isEqualToString:value])return;
-    const NSUInteger limit=256*1024;
-    if(value.length>limit) {[self message:SNLocalized(@"文本过长。")];return;}
+    const NSUInteger limit=spec->maxBytes;
+    if([value lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>limit) {[self message:SNLocalized(@"文本过长。")];return;}
     NSDictionary *previous=copyJSON(_document);
     texts[key]=value;
     node[@"texts"]=texts;
@@ -1623,6 +1722,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSPoint scrollOrigin=_inspectorScroll.contentView.bounds.origin;
     BOOL sameNode=_inspectedUID==_selected;_inspectedUID=_selected;
     for(NSView *view in _inspector.subviews.copy)[view removeFromSuperview];
+    _aiStatusField=nil;_aiProgressView=nil;
     if(_selection.count>1) {
         [self label:[NSString stringWithFormat:SNLocalized(@"已选择 %lu 个节点"),(unsigned long)_selection.count] y:12];
         [self label:SNLocalized(@"Shift 点击增减选择，拖动空白框选。拖动任一节点可整体移动。") y:40];
@@ -1647,6 +1747,31 @@ std::vector<ParamPreset> presetsFor(int type) {
     [self button:SNLocalized(@"复制节点") frame:NSMakeRect(14,78,129,28) action:@selector(duplicate:) parent:_inspector];
     [self button:SNLocalized(@"删除节点") frame:NSMakeRect(155,78,129,28) action:@selector(remove:) parent:_inspector];
     double y=120;
+    const auto* descriptor=tri::nodeSpec(type);
+    if(descriptor)if(auto factory=tri::nodeEditorFactory(descriptor->key)) {
+        tri::NodeEditorContext context;
+        context.configuration=copyJSON(node);
+        context.environment=_environmentRead?_environmentRead():@{};
+        context.localize=^NSString*(NSString* text){return SNNodeLocalized(type,text);};
+        __weak SNInstanceEditor* weak=self;
+        NSDictionary* targetDocument=_document;
+        NSDictionary* targetNode=node;
+        const uint64_t targetID=_selected;
+        context.commit=^(NSDictionary* replacement) {
+            if(!NSThread.isMainThread)return;
+            SNInstanceEditor* strong=weak;if(!strong)return;
+            NSMutableDictionary* current=[strong node:targetID];
+            if(strong.document!=targetDocument||current!=targetNode||![replacement isKindOfClass:NSDictionary.class])return;
+            NSDictionary* previous=copyJSON(strong.document);
+            for(NSString* key in @[@"parameters",@"texts",@"asset",@"state"]) {
+                if(replacement[key])current[key]=copyJSON(replacement[key]);
+            }
+            [strong commit:previous];[strong inspect];
+        };
+        [self configureTaskContext:&context forNode:targetID];
+        NSView* panel=factory(context);
+        if(panel) {panel.frame=NSMakeRect(14,y,270,NSHeight(panel.frame));[_inspector addSubview:panel];y+=NSHeight(panel.frame)+12;}
+    }
     const tri::NodeMeta *meta=tri::nodeMeta(type);
     if(meta && meta->bypassable) {
         NSButton *bypass=[NSButton checkboxWithTitle:SNLocalized(@"旁通此节点（保留连线）") target:self action:@selector(bypassChanged:)];
@@ -1665,26 +1790,28 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(!controls(type).empty() || type==tri::ArrangerNode) {
         [self button:SNLocalized(@"恢复默认参数") frame:NSMakeRect(14,y,270,28) action:@selector(resetParams:) parent:_inspector];y+=38;
     }
-    if(type==tri::AiMusicNode) {
-        [self label:SNLocalized(@"生成在本机后台进行，产物作为工程素材嵌入；「停止」可取消生成或停止本节点播放。") y:y];y+=48;
+    if(tri::nodeTextCount(type)>0) {
         for(int i=0;i<tri::nodeTextCount(type);++i) {
             const tri::TextSpec *spec=tri::nodeText(type,size_t(i));
-            NSString *caption=SNLocalized([NSString stringWithUTF8String:spec->label]);
+            if(spec->hidden)continue;
+            NSString *caption=SNNodeLocalized(type,[NSString stringWithUTF8String:spec->label]);
             NSTextField *label=[NSTextField labelWithString:caption];
             label.font=[NSFont systemFontOfSize:12];label.frame=NSMakeRect(14,y,270,18);
             [_inspector addSubview:label];y+=20;
             NSString *key=[NSString stringWithUTF8String:spec->id];
-            NSString *value=node[@"texts"][key] ?: @"";
-            const bool multiline=std::strcmp(spec->id,"ai.lyrics")==0;
+            NSString *value=node[@"texts"][key] ?: [NSString stringWithUTF8String:spec->defaultValue];
+            const bool multiline=spec->multiline;
             NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(14,y,270,multiline?66:25)];
-            field.stringValue=value;field.tag=i;field.target=self;field.action=@selector(textChanged:);
+            field.stringValue=value;field.editable=!spec->readOnly;field.tag=i;field.target=self;field.action=@selector(textChanged:);
             field.font=[NSFont systemFontOfSize:12];
-            field.placeholderString=multiline?SNLocalized(@"每行一句，可用 [Verse] [Chorus] 标记段落"):
-                                            SNLocalized(@"留空自动探测");
+            field.placeholderString=caption;
             if(multiline) {field.cell.wraps=YES;field.usesSingleLineMode=NO;}
             field.accessibilityLabel=caption;[_inspector addSubview:field];
             y+=multiline?74:33;
         }
+    }
+    if(type==tri::AiMusicNode) {
+        [self label:SNLocalized(@"生成在本机后台进行，产物作为工程素材嵌入；「停止」可取消生成或停止本节点播放。") y:y];y+=48;
         NSTextField *state=[NSTextField labelWithString:@""];
         state.font=[NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
         state.textColor=[NSColor colorWithCalibratedRed:.65 green:.79 blue:.96 alpha:1];
@@ -1712,18 +1839,7 @@ std::vector<ParamPreset> presetsFor(int type) {
         fromScore.toolTip=SNLocalized(@"把改动后的乐谱回喂后端重新渲染，风格描述与歌词不参与。");
         y+=40;
     }
-    if(type==tri::ClipNode) {
-        id rawScore=node[@"texts"][@"clip.score"];
-        if([rawScore isKindOfClass:NSString.class]&&[rawScore length]) {
-            [self label:SNLocalized(@"来源乐谱（ABC，只读）") y:y];y+=24;
-            NSTextField *view=[[NSTextField alloc]initWithFrame:NSMakeRect(14,y,270,72)];
-            view.stringValue=rawScore;view.editable=NO;view.selectable=YES;
-            view.font=[NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular];
-            view.cell.wraps=YES;view.usesSingleLineMode=NO;
-            view.toolTip=SNLocalized(@"这段 ABC 由 AI 生成节点导入，用于追溯与再生成。");
-            [_inspector addSubview:view];y+=84;
-        }
-    }
+
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
     else {
         std::vector<tri::ParamGroup> groups;
@@ -1750,12 +1866,12 @@ std::vector<ParamPreset> presetsFor(int type) {
             for(int p:controls(type)) {
                 if(p==tri::TriggerPulse || tri::paramSpec(p)->group!=group)continue;
                 const auto& info=tri::graphParamInfo(p);id val=paramValue(node,p);
-                NSString *caption=parameterName(p);
+                NSString *caption=parameterName(type,p);
                 if(info.unit && *info.unit)caption=[caption stringByAppendingFormat:@" · %s",info.unit];
                 NSTextField *label=[NSTextField labelWithString:caption];
                 label.frame=NSMakeRect(16,y+3,184,20);label.font=[NSFont systemFontOfSize:12];
                 label.toolTip=caption;[_inspector addSubview:label];
-                NSArray<NSString*> *options=paramOptions(p);
+                NSArray<NSString*> *options=paramOptions(type,p);
                 if(options) {
                     label.frame=NSMakeRect(16,y,268,20);
                     NSPopUpButton *popup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(14,y+22,270,27) pullsDown:NO];
@@ -1763,17 +1879,17 @@ std::vector<ParamPreset> presetsFor(int type) {
                     NSInteger index=(NSInteger)std::lround([val doubleValue]-info.min);
                     [popup selectItemAtIndex:std::clamp<NSInteger>(index,0,(NSInteger)options.count-1)];
                     popup.tag=p;popup.target=self;popup.action=@selector(choiceChanged:);
-                    [popup setAccessibilityLabel:parameterName(p)];[_inspector addSubview:popup];y+=61;continue;
+                    [popup setAccessibilityLabel:parameterName(type,p)];[_inspector addSubview:popup];y+=61;continue;
                 }
                 NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(206,y,78,25)];
                 field.stringValue=[NSString stringWithFormat:@"%.4g",[val doubleValue]];
                 field.alignment=NSTextAlignmentRight;field.font=[NSFont monospacedDigitSystemFontOfSize:12 weight:NSFontWeightRegular];
                 field.tag=p;field.target=self;field.action=@selector(changed:);
-                field.accessibilityLabel=parameterName(p);[_inspector addSubview:field];
+                field.accessibilityLabel=parameterName(type,p);[_inspector addSubview:field];
                 if(info.max-info.min<=20000) {
                     NSSlider *slider=[NSSlider sliderWithValue:[val doubleValue] minValue:info.min maxValue:info.max target:self action:@selector(sliderChanged:)];
                     slider.frame=NSMakeRect(14,y+28,270,18);slider.tag=p+100000;slider.continuous=NO;
-                    slider.accessibilityLabel=parameterName(p);[_inspector addSubview:slider];y+=60;
+                    slider.accessibilityLabel=parameterName(type,p);[_inspector addSubview:slider];y+=60;
                 } else y+=39;
             }
             y+=10;
@@ -1824,9 +1940,13 @@ std::vector<ParamPreset> presetsFor(int type) {
         field.target=self;field.action=@selector(harmony:);[_inspector addSubview:field];y+=40;
         [self button:SNLocalized(@"预制 Cmaj7 / 爵士走向") frame:NSMakeRect(14,y,270,28) action:@selector(preset:) parent:_inspector];y+=42;
     }
-    if(type==tri::InputNode && _inputRead) {
-        NSButton *button=[NSButton checkboxWithTitle:SNLocalized(@"启用硬件音频输入") target:self action:@selector(input:)];
-        button.frame=NSMakeRect(14,y,270,28);button.state=_inputRead();[_inspector addSubview:button];y+=42;
+    if(type==tri::InputNode) {
+        if(_inputRead) {
+            NSButton *button=[NSButton checkboxWithTitle:SNLocalized(@"启用音频输入") target:self action:@selector(input:)];
+            button.frame=NSMakeRect(14,y,270,28);button.state=_inputRead();[_inspector addSubview:button];y+=42;
+        } else {
+            [self label:SNNodeLocalized(type,@"在 AU 中接收宿主的侧链输入。") y:y];y+=50;
+        }
     }
     if(type==tri::Osc1Node){[self label:SNLocalized(@"Wave  0 正弦  1 方波  2 锯齿  3 三角") y:y];y+=50;}
     if(type==tri::FilterNode){[self label:SNLocalized(@"Type  0 低通  1 高通  2 带通\nCutoff 20–20000 Hz，Resonance 为 Q 值。") y:y];y+=62;}
@@ -1840,9 +1960,7 @@ std::vector<ParamPreset> presetsFor(int type) {
     if(type==tri::BitcrusherNode){[self label:SNLocalized(@"Bits 1–16 位深，Rate 500–48000 Hz 采样保持，Mix 干湿比。") y:y];y+=50;}
     if(type==tri::PhaserNode){[self label:SNLocalized(@"Rate LFO 速度，Depth 扫频深度，Feedback 反馈量，Mix 干湿比。") y:y];y+=50;}
     if(type==tri::ArpNode){[self label:SNLocalized(@"Rhythm  0 直拍  1 Bossa Nova  2 Reggae  3 Disco  4 十六分") y:y];y+=70;}
-    if(type==tri::DawClockNode){[self label:SNLocalized(@"跟随 DAW 的 BPM、走带和定位。独立版可接收外部 MIDI Clock。") y:y];y+=70;}
-    if(type==tri::DawOutputNode || type==tri::DawAudioNode){[self label:SNLocalized(@"在 DAW 插件中连接对应音频总线。") y:y];y+=50;}
-    if(type==tri::HardwareOutputNode){[self label:SNLocalized(@"在独立版输出至系统选择的声卡。") y:y];y+=50;}
+    if(type==tri::AudioOutputNode){[self label:SNNodeLocalized(type,@"独立版使用项目选择的设备，AU 返回宿主音轨。") y:y];y+=50;}
     if(type==tri::MidiOutNode){[self label:SNLocalized(@"独立版发送至 Soundnet MIDI Out；AU 使用宿主的 MIDI 输出回调。通道 0 跟随输入，1–16 强制输出通道。") y:y];y+=75;}
     _inspector.frame=NSMakeRect(0,0,298,MAX(_inspectorScroll.contentSize.height,y+20));
     [_inspector scrollPoint:sameNode?NSMakePoint(0,MIN(scrollOrigin.y,MAX(0,NSHeight(_inspector.frame)-_inspectorScroll.contentSize.height))):NSZeroPoint];
@@ -1951,17 +2069,28 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSTextField *rateLabel=[NSTextField labelWithString:SNLocalized(@"采样率")];
     rateLabel.frame=NSMakeRect(12,30,60,20);[accessory addSubview:rateLabel];
     NSPopUpButton *ratePopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(76,26,90,26)];
-    [ratePopup addItemsWithTitles:@[@"44.1 kHz",@"48 kHz",@"96 kHz"]];[ratePopup selectItemAtIndex:1];[accessory addSubview:ratePopup];
+    tri::GraphSpec projectGraph;tri::ProjectEnvironment environment;
+    if(triassets::decodeGraph(_document,projectGraph,nullptr,false,true))tri::projectEnvironment(projectGraph,environment);
+    for(NSNumber* value in @[@44100,@48000,@96000]) {
+        [ratePopup addItemWithTitle:[NSString stringWithFormat:@"%g kHz",value.doubleValue/1000.0]];
+        ratePopup.lastItem.representedObject=value;
+    }
+    BOOL foundRate=NO;
+    for(NSMenuItem* item in ratePopup.itemArray)if([item.representedObject doubleValue]==environment.sampleRate) {
+        [ratePopup selectItem:item];foundRate=YES;break;
+    }
+    if(!foundRate) {[ratePopup addItemWithTitle:[NSString stringWithFormat:@"%g Hz",environment.sampleRate]];
+        ratePopup.lastItem.representedObject=@(environment.sampleRate);[ratePopup selectItem:ratePopup.lastItem];}
+    [accessory addSubview:ratePopup];
     NSTextField *bitsLabel=[NSTextField labelWithString:SNLocalized(@"位深")];
     bitsLabel.frame=NSMakeRect(180,30,40,20);[accessory addSubview:bitsLabel];
     NSPopUpButton *bitsPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(222,26,70,26)];
-    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
+    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:environment.exportBits==16?0:environment.exportBits==24?1:2];[accessory addSubview:bitsPopup];
     panel.accessoryView=accessory;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result!=NSModalResponseOK)return;
         double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
-        const double rates[]={44100,48000,96000};
-        double rate=rates[std::max(0,std::min(2,(int)ratePopup.indexOfSelectedItem))];
+        double rate=[ratePopup.selectedItem.representedObject doubleValue];
         NSNumber *bitValue=@[@16,@24,@32][bitsPopup.indexOfSelectedItem];int bits=bitValue.intValue;
         [self runExport:1 toURL:panel.URL seconds:seconds rate:rate bits:bits];
     }];
@@ -1979,17 +2108,28 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSTextField *rateLabel=[NSTextField labelWithString:SNLocalized(@"采样率")];
     rateLabel.frame=NSMakeRect(12,30,60,20);[accessory addSubview:rateLabel];
     NSPopUpButton *ratePopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(76,26,90,26)];
-    [ratePopup addItemsWithTitles:@[@"44.1 kHz",@"48 kHz",@"96 kHz"]];[ratePopup selectItemAtIndex:1];[accessory addSubview:ratePopup];
+    tri::GraphSpec projectGraph;tri::ProjectEnvironment environment;
+    if(triassets::decodeGraph(_document,projectGraph,nullptr,false,true))tri::projectEnvironment(projectGraph,environment);
+    for(NSNumber* value in @[@44100,@48000,@96000]) {
+        [ratePopup addItemWithTitle:[NSString stringWithFormat:@"%g kHz",value.doubleValue/1000.0]];
+        ratePopup.lastItem.representedObject=value;
+    }
+    BOOL foundRate=NO;
+    for(NSMenuItem* item in ratePopup.itemArray)if([item.representedObject doubleValue]==environment.sampleRate) {
+        [ratePopup selectItem:item];foundRate=YES;break;
+    }
+    if(!foundRate) {[ratePopup addItemWithTitle:[NSString stringWithFormat:@"%g Hz",environment.sampleRate]];
+        ratePopup.lastItem.representedObject=@(environment.sampleRate);[ratePopup selectItem:ratePopup.lastItem];}
+    [accessory addSubview:ratePopup];
     NSTextField *bitsLabel=[NSTextField labelWithString:SNLocalized(@"位深")];
     bitsLabel.frame=NSMakeRect(180,30,40,20);[accessory addSubview:bitsLabel];
     NSPopUpButton *bitsPopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(222,26,70,26)];
-    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:0];[accessory addSubview:bitsPopup];
+    [bitsPopup addItemsWithTitles:@[@"16-bit",@"24-bit",@"32-bit float"]];[bitsPopup selectItemAtIndex:environment.exportBits==16?0:environment.exportBits==24?1:2];[accessory addSubview:bitsPopup];
     panel.accessoryView=accessory;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
         if(result!=NSModalResponseOK)return;
         double seconds=std::max(1.0,std::min(120.0,secondsField.doubleValue));
-        const double rates[]={44100,48000,96000};
-        double rate=rates[std::max(0,std::min(2,(int)ratePopup.indexOfSelectedItem))];
+        double rate=[ratePopup.selectedItem.representedObject doubleValue];
         NSNumber *bitValue=@[@16,@24,@32][bitsPopup.indexOfSelectedItem];int bits=bitValue.intValue;
         [self runExport:2 toURL:panel.URL seconds:seconds rate:rate bits:bits];
     }];
@@ -2035,10 +2175,11 @@ std::vector<ParamPreset> presetsFor(int type) {
         [self message:why ?: SNLocalized(@"无效的工作流。")];return NO;
     }
     NSDictionary *previous=copyJSON(self.document);
+    [self beginTaskSession];
     self.document=copyJSON(document);
     [self.selection removeAllObjects];self.selected=0;self.selectedEdge=-1;
-    [self commit:previous];[self fit:nil];[self inspect];
-    return YES;
+    BOOL applied=[self commit:previous];[self fit:nil];[self inspect];
+    return applied;
 }
 -(void)open:(id)sender {
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.allowedContentTypes=@[UTTypeJSON];
@@ -2058,12 +2199,17 @@ std::vector<ParamPreset> presetsFor(int type) {
     for(NSString *name in file[@"nodes"]) {
         NSUInteger uid=[names indexOfObject:name];if(uid==NSNotFound)continue;
         int type=(int)uid;if(type==4 || type==5)type=3;
-        if(type==tri::OutputNode)type=_inputRead?tri::HardwareOutputNode:tri::DawOutputNode;
+        if(type==tri::ClockNode || type==tri::NoNode)continue;
+        if(type==tri::OutputNode)type=tri::AudioOutputNode;
         if(type==tri::MidiNode && !_inputRead)type=tri::DawMidiNode;
-        if(type==tri::InputNode && !_inputRead)type=tri::DawAudioNode;
-        if(type==tri::ClockNode && [parameters[@(tri::params[tri::ClockSync].name)] floatValue]>.5)type=tri::DawClockNode;
+        const auto* spec=tri::nodeSpec(type);
+        if(!spec)continue;
         NSMutableDictionary *p=[NSMutableDictionary new];
-        for(int pid:controls(type))p[[@(pid) stringValue]]=parameters[@(tri::params[pid].name)] ?: @(tri::params[pid].def);
+        for(int pid:controls(type)) {
+            const auto& info=tri::graphParamInfo(pid);
+            id legacyValue=pid<tri::ParamCount?parameters[@(tri::params[pid].name)]:nil;
+            p[[@(pid) stringValue]]=legacyValue ?: @(info.def);
+        }
         if(uid>=3 && uid<=5) {
             int lane=(int)uid-3;
             for(int i=0;i<3;++i)p[[@(tri::Wave1+i) stringValue]]=parameters[@(tri::params[tri::Wave1+3*lane+i].name)] ?: @(tri::params[tri::Wave1+i].def);
@@ -2081,7 +2227,8 @@ std::vector<ParamPreset> presetsFor(int type) {
             static const double y[]={0,160,160,0,160,320,480,160,160,160,160};
             pos=uid<=10?@[@(x[uid]),@(y[uid])]:@[@((uid-11)*210),@650];
         }
-        NSMutableDictionary *node=[@{@"id":@(uid),@"type":@(type),@"x":@([pos[0] floatValue]),@"y":@([pos[1] floatValue]),@"parameters":p}mutableCopy];
+        NSMutableDictionary *node=[@{@"id":@(uid),@"type":@(type),@"nodeVersion":@(spec->nodeVersion),
+            @"x":@([pos[0] floatValue]),@"y":@([pos[1] floatValue]),@"parameters":p}mutableCopy];
         id asset=file[@"assets"][type==tri::ClipNode?@"clip":@"model"];
         if((type==tri::ClipNode || type==tri::ModelNode)&&asset)node[@"asset"]=asset;
         [nodes addObject:node];[ids addObject:@(uid)];
@@ -2091,7 +2238,8 @@ std::vector<ParamPreset> presetsFor(int type) {
         int pid=tri::routeID((int)index),target=tri::routeTarget(pid);
         NSUInteger source=[names indexOfObject:file[@"connections"][port]];
         if(![ids containsObject:@(target)] || ![ids containsObject:@(source)])continue;
-        int slot=pid>=tri::RouteMix1&&pid<=tri::RouteMix4?pid-tri::RouteMix1:tri::clockPort(pid)&&(target==tri::ArpNode||target==tri::VelocityNode)?1:0;
+        if(tri::clockPort(pid))continue;
+        int slot=pid>=tri::RouteMix1&&pid<=tri::RouteMix4?pid-tri::RouteMix1:0;
         [edges addObject:[@{@"source":@(source),@"target":@(target),@"port":@(slot)}mutableCopy]];
     }
     NSDictionary *legacy=@{@"version":@3,@"nodes":nodes,@"edges":edges};
@@ -2316,7 +2464,8 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)blank:(id)sender {
     NSDictionary *previous=copyJSON(_document);
-    _document=[@{@"version":@4,@"projectId":@"local",@"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]}mutableCopy];
+    [self beginTaskSession];
+    _document=tri::newProjectDocument();
     _selected=0;[self commit:previous];[self inspect];
 }
 -(void)tick {
@@ -2328,8 +2477,10 @@ std::vector<ParamPreset> presetsFor(int type) {
         if(!canonical)return;
         remote=canonical;
         if([remote isEqual:_document])return;
-        _document=copyJSON(remote);[self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
+        if(![remote[@"projectId"] isEqual:_document[@"projectId"]])[self beginTaskSession];
+        _document=copyJSON(remote);[self reconcileBackgroundTasks];[self pruneSelection];[self inspect];_canvas.needsDisplay=YES;
     }
+    [self drainBackgroundTasks];
 }
 @end
 
@@ -2850,7 +3001,9 @@ static NSColor *categoryColor(NSString *category) {
 -(BOOL)matchesType:(int)type category:(NSString *)category query:(NSString *)query {
     if(!query.length)return YES;
     NSString *name=@(tri::nodeTitle(type));
-    NSString *searchable=[NSString stringWithFormat:@"%@ %@ %@ %@ %s %d",name,SNEnglish(name),category,SNEnglish(category),tri::nodeKey(type),type];
+    NSString *searchable=[NSString stringWithFormat:@"%@ %@ %@ %@ %s %d",
+        SNNodeLocalizedForLanguage(type,name,NO),SNNodeLocalizedForLanguage(type,name,YES),
+        SNNodeLocalizedForLanguage(type,category,NO),SNNodeLocalizedForLanguage(type,category,YES),tri::nodeKey(type),type];
     for(NSString *word in [query componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]) {
         if(word.length && [searchable rangeOfString:word options:(NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch)].location==NSNotFound)return NO;
     }
@@ -2867,7 +3020,9 @@ static NSColor *categoryColor(NSString *category) {
     double y=108;
     // Iterate descriptors directly: search remains bilingual even when the
     // canvas/menu catalogue has already translated its display strings.
-    for(NSString *category in @[@"输入",@"处理",@"逻辑",@"注释",@"输出"]) {
+    NSMutableOrderedSet<NSString*> *categories=[NSMutableOrderedSet orderedSetWithArray:@[@"工程",@"输入",@"处理",@"逻辑",@"注释",@"输出"]];
+    for(int type:tri::nodeCatalog())[categories addObject:@(tri::nodeCategory(type))];
+    for(NSString *category in categories) {
         NSMutableArray<NSNumber *> *items=[NSMutableArray new];
         for(int type:tri::nodeCatalog()) {
             if([@(tri::nodeCategory(type)) isEqualToString:category] && [self matchesType:type category:category query:query])
@@ -2876,11 +3031,11 @@ static NSColor *categoryColor(NSString *category) {
         if(!items.count)continue;
         _matchCount+=items.count;
         BOOL collapsed=!query.length && [_collapsedCategories containsObject:category];
-        [_rows addObject:@{@"kind":@"header",@"title":SNLocalized(category),@"category":category,
+        [_rows addObject:@{@"kind":@"header",@"title":SNNodeLocalized(items.firstObject.intValue,category),@"category":category,
             @"count":@(items.count),@"collapsed":@(collapsed),@"y":@(y),@"h":@28}];
         y+=30;
         if(!collapsed)for(NSNumber *type in items) {
-            [_rows addObject:@{@"kind":@"item",@"title":SNLocalized(@(tri::nodeTitle(type.intValue))),
+            [_rows addObject:@{@"kind":@"item",@"title":SNNodeLocalized(type.intValue,@(tri::nodeTitle(type.intValue))),
                 @"type":type,@"category":category,@"y":@(y),@"h":@28}];
             y+=28;
         }
@@ -2924,7 +3079,7 @@ static NSColor *categoryColor(NSString *category) {
 }
 -(void)collapseAll:(id)sender {
     if([self query].length)return;
-    [_collapsedCategories addObjectsFromArray:@[@"输入",@"处理",@"逻辑",@"注释",@"输出"]];
+    for(int type:tri::nodeCatalog())[_collapsedCategories addObject:@(tri::nodeCategory(type))];
     [self saveCollapsedCategories];[self rebuild];
 }
 -(NSInteger)rowAtPoint:(NSPoint)p {
@@ -3033,10 +3188,10 @@ static NSColor *categoryColor(NSString *category) {
 }
 @end
 
-NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead inputRead,TRIInputWrite inputWrite,TRIStatus status,TRIAssetsRead assetsRead,TRIAssetsWrite assetsWrite,TRIProcessingRead processingRead,TRIProcessingWrite processingWrite,TRINodeStop nodeStop) {
+NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead inputRead,TRIInputWrite inputWrite,TRIStatus status,TRIAssetsRead assetsRead,TRIAssetsWrite assetsWrite,TRIProcessingRead processingRead,TRIProcessingWrite processingWrite,TRINodeStop nodeStop,TRIEnvironmentRead environmentRead) {
     SNInstanceEditor *editor=[[SNInstanceEditor alloc]initWithFrame:NSMakeRect(0,0,1360,840)];
     editor.read=read;editor.write=write;editor.midi=midi;editor.inputRead=inputRead;editor.inputWrite=inputWrite;
-    editor.nodeStop=nodeStop;
+    editor.nodeStop=nodeStop;editor.environmentRead=environmentRead;
     editor.assetsRead=assetsRead;editor.assetsWrite=assetsWrite;
     editor.processingRead=processingRead;editor.processingWrite=processingWrite;editor.processingActive=processingRead?processingRead():YES;
     editor.libraryVisible=YES;editor.collapsedParameterGroups=[NSMutableSet new];
@@ -3076,7 +3231,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor.languagePopup addItemsWithTitles:@[@"中文",@"English"]];
     editor.languagePopup.target=editor;editor.languagePopup.action=@selector(languageChanged:);
     editor.languagePopup.accessibilityLabel=@"Language / 语言";[editor addSubview:editor.languagePopup];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.90"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.9.1"];
     heading.font=[NSFont systemFontOfSize:18 weight:NSFontWeightSemibold];
     editor.heading=heading;editor.headingText=heading.stringValue;[editor addSubview:heading];
     editor.cancelButton=[editor button:SNLocalized(@"取消处理") frame:NSZeroRect action:@selector(cancelProcessing:) parent:editor];
@@ -3133,9 +3288,8 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     NSDictionary *assets=assetsRead?assetsRead():nil;
     if(assets[@"graph"])editor.document=copyJSON(assets[@"graph"]);
     else {
-        NSDictionary *legacy=ternaryfile::snapshot(read,assetsRead);
-        editor.document=copyJSON([editor migrate:legacy] ?: @{@"version":@4,@"projectId":@"local",@"nodes":@[],@"edges":@[]});
-        if(assets)[editor commit:nil];
+        editor.document=tri::newProjectDocument();
+        if(assetsWrite)[editor commit:nil];
     }
     [editor refreshLanguage:nil];
     [editor layoutUI];

@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Soundnet is a native macOS editor for building music workflows from connected nodes. Route MIDI, stereo audio, clocks, and triggers through a patch to build an instrument, arrange a progression, or process incoming audio. Soundnet **2.90** runs as a standalone app and as an Audio Unit v2 instrument for hosts such as Logic Pro.
+Soundnet is a native macOS editor for building music workflows from connected nodes. Route MIDI, stereo audio, timecode, and triggers through a patch to build an instrument, arrange a progression, or process incoming audio. Soundnet **2.9.1** runs as a standalone app and as an Audio Unit v2 instrument for hosts such as Logic Pro.
 
 ![Example Soundnet workflow with MIDI clips, synthesizers, and trigger routing](docs/workflow.png)
 
@@ -18,14 +18,18 @@ Use the node library to search by English or Chinese name, category, or stable n
 
 | Workflow | Example patch |
 | --- | --- |
-| Play a software instrument | Local MIDI → Oscillator → Hardware Audio Output |
+| Play a software instrument | Local MIDI → Oscillator → Audio Output |
 | Arrange a chord progression | Chord Progression → Three-Voice Arranger → three Oscillators → Mixer → Audio Output |
-| Record and process audio | Hardware Audio Input → EQ → Compressor → Hardware Audio Output |
+| Record and process audio | Audio Input → EQ → Compressor → Audio Output |
 | Trigger a clip or loop | Start Trigger → Audio Clip → Limiter → Audio Output |
 | Send notes to another instrument | MIDI Clip → Scale Quantizer → MIDI Output |
 | Generate a song, then edit its score | AI Music → Audio Output, and its ABC score → MIDI Clip → Scale Quantizer |
 
-Each node instance has its own parameters, assets, and runtime state. MIDI, stereo audio, trigger, and clock ports are color coded. One output can feed several inputs; ordinary inputs accept one source, while trigger inputs can accept several. Soundnet validates connections before executing the graph.
+New projects include one Timecode node and one Project Settings node. Timecode supplies a common timeline; tempo belongs to each musical node, with no global BPM or separate tempo node. Project Settings controls the processing format and standalone audio devices; AU devices and the effective sample rate remain host-managed.
+
+The same Audio Input and Audio Output nodes work in both editions. The standalone app uses the devices selected in Project Settings. The AU reads the host sidechain and returns stereo audio to the host track. Audio Output also feeds offline renders and stems.
+
+Each node instance has its own parameters, assets, and runtime state. MIDI, stereo audio, trigger, and timecode ports are color coded. One output can feed several inputs; ordinary inputs accept one source, while trigger inputs can accept several. Soundnet validates connections before executing the graph.
 
 - **Instruments and arrangement:** oscillators, polyphonic sampling, chord progressions, arpeggiation, and a three-voice arranger with independently configurable high, middle, and low pitch ranges.
 - **Audio processing:** mixing, EQ, delay, filtering, reverb, compression, limiting, modulation, and more. Supported effects can be bypassed without removing their connections.
@@ -40,8 +44,8 @@ Try [Three-Voice Arrangement](examples/three-voice-arrangement.v4.json), [Sample
 
 Soundnet requires macOS 13 or later and runs on Apple Silicon and Intel Macs.
 
-- **Standalone:** open the local `Soundnet-2.90.0-macos.pkg` to install the app in `/Applications`, or extract the ZIP and copy `Soundnet.app` there.
-- **Audio Unit:** copy `Soundnet.component` from the ZIP into `~/Library/Audio/Plug-Ins/Components/`, then reopen the host. In Logic Pro, load it from **AU Instruments → Soundnet → Soundnet**. The component uses the same identifier as the earlier Ternary plug-in; keep one copy of that component installed. For patches designed for the standalone app, route the mix to **DAW Audio Output** when using the AU.
+- **Standalone:** open the local `Soundnet-2.9.1-macos.pkg` to install the app in `/Applications`, or extract the ZIP and copy `Soundnet.app` there.
+- **Audio Unit:** copy `Soundnet.component` from the ZIP into `~/Library/Audio/Plug-Ins/Components/`, then reopen the host. In Logic Pro, load it from **AU Instruments → Soundnet → Soundnet**. The component uses the same identifier as the earlier Ternary plug-in; keep one copy of that component installed.
 
 Local builds are ad hoc signed. The installer package is unsigned, and the artifacts are not Apple-notarized.
 
@@ -70,9 +74,13 @@ app=build/release/Soundnet.app/Contents/MacOS/Soundnet
 
 ## Project format and development
 
-Workflows are saved as version 4 JSON, using stable node, port, and parameter IDs. Version 3 workflows can be opened and migrated. Unrecognized nodes and their connections are preserved when a project is reopened and saved. Imported assets are embedded in the workflow.
+Workflows use version 4 JSON with stable node, port, and node-local parameter names. Unsupported node versions are retained as inactive placeholders in the editor and refused by strict export. In older projects, replace legacy I/O with Audio Input and Audio Output. Replace version-1 Arpeggiator, MIDI Clip, Chord Progression, and Velocity nodes with current instances, then set their BPM locally. This repository’s examples use the current node versions.
 
-[NodeSpec.hpp](src/NodeSpec.hpp) is the source of truth for node metadata. The library, inspector, connection validation, serialization, and runtime graph all use it. See [the node authoring guide](docs/编写新节点.md) and [the node and connection standard mapping](docs/节点与连接标准-实现映射.md).
+Start development with [AGENTS.md](AGENTS.md), the [project constitution](docs/项目宪法.md), and the [node authoring guide](docs/编写新节点.md). New processing modules own a directory under `nodes/`, with `Node.hpp`, `Kernel.hpp`, `Tests.cpp`, and an optional `Editor.hpp`; pure background modules can use `Task.hpp` instead of an audio kernel. Builds discover the descriptor and editor headers automatically. Each module also owns its bilingual display strings. The public contracts live in `platform/NodeDescriptor.hpp`, `platform/NodeKernel.hpp`, and `platform/TaskService.hpp`; new modules do not add type branches to the central renderer.
+
+`gain`, `midi-split`, and `timecode` demonstrate independent kernels; the hidden `task-example` module demonstrates background work through public editor callbacks. Kernels receive prepared, immutable audio, MIDI, and model handles from `KernelConfig`, with public resource types in `platform/resources/`.
+
+Existing descriptors and processor sources now belong to their node directories. Some algorithms still use the transitional engine and require migration one node at a time; an explicit adapter list prevents new modules from depending on that path. See the [implementation map](docs/节点与连接标准-实现映射.md) for the supported interfaces and remaining work.
 
 Run `./scripts/test-all.sh` for the regression suite and `./scripts/verify-release.sh` for release checks, including universal builds, signatures, and example renders. See the [changelog](CHANGELOG.md) for version history.
 

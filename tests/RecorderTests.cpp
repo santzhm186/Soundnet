@@ -56,7 +56,8 @@ int main() {
 
     // Standalone transport drops scheduled future MIDI as well as live input.
     // A Stop/Play pair before the next callback still drains the old queue.
-    tri::GraphSpec graph;graph.nodes={{1,tri::MidiNode},{2,tri::Osc1Node},{3,tri::HardwareOutputNode}};
+    tri::GraphSpec graph;graph.nodes={{1,tri::MidiNode},{2,tri::Osc1Node},{3,tri::AudioOutputNode}};
+    graph.nodes.back().nodeVersion=tri::nodeSpec(tri::AudioOutputNode)->nodeVersion;
     graph.edges={{1,2,0},{2,3,0}};assert(realtime.dsp.setGraph(graph));
     realtime.framesPerTick=1;
     realtime.enqueue(0x90,60,127,10000);

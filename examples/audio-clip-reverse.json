@@ -34,6 +34,7 @@
     {
       "id": 3,
       "type": 19,
+      "nodeVersion": 2,
       "x": 450,
       "y": 140,
       "parameters": {

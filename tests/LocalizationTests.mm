@@ -22,6 +22,25 @@ int main() {
         assert([SNLocalizedForLanguage(@"soundnet.filter",NO) isEqualToString:@"soundnet.filter"]);
         assert([SNLocalizedForLanguage(@"filter.cutoff",YES) isEqualToString:@"filter.cutoff"]);
 
+        // Node-local words can be authored without touching the platform table.
+        // Equal source strings in different modules must remain independent,
+        // including the reverse lookup for English-authored parameter captions.
+        std::vector<tri::NodeModule> localModules={
+            {tri::NodeSpec{"example.first",701,"First","Test"},{},{{"同名标签","First meaning"}}},
+            {tri::NodeSpec{"example.second",702,"Second","Test"},{},{{"同名标签","Second meaning"}}}
+        };
+        assert(std::strcmp(tri::nodeTranslation(701,"同名标签",true,localModules),"First meaning")==0);
+        assert(std::strcmp(tri::nodeTranslation(702,"同名标签",true,localModules),"Second meaning")==0);
+        assert(std::strcmp(tri::nodeTranslation(702,"Second meaning",false,localModules),"同名标签")==0);
+        assert(!tri::nodeTranslation(701,"Second meaning",false,localModules));
+        assert(!tri::nodeTranslation(703,"同名标签",true,localModules));
+        const int gain=tri::nodeTypeForKey("soundnet.gain");
+        assert([SNNodeLocalizedForLanguage(gain,@"增益",YES) isEqualToString:@"Gain"]);
+        assert([SNNodeLocalizedForLanguage(gain,@"Gain",NO) isEqualToString:@"增益"]);
+        assert([SNNodeLocalizedForLanguage(gain,@"撤销",YES) isEqualToString:@"Undo"]);
+        assert([SNNodeLocalizedForLanguage(gain,@"gain",YES) isEqualToString:@"gain"]);
+        assert([SNNodeLocalizedForLanguage(gain,nil,YES) isEqualToString:@""]);
+
         // Dynamic diagnostic details are opaque. A user name that happens to
         // contain another diagnostic or a format marker must remain intact.
         NSString *detail=@"我的音色 🎹 / filter.cutoff / 参数超出范围：%@";
@@ -47,19 +66,19 @@ int main() {
         for(int type:tri::nodeCatalog()) {
             const auto *spec=tri::nodeSpec(type);
             assert(spec);
-            assert(!containsChinese(SNEnglish(@(spec->title))));
-            assert(!containsChinese(SNEnglish(@(spec->category))));
-            for(const auto &port:spec->inputs)assert(!containsChinese(SNEnglish(@(port.label))));
-            for(const auto &port:spec->outputs)assert(!containsChinese(SNEnglish(@(port.label))));
+            assert(!containsChinese(SNNodeLocalizedForLanguage(type,@(spec->title),YES)));
+            assert(!containsChinese(SNNodeLocalizedForLanguage(type,@(spec->category),YES)));
+            for(const auto &port:spec->inputs)assert(!containsChinese(SNNodeLocalizedForLanguage(type,@(port.label),YES)));
+            for(const auto &port:spec->outputs)assert(!containsChinese(SNNodeLocalizedForLanguage(type,@(port.label),YES)));
             for(int p:tri::nodeParamList(type)) {
                 const auto *param=tri::paramSpec(p);
                 assert(param);
                 assert(!containsChinese(SNEnglish(@(tri::paramGroupLabel(param->group)))));
                 NSString *name=@(param->info->name);
                 if(![name isEqualToString:@"BPM"])
-                    assert(containsChinese(SNLocalizedForLanguage(name,NO)));
+                    assert(containsChinese(SNNodeLocalizedForLanguage(type,name,NO)));
                 for(int i=0;i<param->optionCount;++i)
-                    assert(!containsChinese(SNEnglish(@(param->options[i]))));
+                    assert(!containsChinese(SNNodeLocalizedForLanguage(type,@(param->options[i]),YES)));
             }
         }
 
@@ -70,6 +89,15 @@ int main() {
             options:0 error:nil];
         for(NSString *source in SNEnglishStrings()) {
             NSString *target=SNEnglishStrings()[source];
+            NSArray *a=[format matchesInString:source options:0 range:NSMakeRange(0,source.length)];
+            NSArray *b=[format matchesInString:target options:0 range:NSMakeRange(0,target.length)];
+            assert(a.count==b.count);
+            for(NSUInteger i=0;i<a.count;++i)
+                assert([[source substringWithRange:[a[i] range]] isEqualToString:[target substringWithRange:[b[i] range]]]);
+        }
+        for(const auto& module:tri::nodeModules())for(const auto& row:module.translations) {
+            assert(row.source&&*row.source&&row.en&&*row.en);
+            NSString *source=@(row.source),*target=@(row.en);
             NSArray *a=[format matchesInString:source options:0 range:NSMakeRange(0,source.length)];
             NSArray *b=[format matchesInString:target options:0 range:NSMakeRange(0,target.length)];
             assert(a.count==b.count);

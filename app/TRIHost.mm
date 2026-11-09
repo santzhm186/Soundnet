@@ -3,6 +3,7 @@
 #import "AudioBridge.hpp"
 #include "PatchRouting.hpp"
 #include "WorkflowAssetStore.hpp"
+#include "AudioEnvironment.hpp"
 #include "../src/WavFile.hpp"
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMIDI/CoreMIDI.h>
@@ -101,6 +102,9 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     std::set<MIDIEndpointRef> _sources;
     BOOL _inputEnabled, _waitingForInput, _closed, _midiReady;
     double _sampleRate;
+    double _deviceSampleRate;
+    tri::ProjectEnvironment _audioConfiguration;
+    NSString *_projectError;
     NSString *_error;
     NSURL *_recordingURL;
     NSURL *_inputRecordingURL;
@@ -132,6 +136,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         if (validGraph && tri::validRouting(graph)) _rt->dsp.setRouting(graph);
         NSDictionary *assets = [defaults dictionaryForKey:@"Soundnet.WorkflowAssets.1"];
         if (assets) _assets.replace(assets,_rt->dsp);
+        _audioConfiguration=_assets.environment;
         _patchLayout=tri::layout::defaults();
         NSArray *layout=[defaults arrayForKey:@"Ternary.NodeLayout.1"];
         for (NSUInteger i=0; i<MIN(layout.count,_patchLayout.size()); ++i) {
@@ -194,10 +199,15 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     [self tearDownGraph];
     @try {
         _graph = [AVAudioEngine new];
+        if(NSError* selected=tri::hardware::select(_graph.outputNode,_audioConfiguration.outputDevice,false))return selected;
+        if(input)if(NSError* selected=tri::hardware::select(_graph.inputNode,_audioConfiguration.inputDevice,true))return selected;
         AVAudioFormat *device = [_graph.outputNode outputFormatForBus:0];
         if (!(device.sampleRate > 0) || !device.channelCount)
             return audioError(SNLocalized(@"找不到输出设备。请连接声卡或在系统设置中选择声音输出，然后重启音频引擎。"));
-        _sampleRate = device.sampleRate;
+        _deviceSampleRate=device.sampleRate;
+        // AVAudioEngine's mixer converts the project processing rate to the
+        // device format. Changing a project never changes the system clock.
+        _sampleRate = _audioConfiguration.present?_audioConfiguration.sampleRate:device.sampleRate;
         mach_timebase_info_data_t base;
         mach_timebase_info(&base);
         _rt->sampleRate = _sampleRate;
@@ -265,12 +275,15 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     }
 }
 - (NSString *)status {
+    if(_projectError.length)return _projectError;
     if (_recordingURL && _inputRecordingURL) return SNLocalized(@"正在录制输出与输入");
     if (_recordingURL) return _rt->recording.overflow.load() ? SNLocalized(@"录制中 · 已达 60 秒上限") : SNLocalized(@"录制中 · 再次选择「停止录制」保存");
     if (_inputRecordingURL) return _rt->inputRecording.overflow.load() ? SNLocalized(@"输入录制中 · 已达 60 秒上限") : SNLocalized(@"输入录制中 · 再次选择「停止录制输入」保存");
     if (_error) return SNLocalized(@"音频离线 · 从「音频」菜单重试");
     if (_waitingForInput) return SNLocalized(@"正在等待麦克风授权");
     NSString *midi = _midiReady ? [NSString stringWithFormat:@"MIDI × %zu",_sources.size()] : SNLocalized(@"MIDI 离线");
+    if(_deviceSampleRate>0 && _deviceSampleRate!=_sampleRate)
+        return [NSString stringWithFormat:@"%g kHz → %g kHz  ·  %@",_sampleRate/1000.,_deviceSampleRate/1000.,midi];
     return [NSString stringWithFormat:@"%g kHz  ·  %@",_sampleRate/1000.,midi];
 }
 - (BOOL)isInputEnabled { return _inputEnabled; }
@@ -401,7 +414,57 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     return YES;
 }
 - (NSDictionary *)workflowAssets { return _assets.current; }
-- (BOOL)replaceWorkflowAssets:(NSDictionary *)assets { return _assets.replace(assets,_rt->dsp); }
+- (BOOL)replaceWorkflowAssets:(NSDictionary *)assets {
+    tri::PreparedAssets next;
+    if(!next.load(assets,_assets.current[@"graph"],&_assets.lastGraph))return NO;
+    const auto previous=_audioConfiguration;
+    const bool changed=!next.environment.sameAudioConfiguration(previous);
+    if(changed) {
+        if(_recordingURL||_inputRecordingURL) {
+            _projectError=SNLocalized(@"请先停止录音，再修改项目音频环境。");return NO;
+        }
+        for(bool input:{false,true}) {
+            const auto& uid=input?next.environment.inputDevice:next.environment.outputDevice;
+            // A default input may be absent on a playback-only machine.
+            if(uid!="system" && !tri::hardware::resolve(uid,input)) {
+                _projectError=[NSString stringWithFormat:SNLocalized(@"找不到音频设备：%@"),
+                    [NSString stringWithUTF8String:uid.c_str()]];return NO;
+            }
+        }
+        _audioConfiguration=next.environment;
+        if(_graph && !_closed) {
+            NSError* failure=[self buildGraphWithInput:_inputEnabled];
+            if(failure) {
+                _audioConfiguration=previous;
+                NSError* restore=[self buildGraphWithInput:_inputEnabled];
+                if(restore){[self tearDownGraph];_error=restore.localizedDescription;}
+                _projectError=failure.localizedDescription;
+                return NO;
+            }
+        }
+    }
+    if(!_assets.apply(next,_rt->dsp)) {
+        if(changed) {
+            _audioConfiguration=previous;
+            if(_graph&&!_closed)[self restartAudio];
+        }
+        return NO;
+    }
+    // Export-only fields do not rebuild the audio engine, but the environment
+    // readout must still reflect the newly accepted project configuration.
+    _audioConfiguration=next.environment;
+    _projectError=nil;
+    return YES;
+}
+- (NSDictionary *)audioEnvironment {
+    const bool running=_graph&&_graph.running;
+    return @{@"requestedRate":@(_audioConfiguration.sampleRate),@"actualRate":@(running?_sampleRate:0),
+        @"deviceRate":@(running?_deviceSampleRate:0),@"processingPrecision":@32,
+        @"exportBits":@(_audioConfiguration.exportBits),@"hostManaged":@NO,
+        @"inputDevice":_graph&&_inputEnabled?tri::hardware::selectedUID(_graph.inputNode):@"",
+        @"outputDevice":_graph?tri::hardware::selectedUID(_graph.outputNode):@"",
+        @"devices":tri::hardware::catalog(),@"error":_projectError ?: _error ?: @""};
+}
 // Node-level stop: the graph applies it at the next block boundary, so this is
 // safe to call from the UI thread.
 - (void)stopNode:(uint64_t)nodeID { _rt->dsp.stopNode(nodeID); }

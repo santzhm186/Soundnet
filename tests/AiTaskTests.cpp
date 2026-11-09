@@ -33,7 +33,7 @@ tri::GraphSpec aiGraph() {
     node.texts["ai.prompt"]="warm piano pop";
     spec.nodes.push_back(node);
     tri::GraphNode sink;
-    sink.id=2;sink.type=tri::HardwareOutputNode;sink.key=tri::nodeKey(tri::HardwareOutputNode);
+    sink.id=2;sink.type=tri::AudioOutputNode;sink.nodeVersion=tri::nodeSpec(sink.type)->nodeVersion;sink.key=tri::nodeKey(tri::AudioOutputNode);
     spec.nodes.push_back(sink);
     tri::GraphEdge edge;edge.source=1;edge.target=2;
     edge.sourcePortId="audio";edge.portId="audio";
@@ -59,27 +59,12 @@ int main() {
     }
     check(tri::registryProblems().empty(),"registry self-check");
 
-    // ---- engine control surface ------------------------------------------
+    // Task ownership lives in the control-thread TaskService, not in audio
+    // runtime shadow state. Playback remains an ordinary graph operation.
     {
-        tri::Engine engine;
-        check(engine.setGraph(aiGraph()),"graph publishes");
-        auto tasks=engine.aiTasks();
-        check(tasks.size()==1,"one task node snapshot");
-        if(!tasks.empty()) {
-            check(tasks[0].id==1,"snapshot carries the instance id");
-            check(tasks[0].status==0,"starts idle");
-            check(!tasks[0].hasSample,"starts without a sample");
-        }
-        check(engine.setAiTaskState(1,1,37),"state can be published");
-        tasks=engine.aiTasks();
-        check(!tasks.empty()&&tasks[0].status==1&&tasks[0].progress==37,"state round-trips");
-        engine.cancelAiTask(1);
-        tasks=engine.aiTasks();
-        check(!tasks.empty()&&tasks[0].cancels==1,"cancel counter increments");
-        engine.stopNode(1);   // must not crash and must not touch parameters
-        engine.reset();
-        tasks=engine.aiTasks();
-        check(!tasks.empty()&&tasks[0].status==0,"reset returns the task to idle");
+        auto engine=std::make_unique<tri::Engine>();
+        check(engine->setGraph(aiGraph()),"graph publishes");
+        engine->stopNode(1);
     }
 
     // ---- backend: success, failure, cancel -------------------------------
@@ -125,11 +110,18 @@ int main() {
         return tri::GenTaskStatus::Running;
     };
     {
+        tri::AudioCppCliBackend backend;
+        auto unsupported=request(goodScript,dir);unsupported.backend=1;
+        uint64_t task=0;std::string why;
+        check(!backend.submit(unsupported,task,why),"unsupported backend cannot silently run CLI instead");
+        check(!why.empty(),"unsupported backend reports its limitation");
+    }
+    {
         const std::string work=dir+"/task-ok";
         ::mkdir(work.c_str(),0755);
         tri::AudioCppCliBackend backend;
         uint64_t task=0;std::string why;
-        check(backend.available(why)||true,"availability is advisory");
+        // submit applies the explicit executable path before probing availability.
         check(backend.submit(request(goodScript,work),task,why),"stub submits");
         tri::GenResult out;
         const auto status=waitFor(backend,task,out,why);
@@ -159,6 +151,30 @@ int main() {
         const auto status=waitFor(backend,task,out,why);
         check(status==tri::GenTaskStatus::Cancelled,"cancel is reported");
         check(!tri::detail::fileExists(work+"/out.wav"),"cancel writes no result");
+    }
+    // The same node adapter used by the editor works with the platform service.
+    // No preflight PATH lookup is required for a configured executable.
+    {
+        const std::string work=dir+"/task-service";
+        ::mkdir(work.c_str(),0755);
+        struct Payload final:soundnet::TaskPayload {tri::GenerationOutcome outcome;};
+        soundnet::TaskService service(1);
+        service.reconcile({{7,1}});
+        soundnet::TaskBinding binding;std::string why;
+        check(service.submit(7,1,[&](soundnet::TaskContext& context) {
+            tri::AudioCppCliBackend backend;
+            auto payload=std::make_shared<Payload>();
+            payload->outcome=tri::executeGeneration(backend,request(goodScript,work),context);
+            return soundnet::TaskResult{soundnet::TaskStatus::Succeeded,payload,{}};
+        },binding,why),"task service accepts generation adapter");
+        check(service.waitIdle(std::chrono::seconds(5)),"generation adapter settles");
+        const auto results=service.takeCompleted();
+        check(results.size()==1,"generation publishes exactly one current result");
+        if(results.size()==1) {
+            auto payload=std::dynamic_pointer_cast<const Payload>(results[0].result.payload);
+            check(payload&&payload->outcome.status==tri::GenTaskStatus::Succeeded,"explicit backend path succeeds through coordinator");
+        }
+        check(service.takeCompleted().empty(),"generation result is consumed once");
     }
     // ---- score feed-back: the edited ABC reaches the backend --------------
     {

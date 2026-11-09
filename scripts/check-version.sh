@@ -20,9 +20,9 @@ actual_au=$(get "$au" "AudioComponents:0:version")
 [ "$actual_au" = "$expected_au" ] || { echo "ERROR: AudioComponents version $actual_au != $expected_au" >&2; exit 1; }
 hex=$(printf '0x%05X' "$expected_au")
 grep -Fq "$hex" "$root/au/verify.mm" || { echo "ERROR: au/verify.mm lacks $hex" >&2; exit 1; }
-grep -Fq "**$major.$minor**" "$root/README.md" || { echo "ERROR: README lacks $major.$minor" >&2; exit 1; }
-grep -Fq "**$major.$minor**" "$root/README.zh-CN.md" || { echo "ERROR: Chinese README lacks $major.$minor" >&2; exit 1; }
-grep -Fq "Soundnet $major.$minor ·" "$root/docs/使用说明.txt" || { echo "ERROR: manual title lacks $major.$minor" >&2; exit 1; }
-grep -Fq "Soundnet $major.$minor" "$root/ui/InstanceEditor.mm" || { echo "ERROR: editor heading lacks $major.$minor" >&2; exit 1; }
-grep -Fq "## $major.$minor" "$root/CHANGELOG.md" || { echo "ERROR: CHANGELOG lacks $major.$minor" >&2; exit 1; }
+grep -Fq "**$short**" "$root/README.md" || { echo "ERROR: README lacks $short" >&2; exit 1; }
+grep -Fq "**$short**" "$root/README.zh-CN.md" || { echo "ERROR: Chinese README lacks $short" >&2; exit 1; }
+grep -Fq "Soundnet $short ·" "$root/docs/使用说明.txt" || { echo "ERROR: manual title lacks $short" >&2; exit 1; }
+grep -Fq "Soundnet $short\"" "$root/ui/InstanceEditor.mm" || { echo "ERROR: editor heading lacks $short" >&2; exit 1; }
+grep -Fq "## ${short}（" "$root/CHANGELOG.md" || { echo "ERROR: CHANGELOG lacks $short" >&2; exit 1; }
 echo "PASS: version $short ($build), AU $hex"

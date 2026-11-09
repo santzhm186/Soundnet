@@ -6,7 +6,7 @@
 using namespace tri;
 
 static void add(GraphSpec& g,uint64_t id,int type,std::initializer_list<std::pair<int,float>> p={}) {
-    GraphNode n;n.id=id;n.type=type;n.x=float(id*10);n.y=0;
+    GraphNode n;n.id=id;n.type=type;n.nodeVersion=nodeSpec(type)->nodeVersion;n.x=float(id*10);n.y=0;
     for(auto& kv:p)n.parameters[kv.first]=kv.second;
     g.nodes.push_back(n);
 }
@@ -39,7 +39,7 @@ int main(){
         }
         layer=upper;
     }
-    add(graph,next,HardwareOutputNode,{{Master,.7f}});connect(graph,layer[0],next,0);
+    add(graph,next,AudioOutputNode,{{Master,.7f}});connect(graph,layer[0],next,0);
 
     Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
     engine.midi(0x90,60,100);

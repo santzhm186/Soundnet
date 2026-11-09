@@ -11,9 +11,11 @@
     {
       "id": 2,
       "type": 16,
+      "nodeVersion": 2,
       "x": 230,
       "y": 180,
       "parameters": {
+        "57": 112,
         "81": 0,
         "82": 1
       },
@@ -22,15 +24,6 @@
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
-    },
-    {
-      "id": 3,
-      "type": 13,
-      "x": 0,
-      "y": 340,
-      "parameters": {
-        "57": 112
       }
     },
     {
@@ -61,9 +54,11 @@
     {
       "id": 7,
       "type": 16,
+      "nodeVersion": 2,
       "x": 900,
       "y": 340,
       "parameters": {
+        "57": 112,
         "81": 0,
         "82": 0
       },
@@ -248,6 +243,7 @@
     {
       "id": 12,
       "type": 19,
+      "nodeVersion": 2,
       "x": 1780,
       "y": 180,
       "parameters": {}
@@ -256,12 +252,6 @@
   "edges": [
     {
       "source": 1,
-      "target": 2,
-      "port": 1,
-      "sourcePort": 0
-    },
-    {
-      "source": 3,
       "target": 2,
       "port": 0,
       "sourcePort": 0
@@ -281,7 +271,7 @@
     {
       "source": 5,
       "target": 2,
-      "port": 1,
+      "port": 0,
       "sourcePort": 0
     },
     {
@@ -292,12 +282,6 @@
     },
     {
       "source": 6,
-      "target": 7,
-      "port": 1,
-      "sourcePort": 0
-    },
-    {
-      "source": 3,
       "target": 7,
       "port": 0,
       "sourcePort": 0

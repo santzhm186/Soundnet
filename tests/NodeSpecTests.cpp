@@ -13,7 +13,7 @@ using namespace tri;
 
 static GraphNode node(uint64_t id,int type) {
     GraphNode n;
-    n.id=id;n.type=type;n.key=nodeKey(type);
+    n.id=id;n.type=type;n.key=nodeKey(type);n.nodeVersion=nodeSpec(type)->nodeVersion;
     return n;
 }
 static void connect(GraphSpec& graph,uint64_t source,const char* sourcePort,uint64_t target,const char* port) {
@@ -42,7 +42,7 @@ int main() {
         assert(nodePortIndex(ArrangerNode,false,"middle")==1);
         assert(strcmp(nodePortId(ArrangerNode,false,2),"low")==0);
         assert(nodePortIndex(CompressorNode,true,"sidechain")==1);
-        assert(nodeInputByRole(ArpNode,RoleClock)==1);
+        assert(nodeInputByRole(ArpNode,RoleClock)==-1);
         assert(nodeInputByRole(VelocityNode,RoleMain,Signal::Midi)==0);
         assert(nodePortIndex(ClipNode,true,"nope")==-1);
         assert(nodePort(FilterNode,true,9)==nullptr);    // bounded access
@@ -97,8 +97,8 @@ int main() {
     // 5. Signal compatibility is checked against the descriptor, not a list.
     {
         GraphSpec graph;
-        graph.nodes={node(1,ClockNode),node(2,Osc1Node)};
-        connect(graph,1,"clock",2,"notes");
+        graph.nodes={node(1,nodeTypeID("soundnet.timecode")),node(2,Osc1Node)};
+        connect(graph,1,"time",2,"notes");
         CompiledGraph plan;
         std::string why;
         assert(!compileGraph(graph,plan,&why));
@@ -114,16 +114,16 @@ int main() {
         CompiledGraph plan;
         std::string why;
         assert(compileGraph(graph,plan,&why));
-        assert(plan.nodes[2].triggerInputs[1].size()==1);
+        assert(plan.nodes[2].triggerInputs[0].size()==1);
         connect(graph,2,"trigger",3,"trigger");
         assert(compileGraph(graph,plan,&why));
-        assert(plan.nodes[2].triggerInputs[1].size()==2);
+        assert(plan.nodes[2].triggerInputs[0].size()==2);
     }
     // 6b. An ordinary input takes exactly one source: two edges into the same
     //     audio input are an error, not a silent overwrite.
     {
         GraphSpec graph;
-        graph.nodes={node(1,NoiseNode),node(2,FilterNode),node(3,HardwareOutputNode)};
+        graph.nodes={node(1,NoiseNode),node(2,FilterNode),node(3,AudioOutputNode)};
         connect(graph,1,"audio",2,"audio");
         connect(graph,1,"audio",2,"audio");
         connect(graph,2,"audio",3,"audio");
@@ -156,7 +156,7 @@ int main() {
         GraphSpec graph;
         GraphNode unknown;
         unknown.id=2;unknown.key="soundnet.future-node";unknown.type=0;unknown.unavailable=true;
-        graph.nodes={node(1,NoiseNode),unknown,node(3,HardwareOutputNode)};
+        graph.nodes={node(1,NoiseNode),unknown,node(3,AudioOutputNode)};
         connect(graph,1,"audio",3,"audio");
         CompiledGraph plan;
         std::string why;
@@ -172,7 +172,7 @@ int main() {
         GraphSpec graph;
         GraphNode osc=node(1,Osc1Node);
         osc.bypass=true;
-        graph.nodes={osc,node(2,HardwareOutputNode)};
+        graph.nodes={osc,node(2,AudioOutputNode)};
         connect(graph,1,"audio",2,"audio");
         CompiledGraph plan;
         std::string why;

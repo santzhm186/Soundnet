@@ -1,96 +1,210 @@
 {
-  "connections" : {
-    "arp.notes" : "midi",
-    "delay.audio" : "eq",
-    "eq.audio" : "mix",
-    "mix.1" : "osc1",
-    "mix.2" : "osc2",
-    "mix.3" : "osc3",
-    "mix.4" : "input",
-    "osc1.notes" : "midi",
-    "osc2.notes" : "arp",
-    "osc3.notes" : "arp",
-    "output.audio" : "delay"
-  },
-  "format" : "audio.ternary.workflow",
-  "nodes" : {
-    "arp" : [
-      -1,
-      -1
-    ],
-    "delay" : [
-      -1,
-      -1
-    ],
-    "eq" : [
-      -1,
-      -1
-    ],
-    "input" : [
-      -1,
-      -1
-    ],
-    "midi" : [
-      -1,
-      -1
-    ],
-    "mix" : [
-      -1,
-      -1
-    ],
-    "osc1" : [
-      -1,
-      -1
-    ],
-    "osc2" : [
-      -1,
-      -1
-    ],
-    "osc3" : [
-      -1,
-      -1
-    ],
-    "output" : [
-      -1,
-      -1
-    ]
-  },
-  "parameters" : {
-    "Arp Repeat" : 2,
-    "Arpeggiator" : 1,
-    "Attack" : 0.012000000104308128,
-    "Audio Input" : 1,
-    "Decay" : 0.2199999988079071,
-    "Delay Feedback" : 0.31999999284744263,
-    "Delay Mix" : 0.11999999731779099,
-    "Delay Time" : 310,
-    "EQ High" : 0,
-    "EQ Low" : 0,
-    "EQ Mid" : 0,
-    "Gate" : 0.60000002384185791,
-    "Master" : 0.74000000953674316,
-    "Osc 1 Attack" : 0.0080000003799796104,
-    "Osc 1 Level" : 0.6600000262260437,
-    "Osc 1 Release" : -1,
-    "Osc 1 Sustain" : -1,
-    "Osc 1 Tune" : 0,
-    "Osc 1 Wave" : 2,
-    "Osc 2 Attack" : -1,
-    "Osc 2 Level" : 0.37999999523162842,
-    "Osc 2 Release" : -1,
-    "Osc 2 Sustain" : 0.44999998807907104,
-    "Osc 2 Tune" : -12,
-    "Osc 2 Wave" : 3,
-    "Osc 3 Attack" : -1,
-    "Osc 3 Level" : 0.18000000715255737,
-    "Osc 3 Release" : 0.89999997615814209,
-    "Osc 3 Sustain" : -1,
-    "Osc 3 Tune" : 12,
-    "Osc 3 Wave" : 0,
-    "Release" : 0.23999999463558197,
-    "Rhythm" : 1,
-    "Sustain" : 0.69999998807907104,
-    "Tempo" : 112
-  },
-  "version" : 1
+  "edges": [
+    {
+      "port": "notes",
+      "source": 1,
+      "sourcePort": "notes",
+      "target": 2
+    },
+    {
+      "port": "notes",
+      "source": 1,
+      "sourcePort": "notes",
+      "target": 3
+    },
+    {
+      "port": "notes",
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 4
+    },
+    {
+      "port": "notes",
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 5
+    },
+    {
+      "port": "in1",
+      "source": 3,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in2",
+      "source": 4,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in3",
+      "source": 5,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "in4",
+      "source": 6,
+      "sourcePort": "audio",
+      "target": 7
+    },
+    {
+      "port": "audio",
+      "source": 7,
+      "sourcePort": "audio",
+      "target": 8
+    },
+    {
+      "port": "audio",
+      "source": 8,
+      "sourcePort": "audio",
+      "target": 9
+    },
+    {
+      "port": "audio",
+      "source": 9,
+      "sourcePort": "audio",
+      "target": 10
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "nodeKey": "soundnet.midi-input",
+      "nodeVersion": 1,
+      "parameters": {},
+      "stateVersion": 1,
+      "x": 0,
+      "y": 160
+    },
+    {
+      "id": 2,
+      "nodeKey": "soundnet.arp",
+      "nodeVersion": 2,
+      "parameters": {
+        "arp.enabled": 1,
+        "arp.gate": 0.6000000238418579,
+        "arp.pattern": 1,
+        "arp.repeat": 2,
+        "clock.bpm": 112
+      },
+      "stateVersion": 1,
+      "x": 210,
+      "y": 160
+    },
+    {
+      "id": 3,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.00800000037997961,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.23999999463558197,
+        "envelope.sustain": 0.699999988079071,
+        "osc1.level": 0.6600000262260437,
+        "osc1.tune": 0,
+        "osc1.wave": 2
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 0
+    },
+    {
+      "id": 4,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.012000000104308128,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.23999999463558197,
+        "envelope.sustain": 0.44999998807907104,
+        "osc1.level": 0.3799999952316284,
+        "osc1.tune": -12,
+        "osc1.wave": 3
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 160
+    },
+    {
+      "id": 5,
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "parameters": {
+        "envelope.attack": 0.012000000104308128,
+        "envelope.decay": 0.2199999988079071,
+        "envelope.release": 0.8999999761581421,
+        "envelope.sustain": 0.699999988079071,
+        "osc1.level": 0.18000000715255737,
+        "osc1.tune": 12,
+        "osc1.wave": 0
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 320
+    },
+    {
+      "id": 6,
+      "nodeKey": "soundnet.audio-input",
+      "nodeVersion": 2,
+      "parameters": {
+        "input.gain": 1
+      },
+      "stateVersion": 1,
+      "x": 420,
+      "y": 480
+    },
+    {
+      "id": 7,
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "parameters": {},
+      "stateVersion": 1,
+      "x": 640,
+      "y": 160
+    },
+    {
+      "id": 8,
+      "nodeKey": "soundnet.eq",
+      "nodeVersion": 1,
+      "parameters": {
+        "eq.high": 0,
+        "eq.low": 0,
+        "eq.mid": 0
+      },
+      "stateVersion": 1,
+      "x": 850,
+      "y": 160
+    },
+    {
+      "id": 9,
+      "nodeKey": "soundnet.delay",
+      "nodeVersion": 1,
+      "parameters": {
+        "clock.bpm": 112,
+        "delay.division": 1,
+        "delay.feedback": 0.3199999928474426,
+        "delay.mix": 0.11999999731779099,
+        "delay.sync": 0,
+        "delay.time": 310
+      },
+      "stateVersion": 1,
+      "x": 1060,
+      "y": 160
+    },
+    {
+      "id": 10,
+      "nodeKey": "soundnet.audio-output",
+      "nodeVersion": 2,
+      "parameters": {
+        "output.master": 0.7400000095367432,
+        "output.width": 1
+      },
+      "stateVersion": 1,
+      "x": 1270,
+      "y": 160
+    }
+  ],
+  "projectId": "layered-arp",
+  "version": 4
 }

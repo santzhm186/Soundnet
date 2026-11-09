@@ -56,6 +56,11 @@
        }, ^(BOOL enabled) {
            UInt32 value=enabled?1:0;
            cache->writeError=AudioUnitSetProperty(unit,ternaryAU::processing,kAudioUnitScope_Global,0,&value,sizeof(value));
+       }, nil, ^NSDictionary * {
+           AudioStreamBasicDescription format{};UInt32 size=sizeof(format);
+           AudioUnitGetProperty(unit,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Output,0,&format,&size);
+           return @{@"actualRate":@(format.mSampleRate),@"deviceRate":@(format.mSampleRate),
+               @"processingPrecision":@32,@"hostManaged":@YES,@"devices":@[]};
        });
 }
 @end
