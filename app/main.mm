@@ -38,7 +38,8 @@
         ^NSDictionary *{ return host.workflowAssets; },
         ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; },
         ^BOOL{ return host.processingEnabled; },
-        ^(BOOL enabled){ host.processingEnabled=enabled; });
+        ^(BOOL enabled){ host.processingEnabled=enabled; },
+        ^(uint64_t nodeID){ [host stopNode:nodeID]; });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];

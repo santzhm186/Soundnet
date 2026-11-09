@@ -37,6 +37,8 @@
 - (void)toggleParameterGroup:(NSButton *)sender;
 - (void)toggleLibrary:(id)sender;
 - (void)cancelProcessing:(id)sender;
+- (void)importScore:(id)sender;
+- (void)selectOnly:(uint64_t)uid;
 @end
 
 static NSDictionary *snapshot(NSView *editor) {
@@ -272,6 +274,37 @@ int main() {
             assert(startID);
             [editor selectOnly:startID];[editor trigger:nil];
             assert(engine->processingEnabled());
+        }
+
+        // ---- score loop: an ABC score becomes an editable MIDI clip --------
+        {
+            NSMutableDictionary *document=[@{@"version":@4,@"projectId":@"local",
+                @"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]} mutableCopy];
+            [editor setValue:document forKey:@"document"];
+            NSMenuItem *aiItem=[NSMenuItem new];aiItem.tag=tri::AiMusicNode;
+            [editor insert:aiItem];
+            NSMutableArray *nodes=[editor valueForKey:@"document"][@"nodes"];
+            assert(nodes.count==1);
+            NSMutableDictionary *aiNode=nodes.lastObject;
+            uint64_t aiID=[aiNode[@"id"] unsignedLongLongValue];
+            aiNode[@"texts"]=@{@"ai.prompt":@"smoke test",
+                               @"ai.score":@"X:1\nT:Smoke\nM:4/4\nL:1/4\nQ:1/4=110\nK:G\nG A B c | d2 B2 |\n"};
+            [editor selectOnly:aiID];
+            [editor commit:nil];
+            assert([assets[@"graph"][@"nodes"] count]==1);
+            [editor importScore:nil];
+            nodes=[editor valueForKey:@"document"][@"nodes"];
+            assert(nodes.count==2);
+            NSDictionary *scoreClip=nodes.lastObject;
+            assert([scoreClip[@"nodeKey"] isEqual:@"soundnet.midi-clip"]);
+            assert([scoreClip[@"asset"][@"notes"] intValue]==6);
+            assert([scoreClip[@"asset"][@"smf"] length]>0);
+            assert([scoreClip[@"texts"][@"clip.score"] length]>0);
+            assert([[editor activeIDs] count]==1);
+            [editor undo:nil];
+            assert([(NSArray *)[editor valueForKey:@"document"][@"nodes"] count]==1);
+            [editor redo:nil];
+            assert([(NSArray *)[editor valueForKey:@"document"][@"nodes"] count]==2);
         }
 
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];

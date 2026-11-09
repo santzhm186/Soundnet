@@ -402,6 +402,9 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (NSDictionary *)workflowAssets { return _assets.current; }
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets { return _assets.replace(assets,_rt->dsp); }
+// Node-level stop: the graph applies it at the next block boundary, so this is
+// safe to call from the UI thread.
+- (void)stopNode:(uint64_t)nodeID { _rt->dsp.stopNode(nodeID); }
 - (void)savePatch {
     NSMutableArray *values = [NSMutableArray array];
     for (int i=0; i<tri::ParamCount; ++i) [values addObject:@(_rt->dsp.get(i))];

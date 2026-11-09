@@ -2,7 +2,7 @@
 
 English · [简体中文](README.zh-CN.md)
 
-Soundnet is a native macOS editor for building music workflows from connected nodes. Route MIDI, stereo audio, clocks, and triggers through a patch to build an instrument, arrange a progression, or process incoming audio. Soundnet **2.81** runs as a standalone app and as an Audio Unit v2 instrument for hosts such as Logic Pro.
+Soundnet is a native macOS editor for building music workflows from connected nodes. Route MIDI, stereo audio, clocks, and triggers through a patch to build an instrument, arrange a progression, or process incoming audio. Soundnet **2.90** runs as a standalone app and as an Audio Unit v2 instrument for hosts such as Logic Pro.
 
 ![Example Soundnet workflow with MIDI clips, synthesizers, and trigger routing](docs/workflow.png)
 
@@ -23,6 +23,7 @@ Use the node library to search by English or Chinese name, category, or stable n
 | Record and process audio | Hardware Audio Input → EQ → Compressor → Hardware Audio Output |
 | Trigger a clip or loop | Start Trigger → Audio Clip → Limiter → Audio Output |
 | Send notes to another instrument | MIDI Clip → Scale Quantizer → MIDI Output |
+| Generate a song, then edit its score | AI Music → Audio Output, and its ABC score → MIDI Clip → Scale Quantizer |
 
 Each node instance has its own parameters, assets, and runtime state. MIDI, stereo audio, trigger, and clock ports are color coded. One output can feed several inputs; ordinary inputs accept one source, while trigger inputs can accept several. Soundnet validates connections before executing the graph.
 
@@ -30,6 +31,7 @@ Each node instance has its own parameters, assets, and runtime state. MIDI, ster
 - **Audio processing:** mixing, EQ, delay, filtering, reverb, compression, limiting, modulation, and more. Supported effects can be bypassed without removing their connections.
 - **Clips and control:** MIDI clips with a piano-roll editor, audio clips with reverse and loop controls, start/stop triggers, event counters, waits, and probability gates.
 - **Recording and export:** record audio input or output to WAV, or render a workflow offline as stereo WAV, separate WAV stems, or a standard MIDI file. Offline export supports cancellation.
+- **Local generation:** an AI Music node drives a locally installed audio.cpp CLI (ACE-Step 1.5 or YuE2) in the background. The result becomes an embedded audio asset, so playback, export and stems behave exactly like an audio clip; YuE2 also returns an ABC score that converts into an editable MIDI clip for the piano roll, and the edited score can be fed back for another render. Each node has its own stop control for cancelling a run or stopping playback.
 - **Local pitch models:** map MIDI pitches with a compatible Core ML model or a JSON pitch table. Try [PitchMirror](examples/PitchMirror.mlmodel) with [FourBeat](examples/FourBeat.mid).
 
 Try [Three-Voice Arrangement](examples/three-voice-arrangement.v4.json), [Sampler Pluck](examples/sampler-pluck.json), or [Audio Clip and Compressor](examples/audio-clip-compressor.json). The [Chinese user guide](docs/使用说明.txt) covers editing shortcuts, routing, and node controls in more detail.
@@ -38,7 +40,7 @@ Try [Three-Voice Arrangement](examples/three-voice-arrangement.v4.json), [Sample
 
 Soundnet requires macOS 13 or later and runs on Apple Silicon and Intel Macs.
 
-- **Standalone:** open the local `Soundnet-2.81.0-macos.pkg` to install the app in `/Applications`, or extract the ZIP and copy `Soundnet.app` there.
+- **Standalone:** open the local `Soundnet-2.90.0-macos.pkg` to install the app in `/Applications`, or extract the ZIP and copy `Soundnet.app` there.
 - **Audio Unit:** copy `Soundnet.component` from the ZIP into `~/Library/Audio/Plug-Ins/Components/`, then reopen the host. In Logic Pro, load it from **AU Instruments → Soundnet → Soundnet**. The component uses the same identifier as the earlier Ternary plug-in; keep one copy of that component installed. For patches designed for the standalone app, route the mix to **DAW Audio Output** when using the AU.
 
 Local builds are ad hoc signed. The installer package is unsigned, and the artifacts are not Apple-notarized.

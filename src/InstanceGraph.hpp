@@ -65,6 +65,19 @@ class InstanceGraph {
         bool playing=false,stopping=false,pendingStart=false,bypassed=false;
         int startFrame=0;
     };
+    // Task state for CapTask nodes. Every field is atomic because the audio
+    // thread raises requests while the control thread (editor) reads progress
+    // and publishes results. No allocation ever happens on the audio thread.
+    struct AiTaskState {
+        std::atomic<uint32_t> requests{0};    // incremented by a trigger
+        std::atomic<uint32_t> cancels{0};     // incremented by the stop button
+        std::atomic<int> status{0};           // 0 idle 1 running 2 done 3 failed 4 cancelled
+        std::atomic<int> progress{-1};        // 0..100, -1 unknown
+        void resetTask() {
+            status.store(0,std::memory_order_release);
+            progress.store(-1,std::memory_order_release);
+        }
+    };
     struct ChannelFilterState {
         int channel=0;bool bypassed=false;
     };
@@ -119,6 +132,7 @@ class InstanceGraph {
         std::unique_ptr<ArrangerState> arranger;
         std::unique_ptr<SamplerState> sampler;
         std::unique_ptr<AudioClipState> audioClip;
+        std::unique_ptr<AiTaskState> aiTask;
         std::unique_ptr<QuantizeState> quantizer;
         std::unique_ptr<ChannelFilterState> channelFilter;
         std::unique_ptr<RandomState> random;
@@ -159,6 +173,13 @@ class InstanceGraph {
             }
             if(type==AudioClipNode) {
                 audioClip=std::make_unique<AudioClipState>();
+                return;
+            }
+            if(type==AiMusicNode) {
+                // Generated audio plays through the same clip path once the
+                // asset has been published; the task state only drives the UI.
+                audioClip=std::make_unique<AudioClipState>();
+                aiTask=std::make_unique<AiTaskState>();
                 return;
             }
             if(type==QuantizeNode) {
@@ -299,6 +320,9 @@ class InstanceGraph {
     std::atomic<bool> transport{false},playing{false},hosted{false};
     std::atomic<bool> active{false},panicRequested{false};
     std::atomic<bool> processing{true},stopResetRequested{false};
+    // Node-level stop from the editor. Consumed at the next block boundary so
+    // the audio thread never mutates state from a UI call.
+    std::atomic<uint64_t> stopNodeRequest{0};
     std::atomic<uint64_t> stopGeneration{0};
     struct QueuedMidi {Event event{};uint64_t generation=0;};
     std::array<QueuedMidi,eventCapacity> local{},daw{};
@@ -369,6 +393,13 @@ class InstanceGraph {
             if(event.start){state.running=true;state.phase=0;state.beat=0;state.envelope=1;state.clickPhase=0;}
             else state.running=false;
         } else if(target.type==AudioClipNode) {
+            auto& clip=*target.audioClip;
+            if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
+            else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
+        } else if(target.type==AiMusicNode) {
+            // One trigger carries both meanings: ask the control thread for a
+            // generation, and start playback of an asset that already exists.
+            if(target.aiTask)target.aiTask->requests.fetch_add(1,std::memory_order_acq_rel);
             auto& clip=*target.audioClip;
             if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
             else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
@@ -925,6 +956,7 @@ public:
             if(n.processor)n.processor->reset();
             if(n.sampler) {samplerStop(*n.sampler);n.sampler->generation=0;n.sampler->sourcePort=0;n.sampler->bypassed=false;}
             if(n.audioClip) {*n.audioClip=AudioClipState{};}
+            if(n.aiTask)n.aiTask->resetTask();
             if(n.quantizer) {n.quantizer->mapping.fill(-1);n.quantizer->counts.fill(0);n.quantizer->source=nullptr;n.quantizer->sourcePort=0;n.quantizer->root=-1;n.quantizer->scale=-1;n.quantizer->mode=-1;n.quantizer->bypassed=false;}
             if(n.metronome)*n.metronome=MetronomeState{};
             if(n.echo)*n.echo=EchoState{};
@@ -938,6 +970,10 @@ public:
             n.waitingSize=0;n.controlSize=0;n.count=0;
         }
         deferredHead=deferredTail=0;dispatchSize=0;deferredOverflow=0;
+        // A published plan may not have been consumed by the audio thread yet,
+        // so task state is cleared on the control-side runtimes as well.
+        for(auto& pair:controlNodes)
+            if(pair.second->type==AiMusicNode&&pair.second->aiTask)pair.second->aiTask->resetTask();
         pendingLocalCount=pendingDawCount=0;
         inputOverflow.store(false,std::memory_order_relaxed);
         {
@@ -948,6 +984,51 @@ public:
     // Only the render thread is allowed to touch live node state. UI/MIDI
     // callers publish a request; the next render block performs the reset.
     void panic() {panicRequested.store(true,std::memory_order_release);}
+    // ---- CapTask control surface (control thread only) --------------------
+    // The audio thread only increments request/cancel counters and reads
+    // status; everything else is decided here, off the render path.
+    struct AiTaskSnapshot {
+        InstanceID id=0;
+        uint32_t requests=0,cancels=0;
+        int status=0,progress=-1;
+        bool hasSample=false;
+    };
+    std::vector<AiTaskSnapshot> aiTaskSnapshot() const {
+        std::vector<AiTaskSnapshot> out;
+        for(const auto& pair:controlNodes) {
+            const Runtime& node=*pair.second;
+            if(node.type!=AiMusicNode||!node.aiTask)continue;
+            AiTaskSnapshot row;
+            row.id=pair.first;
+            row.requests=node.aiTask->requests.load(std::memory_order_acquire);
+            row.cancels=node.aiTask->cancels.load(std::memory_order_acquire);
+            row.status=node.aiTask->status.load(std::memory_order_acquire);
+            row.progress=node.aiTask->progress.load(std::memory_order_acquire);
+            row.hasSample=node.saved.sample!=nullptr;
+            out.push_back(row);
+        }
+        return out;
+    }
+    bool setAiTaskState(InstanceID id,int status,int progress) {
+        for(const auto& pair:controlNodes) {
+            if(pair.first!=id||pair.second->type!=AiMusicNode||!pair.second->aiTask)continue;
+            pair.second->aiTask->status.store(status,std::memory_order_release);
+            pair.second->aiTask->progress.store(progress,std::memory_order_release);
+            return true;
+        }
+        return false;
+    }
+    void cancelAiTask(InstanceID id) {
+        for(const auto& pair:controlNodes) {
+            if(pair.first!=id||pair.second->type!=AiMusicNode||!pair.second->aiTask)continue;
+            pair.second->aiTask->cancels.fetch_add(1,std::memory_order_acq_rel);
+            break;
+        }
+        requestNodeStop(id);
+    }
+    // Stop playback of one node without touching any project parameter. The
+    // request is applied at the next block boundary.
+    void requestNodeStop(InstanceID id) {stopNodeRequest.store(id,std::memory_order_release);}
     void setProcessingEnabled(bool enabled) {
         // The reset request survives a rapid Stop -> Play before render runs.
         if(!enabled) {
@@ -1099,6 +1180,14 @@ public:
         }
         const bool stopping=stopResetRequested.exchange(false,std::memory_order_acq_rel);
         if(stopping)reset(true);
+        const uint64_t stopId=stopNodeRequest.exchange(0,std::memory_order_acq_rel);
+        if(stopId) for(const auto& entry:plans.current().entries) {
+            if(entry.state->saved.id!=stopId)continue;
+            if(auto* clip=entry.state->audioClip.get()) {
+                clip->pendingStart=false;
+                if(clip->playing)clip->stopping=true;
+            }
+        }
         if(!processing.load(std::memory_order_acquire)) {
             // Edits may publish while stopped. Consume their trigger counters
             // without executing nodes so old clicks cannot fire on resume.
@@ -1226,7 +1315,7 @@ public:
                     else renderMetronome(entry,node,n,rate);
                     continue;
                 }
-                if(type==AudioClipNode) {
+                if(type==AudioClipNode || type==AiMusicNode) {
                     bool wasBypassed=node.audioClip->bypassed;
                     if(entry.bypass) {
                         if(!wasBypassed)*node.audioClip=AudioClipState{};

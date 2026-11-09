@@ -17,6 +17,7 @@
 - (BOOL)startInputRecordingToURL:(NSURL *)url error:(NSError **)error;
 - (BOOL)finishInputRecording:(NSError **)error;
 - (void)savePatch;
+- (void)stopNode:(uint64_t)nodeID;
 - (NSDictionary *)workflowAssets;
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;
 @property(nonatomic, readonly) NSString *status;

@@ -2,7 +2,7 @@
 
 [English](README.md) · 简体中文
 
-Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.81**。
+Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 App 和可供 Logic Pro 加载的 Audio Unit v2 插件。当前版本为 **2.90**。
 
 **输入 → 节点处理 → 输出**
 
@@ -16,10 +16,12 @@ Soundnet 是面向 macOS 的原生音乐节点工作流编辑器，提供独立 
 
 | 分类 | 可插入的节点 |
 | --- | --- |
-| 输入 | 本地 MIDI、DAW MIDI、MIDI Clip、硬件音频输入、DAW 音频输入、和弦输入、和声走向、节奏速度、DAW 时钟 |
+| 输入 | 本地 MIDI、DAW MIDI、MIDI Clip、硬件音频输入、DAW 音频输入、和弦输入、和声走向、节奏速度、DAW 时钟、AI 音乐生成 |
 | 处理 | 三声部编排器、振荡器、采样器、音频片段、压缩器、限幅器、合唱、颤音、位深破碎、音阶量化、ARP、力度自动化、音符模型、混音器、EQ、Delay、滤波器、混响、噪声 |
 | 逻辑 | 开始触发器、停止触发器、等待、次数条件 |
 | 输出 | 硬件音频输出、DAW 音频输出、MIDI 输出 |
+
+AI 音乐生成在本机后台调用 audio.cpp 命令行（ACE-Step 1.5 或 YuE2），产物作为音频素材嵌入工程，播放、导出与分轨同音频片段一致；YuE2 同时返回 ABC 乐谱，可导入为 MIDI Clip 在钢琴卷帘里编辑，改完再回喂重渲染。每个节点有独立的停止入口，用于取消生成或停止播放。
 
 本地 MIDI、DAW MIDI 和 MIDI Clip 分别是独立节点。硬件与 DAW 的音频输入输出、模块 BPM 与 DAW 时钟也分别提供独立节点。
 
@@ -215,7 +217,7 @@ Core ML 接口目前支持一个 Int64 或 Double 标量音高输入和一个标
 ./scripts/package-release.sh build/release
 ```
 
-`build/Soundnet-2.81.0-macos.pkg` 只将独立 App 安装到 `/Applications`。`build/Soundnet-2.81.0-macos.zip` 同时包含独立 App、可选 AU 插件、示例和文档。本地安装包未使用 Developer ID 签名，未经过 Apple 公证。
+`build/Soundnet-2.90.0-macos.pkg` 只将独立 App 安装到 `/Applications`。`build/Soundnet-2.90.0-macos.zip` 同时包含独立 App、可选 AU 插件、示例和文档。本地安装包未使用 Developer ID 签名，未经过 Apple 公证。
 
 把 component 放到 `~/Library/Audio/Plug-Ins/Components/`，重新打开 Logic，在软件乐器插槽选择「AU Instruments → Soundnet → Soundnet」。AU 沿用初版的四字符标识，同一插件目录安装一份 Soundnet 或旧版 Ternary 即可。
 

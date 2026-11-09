@@ -236,5 +236,28 @@ int main() {
         v4[@"edges"]=v4edges;
         assert(!triassets::decodeGraph(v4,graph,&why));
     }
+    {   // Text parameters: declared keys round-trip, undeclared keys are refused.
+        NSDictionary *document=@{
+            @"version":@4,@"projectId":@"texts",
+            @"nodes":@[
+                @{@"id":@1,@"nodeKey":@"soundnet.ai-music",@"x":@0,@"y":@0,
+                  @"parameters":@{@"ai.model":@1,@"ai.duration":@90.0},
+                  @"texts":@{@"ai.prompt":@"warm piano",@"ai.lyrics":@"[Verse]\nhello"}},
+                @{@"id":@2,@"nodeKey":@"soundnet.audio-output",@"x":@200,@"y":@0,@"parameters":@{}}
+            ],
+            @"edges":@[@{@"source":@1,@"sourcePort":@"audio",@"target":@2,@"port":@"audio"}]
+        };
+        tri::GraphSpec graph;NSString *why=nil;
+        assert(triassets::decodeGraph(document,graph,&why));
+        assert(graph.nodes[0].texts.size()==2);
+        assert(graph.nodes[0].texts["ai.prompt"]=="warm piano");
+        assert(graph.nodes[0].texts["ai.lyrics"]=="[Verse]\nhello");
+        NSMutableDictionary *bad=[document mutableCopy];
+        NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
+        NSMutableDictionary *first=[nodes[0] mutableCopy];
+        first[@"texts"]=@{@"ai.typo":@"x"};
+        nodes[0]=first;bad[@"nodes"]=nodes;
+        assert(!triassets::decodeGraph(bad,graph,&why));   // undeclared key is fatal in v4
+    }
     puts("PASS: v4 documents, v3 migration, unknown nodes, parameter scope and port names");
 }

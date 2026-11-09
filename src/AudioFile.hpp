@@ -12,8 +12,10 @@
 namespace tri {
 namespace audiofile {
 
-constexpr size_t maxFileBytes=64*1024*1024;
-constexpr size_t maxSamples=4*1024*1024; // 16 MB float32; ~41 s stereo @48 kHz
+constexpr size_t maxFileBytes=256*1024*1024;
+// 16M scalars = 64 MB of float32. That is roughly 2 min 45 s of stereo audio at
+// 48 kHz, which is the ceiling for an AI-generated song embedded as an asset.
+constexpr size_t maxSamples=16*1024*1024;
 
 inline uint16_t le16(const uint8_t *p) { return uint16_t(p[0]|(p[1]<<8)); }
 inline uint32_t le32(const uint8_t *p) {
@@ -108,7 +110,7 @@ inline bool parseWav(const uint8_t *data,size_t size,tri::AudioSample& out,std::
     if(!stride || dataSize%stride)return fail(why,"WAV 音频数据长度不完整。");
     const size_t frames=dataSize/stride;
     if(!frames)return fail(why,"音频文件没有采样数据。");
-    if(frames>maxSamples/size_t(channels))return fail(why,"音频过长，请导入 20 秒以内的素材。");
+    if(frames>maxSamples/size_t(channels))return fail(why,"音频过长，请缩短素材或降低采样率。");
     out.samples.resize(frames*size_t(channels));
     for(size_t frame=0;frame<frames;++frame)for(int c=0;c<int(channels);++c) {
         const uint8_t *source=data+dataOffset+frame*stride+size_t(c)*size_t(bytes);
@@ -171,7 +173,7 @@ inline bool parseAiff(const uint8_t *data,size_t size,tri::AudioSample& out,std:
     size_t frames=dataSize/stride;
     if(declaredFrames && declaredFrames<frames)frames=declaredFrames;
     if(!frames)return fail(why,"音频文件没有采样数据。");
-    if(frames>maxSamples/size_t(channels))return fail(why,"音频过长，请导入 20 秒以内的素材。");
+    if(frames>maxSamples/size_t(channels))return fail(why,"音频过长，请缩短素材或降低采样率。");
     out.samples.resize(frames*size_t(channels));
     for(size_t frame=0;frame<frames;++frame)for(int c=0;c<int(channels);++c)
         out.samples[frame*size_t(channels)+size_t(c)]=

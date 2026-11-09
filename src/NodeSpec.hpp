@@ -44,6 +44,9 @@ inline constexpr int CommentNode=46;
 // Appended after the v3 format shipped. Reserved gaps are allowed; what is
 // forbidden is treating the last known number as a validity bound.
 inline constexpr int FirstAppendedNode=47;
+// AI music generation: submits an external, long-running task (CapTask) and
+// turns its result into an embedded audio asset.
+inline constexpr int AiMusicNode=FirstAppendedNode;
 
 // ---------------------------------------------------------------------------
 // Signals
@@ -188,6 +191,10 @@ inline constexpr int MidiOutChannel=1270;
 inline constexpr int OutputWidth=1280;
 inline constexpr int DelaySync=1290, DelayDivision=1291;
 inline constexpr int ChannelFilter=1300;
+// AI music generation. Numeric parameters only; prompt/lyrics/executable path
+// are text parameters declared by NodeSpec::texts (no numeric identity).
+inline constexpr int AiMusicBackend=1310, AiMusicModel=1311, AiMusicDuration=1312;
+inline constexpr int AiMusicSeed=1313, AiMusicQuality=1314, AiMusicOutMode=1315;
 // Voice texture for the three-voice arranger.
 enum class ArrangerTexture { Highest, Middle, Lowest, Chord };
 // Arranger parameters are stored on the instance, outside the AU parameter list.
@@ -276,6 +283,12 @@ inline constexpr ParamInfo outputWidthInfo{"Width",0,2,1,""};
 inline constexpr ParamInfo delaySyncInfo{"Sync",0,1,0,""};
 inline constexpr ParamInfo delayDivisionInfo{"Division",0,3,1,""};
 inline constexpr ParamInfo channelFilterInfo{"Channel",0,16,0,""};
+inline constexpr ParamInfo aiMusicBackendInfo{"Backend",0,2,0,""};
+inline constexpr ParamInfo aiMusicModelInfo{"Model",0,3,0,""};
+inline constexpr ParamInfo aiMusicDurationInfo{"Duration",10,600,120,"s"};
+inline constexpr ParamInfo aiMusicSeedInfo{"Seed",0,999999,0,""};
+inline constexpr ParamInfo aiMusicQualityInfo{"Quality",0,2,1,""};
+inline constexpr ParamInfo aiMusicOutModeInfo{"Output",0,2,0,""};
 inline constexpr ParamInfo arrangerVoiceInfo[3][3] = {
     {{"Minimum",0,127,72,"MIDI"},{"Maximum",0,127,95,"MIDI"},{"Texture",0,3,0,""}},
     {{"Minimum",0,127,55,"MIDI"},{"Maximum",0,127,71,"MIDI"},{"Texture",0,3,1,""}},
@@ -412,6 +425,12 @@ inline const std::map<int,ParamSpec>& paramSpecs() {
         add(DelaySync,delaySyncInfo,"delay.sync",true);
         add(DelayDivision,delayDivisionInfo,"delay.division",true);
         add(ChannelFilter,channelFilterInfo,"channelFilter.channel",true);
+        add(AiMusicBackend,aiMusicBackendInfo,"ai.backend",true);
+        add(AiMusicModel,aiMusicModelInfo,"ai.model",true);
+        add(AiMusicDuration,aiMusicDurationInfo,"ai.duration",false);
+        add(AiMusicSeed,aiMusicSeedInfo,"ai.seed",true);
+        add(AiMusicQuality,aiMusicQualityInfo,"ai.quality",true);
+        add(AiMusicOutMode,aiMusicOutModeInfo,"ai.outMode",true);
         // Enumerated parameters. Order is the stored value.
         static const char* const waves[]={"正弦","方波","锯齿","三角"};
         static const char* const patterns[]={"直八","Bossa Nova","Reggae","Disco","十六分脉冲"};
@@ -425,6 +444,10 @@ inline const std::map<int,ParamSpec>& paramSpecs() {
         static const char* const clockSync[]={"自由","同步宿主"};
         static const char* const tremoloDivisions[]={"四分","八分","十六分","附点四分"};
         static const char* const delayDivisions[]={"四分","八分","十六分","附点八分"};
+        static const char* const aiBackends[]={"audio.cpp 命令行","audio.cpp 服务","ComfyUI"};
+        static const char* const aiModels[]={"ACE-Step 1.5","YuE2 BF16","YuE2 INT8","YuE2 GGUF Q4"};
+        static const char* const aiQualities[]={"快速","均衡","精细"};
+        static const char* const aiOutModes[]={"仅音频","音频与乐谱","仅乐谱"};
         auto option=[&](int id,const char* const* labels,uint8_t count) {
             auto it=m.find(id);
             if(it==m.end())return;
@@ -445,6 +468,10 @@ inline const std::map<int,ParamSpec>& paramSpecs() {
         option(ClockSync,clockSync,2);
         option(TremoloDivision,tremoloDivisions,4);
         option(DelayDivision,delayDivisions,4);
+        option(AiMusicBackend,aiBackends,3);
+        option(AiMusicModel,aiModels,4);
+        option(AiMusicQuality,aiQualities,3);
+        option(AiMusicOutMode,aiOutModes,3);
         auto group=[&](ParamGroup value,std::initializer_list<int> ids) {
             for(int id:ids) {auto it=m.find(id);if(it!=m.end())it->second.group=value;}
         };
@@ -489,6 +516,13 @@ inline int paramIdForKey(const char* key) {
 // ---------------------------------------------------------------------------
 // Node descriptors
 // ---------------------------------------------------------------------------
+// Text parameters are declared separately from numeric parameters: they have no
+// value range and therefore no numeric parameter ID. They persist in the
+// node-level `texts` dictionary of a v4 document.
+struct TextSpec {
+    const char* id;      // stable key, persisted in v4 projects
+    const char* label;   // display only
+};
 struct NodeSpec {
     const char* key;
     int type;
@@ -505,6 +539,7 @@ struct NodeSpec {
     std::vector<PortSpec> outputs;
     std::vector<int> params;
     const char* assetKind=nullptr;
+    std::vector<TextSpec> texts;
 };
 
 namespace detail {
@@ -537,7 +572,7 @@ inline const std::vector<NodeSpec>& nodeSpecs() {
              CapNoteSource|CapData|CapAssetClip|CapStream,TimeMode::Timed,0,
              {pin("clock","时钟",Signal::Clock,RoleClock),pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
              {pout("notes","音符",Signal::Midi,RoleMain),pout("cycle","循环完成",Signal::Trigger,RoleTrigger)},
-             {ClipRun,ClipLoop}, "clip"});
+             {ClipRun,ClipLoop}, "clip", {{"clip.score","乐谱（ABC）"}}});
         add({"soundnet.audio-input",InputNode,"硬件音频输入","输入",1,1,true,true,
              CapStream|CapGenerator,TimeMode::Stream,0,
              {}, {pout("audio","音频",Signal::Audio,RoleMain)}, {InputGain}, nullptr});
@@ -564,6 +599,19 @@ inline const std::vector<NodeSpec>& nodeSpecs() {
         add({"soundnet.daw-clock",DawClockNode,"DAW 时钟","输入",1,1,true,true,
              CapClockSource|CapGenerator,TimeMode::Timed,0,
              {}, {pout("clock","时钟",Signal::Clock,RoleClock)}, {ClockBPM,ClockSync}, nullptr});
+        // Generates an audio asset through an external, long-running task. The
+        // task runs on the control thread; the render path reads the embedded
+        // asset exactly like an audio clip.
+        add({"soundnet.ai-music",AiMusicNode,"AI 音乐生成","输入",1,1,true,true,
+             CapTask|CapGenerator|CapAssetAudio|CapStream|CapBypassable,TimeMode::Timed,0,
+             {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
+             {pout("audio","音频",Signal::Audio,RoleMain)},
+             {AiMusicBackend,AiMusicModel,AiMusicDuration,AiMusicSeed,AiMusicQuality,AiMusicOutMode,
+              AudioClipGain,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipFade,
+              AudioClipPitch,AudioClipReverse,AudioClipXfade},
+             "audio",
+             {{"ai.prompt","风格描述"},{"ai.lyrics","歌词"},{"ai.execPath","后端可执行文件"},
+              {"ai.modelPath","模型文件"},{"ai.extraArgs","附加参数"},{"ai.score","乐谱（ABC）"}}});
         // ---- processors ---------------------------------------------------
         add({"soundnet.oscillator",Osc1Node,"振荡器","处理",1,1,true,true,
              CapStream,TimeMode::Stream,0,
@@ -840,6 +888,22 @@ inline const ParamSpec* nodeParamSpec(int type,int id) {
     return nullptr;
 }
 inline bool nodeAcceptsParam(int type,int id) {return nodeParamSpec(type,id)!=nullptr;}
+// Text parameter lookup. Text specs are declared per node and carry no numeric
+// identity; persistence uses the stable string key directly.
+inline const TextSpec* nodeTextSpec(int type,const char* id) {
+    const NodeSpec* spec=nodeSpec(type);
+    if(!spec||!id)return nullptr;
+    for(const auto& text:spec->texts) if(std::strcmp(text.id,id)==0) return &text;
+    return nullptr;
+}
+inline int nodeTextCount(int type) {
+    const NodeSpec* spec=nodeSpec(type);
+    return spec?int(spec->texts.size()):0;
+}
+inline const TextSpec* nodeText(int type,size_t index) {
+    const NodeSpec* spec=nodeSpec(type);
+    return spec && index<spec->texts.size()?&spec->texts[index]:nullptr;
+}
 inline bool nodeParamDiscrete(int type,int id) {
     const ParamSpec* spec=nodeParamSpec(type,id);
     return spec && spec->discrete;
@@ -918,6 +982,13 @@ inline std::string registryProblems() {
             const bool declared=nodeHas(spec.capabilities,CapAssetClip)||nodeHas(spec.capabilities,CapAssetAudio)||
                                 nodeHas(spec.capabilities,CapAssetModel);
             if(!declared) why+=std::string(spec.key)+" 有素材类型但未声明素材能力。\n";
+        }
+        std::map<std::string,int> textIds;
+        for(const auto& text:spec.texts) {
+            if(!text.id||!*text.id) why+=std::string(spec.key)+" 存在空文本参数 ID。\n";
+            if(!text.label||!*text.label) why+=std::string(spec.key)+" 的文本参数缺少标签："+(text.id?text.id:"")+"\n";
+            if(!textIds.emplace(text.id?text.id:"",1).second)
+                why+=std::string(spec.key)+" 的文本参数 ID 重复："+(text.id?text.id:"")+"\n";
         }
     }
     return why;

@@ -1,5 +1,18 @@
 # Soundnet 更新记录
 
+## 2.90.0（2026-11-09）
+- 新增「AI 音乐生成」节点（`soundnet.ai-music`，类型 47）：填写风格描述与歌词，在本机后台调用 audio.cpp 生成整曲，产物作为 WAV 素材嵌入工程，播放、循环、移调、导出、分轨与既有的音频片段完全一致。
+- 新增 CapTask 异步任务契约：任务生命周期、显式提交、用户取消、代次丢弃、`reset()` 重建与离线导出静音诊断；实现映射新增 3.6 节与偏差 D8/D9。
+- v4 工程格式新增节点级 `texts` 字符串参数（`NodeSpec::TextSpec` 声明，稳定键，256 KB/条上限）；v4 严格拒绝未声明的文本键，v3 不涉及迁移。
+- 每个 AI 节点都有节点级「停止」：生成中取消任务（子进程终止、结果不应用），播放中停止该节点，空闲时置灰；与工具条全图停止、`Trigger.Stop` 图内事件三层语义独立。
+- 生成后端抽象为 `GenBackend`，默认实现走 audio.cpp CLI（`audiocpp_cli`，Metal 后端、GGUF 量化，纯 C++ 无 Python）；支持 ACE-Step 1.5 与 YuE2 系列，YuE2 生成时自动保留 ABC 乐谱到 `ai.score`。
+- 音频素材上限由 4M 采样点提高到 16M（约 48 kHz 立体声 2 分 45 秒），以容纳整曲生成结果。
+- 新增 `tests/AiTaskTests.cpp`（描述符、控制面、后端成功/失败/取消）与 v4 `texts` 往返用例。
+- 新增乐谱闭环（阶段 5）：`src/AbcScore.hpp` 把 ABC 乐谱解析成 MIDI 剪辑（调号/变音记号作用域、八度、时值乘数、休止、连音、和弦、连音组、破节奏、多声部、行内转调），失败返回带行号的原因，上限 1 MB / 8000 音符 / 65000 拍。AI 节点新增「导入为 MIDI 剪辑」（生成带资产与 `clip.score` 快照的 `soundnet.midi-clip` 节点，并镜像接收音符的下游连线）与「按乐谱重新生成」（`texts["ai.score"]` 作为 `abc_file` 回喂后端）。
+- `ai.outMode` 增加第三档「仅乐谱」：以 `stop_after=abc` 只跑符号规划，成功判据变为 `score.abc` 存在，不导入音频；MIDI 剪辑节点新增只读乐谱文本，用于追溯来源。
+- 新增 `tests/AbcScoreTests.cpp`（解析语义、诊断、到 SMF 的往返），并把回喂参数（`abc_file`、`cot=full`、`stop_after`）与"仅乐谱缺产物即失败"补进 `AiTaskTests`；编辑器回归补一条 AI 节点 → 导入 → 剪辑 → 撤销/重做。
+- 阶段 0 真机验证（M1 Pro 16GB，Metal）：YuE2-Q4 完整生成 56s 音频约 60s 墙钟、峰值 5.59GB；仅乐谱模式 23.4s/5.57GB；乐谱回喂重渲染成功；ACE-Step Turbo Q8 生成 10s 音频 12.5–24.4s、峰值 7.83GB；真实 `score.abc` 通过 `AbcScore` 解析（155 音符、0 警告）。据此修正后端参数构造：ACE-Step 风格走 `--text` 且时长走 `--duration-seconds`，YuE2 按节点选择固定 `--session-option yue2.model_gguf`，外部乐谱强制 `cot=full` 并与 `stop_after=abc` 互斥，进度解析改为真实 `--log` 阶段标记（新增 `--log` / `--load-progress 1`）。
+
 ## 2.81
 - 界面改为分区工具条和统一深色样式；检查器按节点描述符把同类参数集中到可折叠分组，保留滑块、精确输入、枚举与撤销。
 - 增加持续停止/恢复处理：清除音符、等待/回声/节拍器及效果状态，停止后不受外部 MIDI、宿主走带或图编辑唤醒；停止不改工程参数。独立版和 AU 共用控制接口。

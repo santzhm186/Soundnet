@@ -24,6 +24,12 @@ public:
     // UI/control threads only publish requests. Destructive state changes run
     // at the next audio boundary, including a stop/resume between two blocks.
     void panic() {legacyPanicRequested.store(true,std::memory_order_release);graph.panic();}
+    // CapTask control surface. Generation runs on the control thread; the graph
+    // only carries request counters and the node-level stop request.
+    std::vector<InstanceGraph::AiTaskSnapshot> aiTasks() const {return graph.aiTaskSnapshot();}
+    bool setAiTaskState(InstanceID id,int status,int progress) {return graph.setAiTaskState(id,status,progress);}
+    void cancelAiTask(InstanceID id) {graph.cancelAiTask(id);}
+    void stopNode(InstanceID id) {graph.requestNodeStop(id);}
     bool processingEnabled() const {return processing.load(std::memory_order_acquire);}
     uint64_t processingGeneration() const {return stopGeneration.load(std::memory_order_acquire);}
     void setProcessingEnabled(bool enabled) {

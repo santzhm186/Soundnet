@@ -11,6 +11,9 @@
 
 namespace triassets {
 namespace {
+// A single text parameter (prompt, lyrics) and the sum per node are bounded so
+// a crafted project cannot balloon memory during decode.
+constexpr size_t maxTextBytes=256*1024;
 bool fail(NSString **why, NSString *message) {
     if (why) *why=message;
     return false;
@@ -306,6 +309,31 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
         }
         if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
             return fail(why,@"同一声部的最低音不能高于最高音。");
+        // Text parameters: stable string keys declared by the descriptor. v3 has
+        // no such concept; v4 rejects keys the node never declared so a typo
+        // cannot silently create a parameter the inspector will never show.
+        if(obj[@"texts"]) {
+            id texts=obj[@"texts"];
+            if(![texts isKindOfClass:NSDictionary.class])return fail(why,@"节点文本参数应为对象。");
+            size_t total=0;
+            for(id rawKey in texts) {
+                if(![rawKey isKindOfClass:NSString.class])return fail(why,@"文本参数标识无效。");
+                id value=texts[rawKey];
+                if(![value isKindOfClass:NSString.class])return fail(why,@"文本参数值应为字符串。");
+                const char* key=[rawKey UTF8String];
+                if(!key||!tri::nodeTextSpec(node.type,key)) {
+                    if(strict)return fail(why,[NSString stringWithFormat:@"文本参数不属于该节点：%@",rawKey]);
+                    continue;
+                }
+                const char* text=[value UTF8String];
+                if(!text)return fail(why,@"文本参数不是有效的 UTF-8。");
+                const size_t length=std::strlen(text);
+                if(length>maxTextBytes)return fail(why,@"文本参数过长。");
+                total+=length;
+                if(total>maxTextBytes*4)return fail(why,@"文本参数总长度超限。");
+                node.texts[key]=text;
+            }
+        }
         if(obj[@"asset"]) {
             const char* kind=spec->assetKind;
             if(!kind)return fail(why,@"该节点类型不能包含素材。");
@@ -436,6 +464,15 @@ NSDictionary *canonicalGraph(NSDictionary *document, NSString **why) {
             for(const auto& [pid,value]:node.parameters)
                 parameters[[NSString stringWithUTF8String:tri::paramKey(pid)]]=@(value);
             row[@"parameters"]=parameters;
+            if(!node.texts.empty()) {
+                NSMutableDictionary *texts=[NSMutableDictionary new];
+                for(const auto& [key,value]:node.texts)
+                    texts[[NSString stringWithUTF8String:key.c_str()]]=
+                        [NSString stringWithUTF8String:value.c_str()] ?: @"";
+                row[@"texts"]=texts;
+            } else {
+                [row removeObjectForKey:@"texts"];
+            }
         }
         row[@"x"]=@(node.x);row[@"y"]=@(node.y);
         if(node.bypass)row[@"bypass"]=@YES;

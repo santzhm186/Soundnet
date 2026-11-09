@@ -5,6 +5,8 @@
 #import "WorkflowFile.hpp"
 #import "../src/WorkflowAssets.h"
 #import "../src/OfflineRender.hpp"
+#import "../src/GenBackend.hpp"
+#import "../src/AbcScore.hpp"
 #import "../src/WavFile.hpp"
 #import "../src/MidiFileWriter.hpp"
 #include "../src/StandardMidiFile.hpp"
@@ -352,16 +354,29 @@ static NSString *autosaveFilePath() {
 }
 @end
 
-@interface SNInstanceEditor : NSView <NSTextFieldDelegate>
+@interface SNInstanceEditor : NSView <NSTextFieldDelegate> {
+    // Generation runs on a worker thread; the UI thread only flips the cancel
+    // flag, so the backend object is never touched from two threads at once.
+    std::shared_ptr<std::atomic<bool>> aiCancellation;
+    std::shared_ptr<std::atomic<int>> aiProgressShared;
+    // Set by the "regenerate from score" button; consumed by -generateAudio:.
+    BOOL aiUseScore;
+}
 @property(copy) TRIRead read;
 @property(copy) TRIWrite write;
 @property(copy) TRIMIDI midi;
+@property(copy) TRINodeStop nodeStop;
 @property(copy) TRIInputRead inputRead;
 @property(copy) TRIInputWrite inputWrite;
 @property(copy) TRIAssetsRead assetsRead;
 @property(copy) TRIAssetsWrite assetsWrite;
 @property(copy) TRIProcessingRead processingRead;
 @property(copy) TRIProcessingWrite processingWrite;
+@property BOOL aiBusy;
+@property uint64_t aiNode;
+@property(strong) NSString *aiStatusText;
+@property(strong) NSTextField *aiStatusField;
+@property(strong) NSProgressIndicator *aiProgressView;
 @property BOOL processingActive;
 @property BOOL libraryVisible;
 @property(strong) NSArray<NSButton *> *fileButtons;
@@ -455,6 +470,12 @@ static NSString *autosaveFilePath() {
 -(void)snap:(id)sender;
 -(void)search:(id)sender;
 -(void)inspect;
+-(void)generateAudio:(id)sender;
+-(void)generateFromScore:(id)sender;
+-(void)importScore:(id)sender;
+-(void)aiStop:(id)sender;
+-(void)textChanged:(NSTextField *)field;
+-(void)refreshAiStatus;
 -(void)commit:(NSDictionary *)previous;
 -(void)insert:(NSMenuItem *)sender;
 -(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode;
@@ -1388,6 +1409,216 @@ std::vector<ParamPreset> presetsFor(int type) {
     else [_collapsedParameterGroups addObject:sender.identifier];
     [self inspect];
 }
+-(void)refreshAiStatus {
+    if(!_aiStatusField)return;
+    if(_aiBusy) {
+        const int p=aiProgressShared?aiProgressShared->load():-1;
+        _aiStatusField.stringValue=p>=0?[NSString stringWithFormat:SNLocalized(@"正在生成 %d%%"),p]:
+                                          SNLocalized(@"正在生成…");
+        if(_aiProgressView)_aiProgressView.hidden=(p>=0);
+    } else {
+        _aiStatusField.stringValue=_aiStatusText.length?_aiStatusText:SNLocalized(@"空闲");
+        if(_aiProgressView)_aiProgressView.hidden=YES;
+    }
+}
+// Submitting is an explicit action: a two-minute model run must never start
+// because the transport rolled. The trigger port still starts playback.
+-(void)generateAudio:(id)sender {
+    if(_aiBusy) {[self message:SNLocalized(@"已有生成任务在进行。")];return;}
+    NSMutableDictionary *node=[self node:_selected];
+    if(!node||typeOf(node)!=tri::AiMusicNode)return;
+    const BOOL feedback=aiUseScore;aiUseScore=NO;
+    NSDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]?node[@"texts"]:@{};
+    NSString *prompt=texts[@"ai.prompt"] ?: @"";
+    if(!prompt.length) {[self message:SNLocalized(@"请先填写风格描述。")];return;}
+    tri::GenRequest request;
+    request.backend=int(paramValue(node,tri::AiMusicBackend).doubleValue);
+    request.model=int(paramValue(node,tri::AiMusicModel).doubleValue);
+    request.quality=int(paramValue(node,tri::AiMusicQuality).doubleValue);
+    request.outMode=int(paramValue(node,tri::AiMusicOutMode).doubleValue);
+    request.seconds=paramValue(node,tri::AiMusicDuration).doubleValue;
+    request.seed=unsigned(paramValue(node,tri::AiMusicSeed).doubleValue);
+    NSString *lyrics=texts[@"ai.lyrics"] ?: @"";
+    NSString *execPath=texts[@"ai.execPath"] ?: @"";
+    NSString *modelPath=texts[@"ai.modelPath"] ?: @"";
+    NSString *extraArgs=texts[@"ai.extraArgs"] ?: @"";
+    NSString *score=texts[@"ai.score"] ?: @"";
+    if(feedback&&!score.length) {[self message:SNLocalized(@"乐谱为空，请先粘贴或生成乐谱。")];return;}
+    request.prompt=prompt.UTF8String ?: "";
+    request.lyrics=lyrics.UTF8String ?: "";
+    request.abcText=feedback?(score.UTF8String ?: ""):"";
+    request.execPath=execPath.UTF8String ?: "";
+    request.modelPath=modelPath.UTF8String ?: "";
+    request.extraArgs=extraArgs.UTF8String ?: "";
+    NSString *folder=[NSTemporaryDirectory() stringByAppendingPathComponent:
+                      [@"soundnet-ai-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+    if(![[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES
+                                  attributes:nil error:nil]) {
+        [self message:SNLocalized(@"无法创建生成工作目录。")];return;
+    }
+    request.workDir=folder.UTF8String;
+    const uint64_t uid=_selected;
+    NSDictionary *documentBefore=copyJSON(_document);
+    auto cancelFlag=std::make_shared<std::atomic<bool>>(false);
+    auto progress=std::make_shared<std::atomic<int>>(-1);
+    aiCancellation=cancelFlag;aiProgressShared=progress;
+    _aiBusy=YES;_aiNode=uid;_aiStatusText=SNLocalized(@"正在生成…");[self refreshAiStatus];
+    auto backend=std::make_shared<tri::AudioCppCliBackend>();
+    __weak SNInstanceEditor *weakSelf=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        @autoreleasepool {
+            std::string why;
+            uint64_t task=0;
+            if(!backend->available(why)||!backend->submit(request,task,why)) {
+                NSString *reason=[NSString stringWithUTF8String:why.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{
+                    SNInstanceEditor *strong=weakSelf;if(!strong)return;
+                    strong->_aiBusy=NO;strong->_aiStatusText=reason ?: SNLocalized(@"无法启动生成。");
+                    [strong refreshAiStatus];[strong message:strong->_aiStatusText];
+                });
+                return;
+            }
+            bool cancelled=false;
+            while(true) {
+                if(cancelFlag->load()) {
+                    if(!cancelled){cancelled=true;backend->cancel(task);}
+                }
+                tri::GenResult result;
+                const auto status=backend->poll(task,result,why);
+                if(status==tri::GenTaskStatus::Running) {
+                    progress->store(backend->progress(task));
+                    [NSThread sleepForTimeInterval:.3];
+                    continue;
+                }
+                if(status==tri::GenTaskStatus::Succeeded) {
+                    NSString *importWhy=nil;
+                    const bool wantAudio=!result.wavPath.empty();
+                    NSDictionary *asset=wantAudio?triassets::importAsset(@"audio",
+                        [NSURL fileURLWithPath:[NSString stringWithUTF8String:result.wavPath.c_str()]],&importWhy):nil;
+                    const bool hadScore=!result.abcPath.empty();
+                    NSString *score=nil;
+                    if(hadScore) {
+                        NSString *path=[NSString stringWithUTF8String:result.abcPath.c_str()];
+                        score=[NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+                    }
+                    dispatch_async(dispatch_get_main_queue(),^{
+                        SNInstanceEditor *strong=weakSelf;if(!strong)return;
+                        strong->_aiBusy=NO;
+                        NSMutableDictionary *current=[strong node:uid];
+                        if(!asset&&wantAudio) {strong->_aiStatusText=importWhy ?: SNLocalized(@"生成结果无法导入。");[strong refreshAiStatus];[strong message:strong->_aiStatusText];return;}
+                        if(!current||strong.document!=documentBefore) {
+                            strong->_aiStatusText=SNLocalized(@"节点已改变，未应用生成结果。");[strong refreshAiStatus];return;
+                        }
+                        NSDictionary *previous=copyJSON(strong.document);
+                        if(asset) current[@"asset"]=copyJSON(asset);
+                        if(score.length) {
+                            NSMutableDictionary *texts=[current[@"texts"] isKindOfClass:NSDictionary.class]
+                                ? [current[@"texts"] mutableCopy] : [NSMutableDictionary new];
+                            texts[@"ai.score"]=score;
+                            current[@"texts"]=texts;
+                        }
+                        strong->_aiStatusText=!wantAudio?SNLocalized(@"已生成乐谱（仅乐谱模式）。"):
+                            (hadScore?SNLocalized(@"生成完成（含乐谱）。"):SNLocalized(@"生成完成。"));
+                        [strong commit:previous];[strong inspect];
+                        [strong message:strong->_aiStatusText];
+                    });
+                    return;
+                }
+                NSString *reason=[NSString stringWithUTF8String:why.c_str()];
+                dispatch_async(dispatch_get_main_queue(),^{
+                    SNInstanceEditor *strong=weakSelf;if(!strong)return;
+                    strong->_aiBusy=NO;
+                    strong->_aiStatusText=reason ?: SNLocalized(@"生成失败。");
+                    [strong refreshAiStatus];[strong message:strong->_aiStatusText];
+                });
+                return;
+            }
+        }
+    });
+}
+// Re-render from the score the user edited instead of planning a new one
+// (audio.cpp `abc_file`). This is the return half of the score loop.
+-(void)generateFromScore:(id)sender {
+    aiUseScore=YES;
+    [self generateAudio:sender];
+}
+// The score loop's other half: ABC becomes an ordinary MIDI clip, so the piano
+// roll, the scale quantiser, the arranger and MIDI export all apply to it.
+-(void)importScore:(id)sender {
+    NSMutableDictionary *node=[self node:_selected];
+    if(!node||typeOf(node)!=tri::AiMusicNode)return;
+    id raw=node[@"texts"][@"ai.score"];
+    NSString *text=[raw isKindOfClass:NSString.class]?raw:@"";
+    if(!text.length) {[self message:SNLocalized(@"还没有乐谱，请先生成或粘贴 ABC 文本。")];return;}
+    tri::abc::Score score;std::string why;
+    if(!tri::abc::parse(text.UTF8String ?: "",score,why)) {
+        [self message:[NSString stringWithFormat:SNLocalized(@"乐谱解析失败：%@"),
+            [NSString stringWithUTF8String:why.c_str()]]];
+        return;
+    }
+    tri::MidiClip clip=tri::abc::toClip(score);
+    NSString *assetWhy=nil;
+    NSDictionary *asset=triassets::encodeClipAsset(@"score.abc",clip,&assetWhy);
+    if(!asset) {[self message:assetWhy ?: SNLocalized(@"乐谱无法转换为 MIDI 剪辑。")];return;}
+    NSDictionary *previous=copyJSON(_document);
+    uint64_t next=1;
+    for(NSDictionary *each in _document[@"nodes"])next=std::max(next,[each[@"id"] unsignedLongLongValue]+1);
+    NSMutableDictionary *created=[self makeNode:tri::ClipNode
+        at:NSMakePoint([node[@"x"] doubleValue]+30,[node[@"y"] doubleValue]+150) id:next];
+    created[@"asset"]=copyJSON(asset);
+    // The original ABC rides along so the project stays self-describing even if
+    // the generating node is deleted later.
+    created[@"texts"]=@{@"clip.score":text};
+    // Mirror the note-accepting downstream edges: the score can replace the
+    // audio without rewiring, while audio-only targets are left to the user.
+    for(NSDictionary *edge in [_document[@"edges"] copy]) {
+        if([edge[@"source"] unsignedLongLongValue]!=[node[@"id"] unsignedLongLongValue])continue;
+        NSDictionary *target=[self node:[edge[@"target"] unsignedLongLongValue]];
+        if(!target)continue;
+        const int targetType=typeOf(target);
+        const int port=std::max(0,inputPortOf(target,edge));
+        const tri::PortSpec *portSpec=tri::nodePort(targetType,true,size_t(port));
+        if(!portSpec||portSpec->signal!=tri::Signal::Midi)continue;
+        [_document[@"edges"] addObject:makeEdge(next,[edge[@"target"] unsignedLongLongValue],
+                                                targetType,port,tri::ClipNode,0)];
+    }
+    _selected=next;_selectedEdge=-1;
+    [_selection removeAllObjects];[_selection addObject:@(next)];
+    [self commit:previous];[self inspect];
+    NSString *summary=[NSString stringWithFormat:SNLocalized(@"已创建 MIDI 剪辑：%lu 个音符。"),
+                       (unsigned long)score.notes.size()];
+    if(!score.warnings.empty()) {
+        summary=[summary stringByAppendingFormat:@" %@",
+                 [NSString stringWithUTF8String:score.warnings.front().c_str()]];
+    }
+    [self message:summary];
+}
+-(void)aiStop:(id)sender {
+    if(_aiBusy) {
+        if(aiCancellation)aiCancellation->store(true);
+        [self message:SNLocalized(@"正在取消生成…")];
+        return;
+    }
+    if(_nodeStop) {_nodeStop(_selected);[self message:SNLocalized(@"已停止该节点。")];}
+    else [self message:SNLocalized(@"当前环境不支持节点级停止。")];
+}
+-(void)textChanged:(NSTextField *)field {
+    NSMutableDictionary *node=[self node:_selected];
+    if(!node||typeOf(node)!=tri::AiMusicNode)return;
+    const tri::TextSpec *spec=tri::nodeText(tri::AiMusicNode,size_t(field.tag));
+    if(!spec)return;
+    NSMutableDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]
+        ? [node[@"texts"] mutableCopy] : [NSMutableDictionary new];
+    NSString *key=[NSString stringWithUTF8String:spec->id];
+    NSString *value=field.stringValue ?: @"";
+    if([(texts[key] ?: @"") isEqualToString:value])return;
+    const NSUInteger limit=256*1024;
+    if(value.length>limit) {[self message:SNLocalized(@"文本过长。")];return;}
+    NSDictionary *previous=copyJSON(_document);
+    texts[key]=value;
+    node[@"texts"]=texts;
+    [self commit:previous];
+}
 -(void)inspect {
     NSPoint scrollOrigin=_inspectorScroll.contentView.bounds.origin;
     BOOL sameNode=_inspectedUID==_selected;_inspectedUID=_selected;
@@ -1433,6 +1664,65 @@ std::vector<ParamPreset> presetsFor(int type) {
     }
     if(!controls(type).empty() || type==tri::ArrangerNode) {
         [self button:SNLocalized(@"恢复默认参数") frame:NSMakeRect(14,y,270,28) action:@selector(resetParams:) parent:_inspector];y+=38;
+    }
+    if(type==tri::AiMusicNode) {
+        [self label:SNLocalized(@"生成在本机后台进行，产物作为工程素材嵌入；「停止」可取消生成或停止本节点播放。") y:y];y+=48;
+        for(int i=0;i<tri::nodeTextCount(type);++i) {
+            const tri::TextSpec *spec=tri::nodeText(type,size_t(i));
+            NSString *caption=SNLocalized([NSString stringWithUTF8String:spec->label]);
+            NSTextField *label=[NSTextField labelWithString:caption];
+            label.font=[NSFont systemFontOfSize:12];label.frame=NSMakeRect(14,y,270,18);
+            [_inspector addSubview:label];y+=20;
+            NSString *key=[NSString stringWithUTF8String:spec->id];
+            NSString *value=node[@"texts"][key] ?: @"";
+            const bool multiline=std::strcmp(spec->id,"ai.lyrics")==0;
+            NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(14,y,270,multiline?66:25)];
+            field.stringValue=value;field.tag=i;field.target=self;field.action=@selector(textChanged:);
+            field.font=[NSFont systemFontOfSize:12];
+            field.placeholderString=multiline?SNLocalized(@"每行一句，可用 [Verse] [Chorus] 标记段落"):
+                                            SNLocalized(@"留空自动探测");
+            if(multiline) {field.cell.wraps=YES;field.usesSingleLineMode=NO;}
+            field.accessibilityLabel=caption;[_inspector addSubview:field];
+            y+=multiline?74:33;
+        }
+        NSTextField *state=[NSTextField labelWithString:@""];
+        state.font=[NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
+        state.textColor=[NSColor colorWithCalibratedRed:.65 green:.79 blue:.96 alpha:1];
+        state.frame=NSMakeRect(14,y,270,18);_aiStatusField=state;[_inspector addSubview:state];
+        NSProgressIndicator *spinner=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(240,y-2,20,16)];
+        spinner.style=NSProgressIndicatorStyleSpinning;spinner.controlSize=NSControlSizeSmall;
+        _aiProgressView=spinner;[_inspector addSubview:spinner];
+        [self refreshAiStatus];y+=26;
+        NSButton *generate=[self button:SNLocalized(@"生成音频") frame:NSMakeRect(14,y,129,30) action:@selector(generateAudio:) parent:_inspector];
+        generate.enabled=!_aiBusy;
+        NSButton *stop=[self button:SNLocalized(@"停止") frame:NSMakeRect(155,y,129,30) action:@selector(aiStop:) parent:_inspector];
+        stop.enabled=_aiBusy||_nodeStop!=nil;
+        y+=40;
+        // The score loop: ABC -> MIDI clip for editing, and edit -> re-render.
+        id rawScore=node[@"texts"][@"ai.score"];
+        const BOOL hasScore=[rawScore isKindOfClass:NSString.class]&&[rawScore length]>0;
+        NSButton *importClip=[self button:SNLocalized(@"导入为 MIDI 剪辑") frame:NSMakeRect(14,y,270,28)
+                              action:@selector(importScore:) parent:_inspector];
+        importClip.enabled=hasScore&&!_aiBusy;
+        importClip.toolTip=SNLocalized(@"把乐谱转换成可编辑的 MIDI 剪辑，钢琴卷帘随即可用。");
+        y+=36;
+        NSButton *fromScore=[self button:SNLocalized(@"按乐谱重新生成") frame:NSMakeRect(14,y,270,28)
+                             action:@selector(generateFromScore:) parent:_inspector];
+        fromScore.enabled=hasScore&&!_aiBusy;
+        fromScore.toolTip=SNLocalized(@"把改动后的乐谱回喂后端重新渲染，风格描述与歌词不参与。");
+        y+=40;
+    }
+    if(type==tri::ClipNode) {
+        id rawScore=node[@"texts"][@"clip.score"];
+        if([rawScore isKindOfClass:NSString.class]&&[rawScore length]) {
+            [self label:SNLocalized(@"来源乐谱（ABC，只读）") y:y];y+=24;
+            NSTextField *view=[[NSTextField alloc]initWithFrame:NSMakeRect(14,y,270,72)];
+            view.stringValue=rawScore;view.editable=NO;view.selectable=YES;
+            view.font=[NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular];
+            view.cell.wraps=YES;view.usesSingleLineMode=NO;
+            view.toolTip=SNLocalized(@"这段 ABC 由 AI 生成节点导入，用于追溯与再生成。");
+            [_inspector addSubview:view];y+=84;
+        }
     }
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
     else {
@@ -1508,7 +1798,7 @@ std::vector<ParamPreset> presetsFor(int type) {
         }
         [self label:node[@"asset"][@"name"] ?: SNLocalized(@"未载入素材") y:y];y+=46;
     }
-    if(type==tri::SamplerNode || type==tri::AudioClipNode) {
+    if(type==tri::SamplerNode || type==tri::AudioClipNode || type==tri::AiMusicNode) {
         [self button:SNLocalized(@"载入音频（WAV / AIFF / MP3 / M4A / AAC / CAF / FLAC）…") frame:NSMakeRect(14,y,270,30) action:@selector(import:) parent:_inspector];y+=42;
         NSDictionary *asset=node[@"asset"];
         if(asset[@"name"]) {
@@ -1522,6 +1812,8 @@ std::vector<ParamPreset> presetsFor(int type) {
         } else [self label:SNLocalized(@"未载入音频素材") y:y],y+=28;
         if(type==tri::SamplerNode)
             [self label:SNLocalized(@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音；Reverse 反向播放，Velocity 为力度敏感度。") y:y],y+=74;
+        else if(type==tri::AiMusicNode)
+            [self label:SNLocalized(@"生成产物按音频片段播放：触发端口控制开始/停止，Loop 循环，Fade 淡化，Pitch 移调。生成只在检查器内手动发起。") y:y],y+=76;
         else
             [self label:SNLocalized(@"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益；Pitch 为半音移调，Reverse 反向播放。") y:y],y+=76;
     }
@@ -2741,9 +3033,10 @@ static NSColor *categoryColor(NSString *category) {
 }
 @end
 
-NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead inputRead,TRIInputWrite inputWrite,TRIStatus status,TRIAssetsRead assetsRead,TRIAssetsWrite assetsWrite,TRIProcessingRead processingRead,TRIProcessingWrite processingWrite) {
+NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead inputRead,TRIInputWrite inputWrite,TRIStatus status,TRIAssetsRead assetsRead,TRIAssetsWrite assetsWrite,TRIProcessingRead processingRead,TRIProcessingWrite processingWrite,TRINodeStop nodeStop) {
     SNInstanceEditor *editor=[[SNInstanceEditor alloc]initWithFrame:NSMakeRect(0,0,1360,840)];
     editor.read=read;editor.write=write;editor.midi=midi;editor.inputRead=inputRead;editor.inputWrite=inputWrite;
+    editor.nodeStop=nodeStop;
     editor.assetsRead=assetsRead;editor.assetsWrite=assetsWrite;
     editor.processingRead=processingRead;editor.processingWrite=processingWrite;editor.processingActive=processingRead?processingRead():YES;
     editor.libraryVisible=YES;editor.collapsedParameterGroups=[NSMutableSet new];
@@ -2783,7 +3076,7 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     [editor.languagePopup addItemsWithTitles:@[@"中文",@"English"]];
     editor.languagePopup.target=editor;editor.languagePopup.action=@selector(languageChanged:);
     editor.languagePopup.accessibilityLabel=@"Language / 语言";[editor addSubview:editor.languagePopup];
-    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.81"];
+    NSTextField *heading=[NSTextField labelWithString:@"Soundnet 2.90"];
     heading.font=[NSFont systemFontOfSize:18 weight:NSFontWeightSemibold];
     editor.heading=heading;editor.headingText=heading.stringValue;[editor addSubview:heading];
     editor.cancelButton=[editor button:SNLocalized(@"取消处理") frame:NSZeroRect action:@selector(cancelProcessing:) parent:editor];

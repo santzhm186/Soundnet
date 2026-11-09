@@ -1,4 +1,4 @@
-Soundnet 2.81 · 输入 → 节点处理 → 输出
+Soundnet 2.90 · 输入 → 节点处理 → 输出
 
 左侧「节点库」按输入、处理、逻辑、注释、输出分组列出全部节点：单击条目会把节点插入画布中央，也可以直接把条目拖到画布的任意位置。右键画布同样可以插入节点。同一种节点可以添加多个，每个实例拥有自己的 ID、参数、素材和运行状态。选中节点后在右侧编辑；拖输出圆点到输入圆点建立连接。Shift 点击可增减选择，拖动空白处可框选；拖动任一选中节点会整体移动。Command+C / Command+V 复制粘贴节点和内部连线，Command+X 剪切，Command+A 全选，Delete 删除；选中连线后按 Delete 可单独删除连线。方向键微调位置，按住 Shift 每次移动 10 点。工具条「复制」「粘贴」「查找」「吸附」提供对应操作；吸附按 20 点网格对齐。
 
@@ -14,7 +14,7 @@ Soundnet 2.81 · 输入 → 节点处理 → 输出
 第一个 Clip 完整播放三次后自动停止。触发信号同时进入一秒等待，再启动第二个 Clip。两个 Clip 各自控制一个振荡器，混合后输出。示例内嵌 MIDI 和模型映射，打开后即可使用。
 此示例使用独立版的硬件输出。在 Logic 中载入后，删除硬件输出，右键添加「DAW 音频输出」并连接混音器。
 打开 examples/filter-reverb-noise.json 可试听滤波器与混响：振荡器先经过低通滤波，再进入混响，并与粉红噪声混合。EQ、Delay、滤波器、混响、噪声和音频输出节点可在右侧勾选「旁通」，跳过处理但保留连线。
-采样器：右键插入「采样器」，点「载入音频…」。采样器有 16 个复音声部，音符按 Root 移调。Root 为素材原始音高，Start/End 为 0–1 区间，Loop 打开后循环，Attack/Release 为秒，Gain 为 0–1；Reverse 反向播放，Velocity 为力度敏感度。支持 WAV/AIFF，以及 MP3/M4A/AAC/CAF/FLAC（AVFoundation 解码）；单文件最大 64 MB，解码后最多约 4M 个采样点。打开 examples/sampler-pluck.json，用键盘或 MIDI 演奏 C4 可试听。
+采样器：右键插入「采样器」，点「载入音频…」。采样器有 16 个复音声部，音符按 Root 移调。Root 为素材原始音高，Start/End 为 0–1 区间，Loop 打开后循环，Attack/Release 为秒，Gain 为 0–1；Reverse 反向播放，Velocity 为力度敏感度。支持 WAV/AIFF，以及 MP3/M4A/AAC/CAF/FLAC（AVFoundation 解码）；单文件最大 256 MB，解码后最多约 16M 个采样点（48 kHz 立体声约 2 分 45 秒）。打开 examples/sampler-pluck.json，用键盘或 MIDI 演奏 C4 可试听。
 音频片段：右键插入「音频片段」，点「载入音频…」。把开始触发器接到触发输入，停止触发器可停止；Loop 循环，Start/End 为 0–1 区间，Fade 为淡入淡出秒数，Gain 为增益；Pitch 为半音移调，Reverse 为反向播放。音频片段不需要 Note 输入。打开 examples/audio-clip-reverse.json 可试听。
 压缩器：Threshold 为 -60–0 dB，Ratio 为 1–20，Attack/Release 为秒，Makeup 为 0–2 补偿增益，Mix 为干湿比。压缩器有两个 Audio 输入：第一个是主信号，第二个是侧链检测信号；把鼓或另一条音频接到侧链可做闪避。打开 examples/audio-clip-compressor.json 可试听。打开 examples/clip-to-midi.json 可试听 MIDI Clip，并用「文件 → 导出 MIDI…」写出 .mid。
 限幅器：Threshold 为开始限幅电平（-60–0 dB），Ceiling 为输出上限（-12–0 dB），Release 为恢复秒数，Gain 为输入增益。放在压缩器与音频输出之间，限制最终峰值。打开 examples/master-limiter.json 可试听。可在右侧勾选「旁通」。
@@ -22,6 +22,11 @@ Soundnet 2.81 · 输入 → 节点处理 → 输出
 颤音：Rate 0.1–20 Hz，Depth 0–1，Stereo 左右相位差，Mix 干湿比。位深破碎：Bits 1–16，Rate 500–48000 Hz，Mix 干湿比。打开 examples/tremolo-crush.json 可试听。
 相位器：Rate 0.05–8 Hz，Depth 0–1，Feedback 0–0.9，Mix 干湿比；四级全通滤波产生扫频相位效果。
 音阶量化：接在 Note 信号之后。Root 0–11 为调性（0=C），Scale 0 大调 1 自然小调 2 多利亚 3 大调五声 4 半音，Mode 0 最近音 1 向上 2 向下。按住音符时改参数会重新量化；旁通时原样传递。打开 examples/scale-quantizer.json 可试听。
+
+AI 音乐生成：右键插入「AI 音乐生成」，填写风格描述与歌词，选择后端、模型、时长、种子与质量，点「生成音频」。生成在本机后台进行（默认走 audio.cpp 命令行，需自行安装并填「后端可执行文件」「模型文件」；本机已备好：
+  可执行文件 models/audio-cpp/audiocpp_cli，模型 models/Yue2-3B-GGUF（选 YuE2）或 models/ACE-Step1.5-GGUF/turbo（选 ACE-Step）），产物作为 WAV 素材嵌入节点，此后播放、循环、移调、导出与音频片段完全一致；触发输入只负责播放开始/停止，生成只能由按钮发起。生成中显示进度，点「停止」取消任务（结束子进程，结果不应用）；空闲时「停止」只停该节点播放，不影响其他节点。
+「输出」选「仅乐谱」时只跑符号规划（YuE2 系列才有乐谱），不生成音频，16 GB 机器上这是最省的一次生成；成功判据是乐谱而非 WAV。
+乐谱闭环：YuE2 生成后乐谱写入「乐谱（ABC）」。点「导入为 MIDI 剪辑」把它转成 MIDI Clip（自动镜像接收音符的下游连线，音频下游需自行接采样器），随后可在钢琴卷帘编辑、量化、编排、导出 MIDI；改完文本点「按乐谱重新生成」把乐谱回喂后端重渲染，风格描述与歌词不参与。剪辑节点上的 ABC 是导入时的快照，只用于追溯，不反向同步。转换支持调号、变调记号、附点、连音、和弦、连音组、破节奏与多声部；不展开反复记号。
 
 在 Logic 中
 将 Soundnet.component 安装到 ~/Library/Audio/Plug-Ins/Components/，在软件乐器轨的 AU Instruments → Soundnet 中加载。DAW MIDI 接收轨道演奏和 MIDI 区域，DAW 时钟提供速度与走带位置，DAW 音频输入接收侧链，DAW 音频输出返回当前轨道。当前版本沿用旧插件标识，同一目录安装一份即可。

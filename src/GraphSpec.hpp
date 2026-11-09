@@ -24,6 +24,10 @@ struct GraphNode {
     uint16_t nodeVersion=1;
     float x=0,y=0;
     std::map<int,float> parameters;
+    // Text parameters (prompt, lyrics, backend path). Declared by
+    // NodeSpec::texts; persisted in the v4 `texts` dictionary. Kept apart from
+    // numeric parameters because they have no value range and no numeric ID.
+    std::map<std::string,std::string> texts;
     MidiClip clip;
     NoteModel model;
     std::shared_ptr<const AudioSample> sample;

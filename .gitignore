@@ -5,3 +5,4 @@ build/
 *.app/
 *.component/
 /ui/Ternary.icns
+models/
