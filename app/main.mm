@@ -1,5 +1,6 @@
 #import "TRIHost.h"
 #import "../ui/TriEditor.h"
+#import "../ui/SNLocalization.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "../src/WorkflowAssets.h"
 #include "../src/OfflineRender.hpp"
@@ -23,6 +24,8 @@
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
     _host = [TRIHost new];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(languageChanged:)
+        name:SNLanguageDidChangeNotification object:nil];
     [self buildMenu];
     TRIHost *host = _host;
     NSView *editor = TRICreateEditor(
@@ -33,7 +36,9 @@
         ^(BOOL v){ host.inputEnabled=v; },
         ^NSString *{ return host.status; },
         ^NSDictionary *{ return host.workflowAssets; },
-        ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; });
+        ^BOOL(NSDictionary *assets){ return [host replaceWorkflowAssets:assets]; },
+        ^BOOL{ return host.processingEnabled; },
+        ^(BOOL enabled){ host.processingEnabled=enabled; });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];
@@ -50,94 +55,109 @@
             handler:^NSEvent *(NSEvent *e){ return [weakSelf handle:e]; }];
     [host start];
 }
+- (void)languageChanged:(NSNotification *)notification { [self buildMenu]; }
+- (void)useChinese:(id)sender { SNSetEnglish(NO); }
+- (void)useEnglish:(id)sender { SNSetEnglish(YES); }
 - (void)buildMenu {
     NSMenu *bar = [NSMenu new];
     NSMenuItem *appItem = [bar addItemWithTitle:@"Soundnet" action:nil keyEquivalent:@""];
     NSMenu *app = [[NSMenu alloc] initWithTitle:@"Soundnet"];
     appItem.submenu = app;
-    [app addItemWithTitle:@"关于 Soundnet" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [app addItemWithTitle:SNLocalized(@"关于 Soundnet") action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    NSMenuItem *languageItem=[app addItemWithTitle:SNLocalized(@"语言") action:nil keyEquivalent:@""];
+    NSMenu *language=[[NSMenu alloc] initWithTitle:SNLocalized(@"语言")];
+    languageItem.submenu=language;
+    NSMenuItem *chinese=[language addItemWithTitle:@"中文" action:@selector(useChinese:) keyEquivalent:@""];
+    chinese.target=self;chinese.state=SNIsEnglish()?NSControlStateValueOff:NSControlStateValueOn;
+    NSMenuItem *english=[language addItemWithTitle:@"English" action:@selector(useEnglish:) keyEquivalent:@""];
+    english.target=self;english.state=SNIsEnglish()?NSControlStateValueOn:NSControlStateValueOff;
     [app addItem:[NSMenuItem separatorItem]];
-    [app addItemWithTitle:@"隐藏 Soundnet" action:@selector(hide:) keyEquivalent:@"h"];
-    [app addItemWithTitle:@"退出 Soundnet" action:@selector(terminate:) keyEquivalent:@"q"];
-    NSMenuItem *fileItem=[bar addItemWithTitle:@"文件" action:nil keyEquivalent:@""];
-    NSMenu *file=[[NSMenu alloc] initWithTitle:@"文件"];
+    [app addItemWithTitle:SNLocalized(@"隐藏 Soundnet") action:@selector(hide:) keyEquivalent:@"h"];
+    [app addItemWithTitle:SNLocalized(@"退出 Soundnet") action:@selector(terminate:) keyEquivalent:@"q"];
+    NSMenuItem *fileItem=[bar addItemWithTitle:SNLocalized(@"文件") action:nil keyEquivalent:@""];
+    NSMenu *file=[[NSMenu alloc] initWithTitle:SNLocalized(@"文件")];
     fileItem.submenu=file;
-    [file addItemWithTitle:@"打开…" action:@selector(open:) keyEquivalent:@"o"];
-    [file addItemWithTitle:@"恢复自动保存…" action:@selector(restoreAutosave:) keyEquivalent:@""];
-    [file addItemWithTitle:@"保存…" action:@selector(save:) keyEquivalent:@"s"];
+    [file addItemWithTitle:SNLocalized(@"打开…") action:@selector(open:) keyEquivalent:@"o"];
+    [file addItemWithTitle:SNLocalized(@"恢复自动保存…") action:@selector(restoreAutosave:) keyEquivalent:@""];
+    [file addItemWithTitle:SNLocalized(@"保存…") action:@selector(save:) keyEquivalent:@"s"];
     [file addItem:[NSMenuItem separatorItem]];
-    [file addItemWithTitle:@"导出音频…" action:@selector(exportWav:) keyEquivalent:@""];
-    [file addItemWithTitle:@"导出 MIDI…" action:@selector(exportMidi:) keyEquivalent:@""];
-    [file addItemWithTitle:@"导出分轨…" action:@selector(exportStems:) keyEquivalent:@""];
+    [file addItemWithTitle:SNLocalized(@"导出音频…") action:@selector(exportWav:) keyEquivalent:@""];
+    [file addItemWithTitle:SNLocalized(@"导出 MIDI…") action:@selector(exportMidi:) keyEquivalent:@""];
+    [file addItemWithTitle:SNLocalized(@"导出分轨…") action:@selector(exportStems:) keyEquivalent:@""];
     [file addItem:[NSMenuItem separatorItem]];
-    _recordItem = [file addItemWithTitle:@"录制输出…" action:@selector(toggleRecording:) keyEquivalent:@""];
+    _recordItem = [file addItemWithTitle:SNLocalized(@"录制输出…") action:@selector(toggleRecording:) keyEquivalent:@""];
     _recordItem.target = self;
-    _inputRecordItem = [file addItemWithTitle:@"录制输入…" action:@selector(toggleInputRecording:) keyEquivalent:@""];
+    if(_host.isRecording)_recordItem.title=SNLocalized(@"停止录制");
+    _inputRecordItem = [file addItemWithTitle:SNLocalized(@"录制输入…") action:@selector(toggleInputRecording:) keyEquivalent:@""];
     _inputRecordItem.target = self;
-    NSMenuItem *editItem=[bar addItemWithTitle:@"编辑" action:nil keyEquivalent:@""];
-    NSMenu *edit=[[NSMenu alloc] initWithTitle:@"编辑"];
+    if(_host.isInputRecording)_inputRecordItem.title=SNLocalized(@"停止录制输入");
+    NSMenuItem *editItem=[bar addItemWithTitle:SNLocalized(@"编辑") action:nil keyEquivalent:@""];
+    NSMenu *edit=[[NSMenu alloc] initWithTitle:SNLocalized(@"编辑")];
     editItem.submenu=edit;
-    [edit addItemWithTitle:@"撤销" action:@selector(undo:) keyEquivalent:@"z"];
-    [edit addItemWithTitle:@"重做" action:@selector(redo:) keyEquivalent:@"Z"];
+    [edit addItemWithTitle:SNLocalized(@"撤销") action:@selector(undo:) keyEquivalent:@"z"];
+    [edit addItemWithTitle:SNLocalized(@"重做") action:@selector(redo:) keyEquivalent:@"Z"];
     [edit addItem:[NSMenuItem separatorItem]];
-    [edit addItemWithTitle:@"剪切" action:@selector(cut:) keyEquivalent:@"x"];
-    [edit addItemWithTitle:@"复制" action:@selector(copy:) keyEquivalent:@"c"];
-    [edit addItemWithTitle:@"粘贴" action:@selector(paste:) keyEquivalent:@"v"];
-    [edit addItemWithTitle:@"全选" action:@selector(selectAll:) keyEquivalent:@"a"];
-    NSMenuItem *audioItem = [bar addItemWithTitle:@"音频" action:nil keyEquivalent:@""];
-    NSMenu *audio = [[NSMenu alloc] initWithTitle:@"音频"];
+    [edit addItemWithTitle:SNLocalized(@"剪切") action:@selector(cut:) keyEquivalent:@"x"];
+    [edit addItemWithTitle:SNLocalized(@"复制") action:@selector(copy:) keyEquivalent:@"c"];
+    [edit addItemWithTitle:SNLocalized(@"粘贴") action:@selector(paste:) keyEquivalent:@"v"];
+    [edit addItemWithTitle:SNLocalized(@"全选") action:@selector(selectAll:) keyEquivalent:@"a"];
+    NSMenuItem *audioItem = [bar addItemWithTitle:SNLocalized(@"音频") action:nil keyEquivalent:@""];
+    NSMenu *audio = [[NSMenu alloc] initWithTitle:SNLocalized(@"音频")];
     audioItem.submenu = audio;
-    [audio addItemWithTitle:@"播放图形" action:@selector(playGraph:) keyEquivalent:@""];
-    [audio addItemWithTitle:@"停止图形" action:@selector(stopGraph:) keyEquivalent:@""];
+    [audio addItemWithTitle:SNLocalized(@"播放图形") action:@selector(playGraph:) keyEquivalent:@""];
+    [audio addItemWithTitle:SNLocalized(@"停止图形") action:@selector(stopGraph:) keyEquivalent:@""];
     [audio addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *panic = [audio addItemWithTitle:@"停止所有声音" action:@selector(panic:) keyEquivalent:@"."];
+    NSMenuItem *panic = [audio addItemWithTitle:SNLocalized(@"停止所有声音") action:@selector(panic:) keyEquivalent:@"."];
     panic.target = self;
-    NSMenuItem *restart = [audio addItemWithTitle:@"重启音频引擎" action:@selector(restart:) keyEquivalent:@""];
+    NSMenuItem *restart = [audio addItemWithTitle:SNLocalized(@"重启音频引擎") action:@selector(restart:) keyEquivalent:@""];
     restart.target = self;
-    NSMenuItem *helpItem = [bar addItemWithTitle:@"帮助" action:nil keyEquivalent:@""];
-    NSMenu *help = [[NSMenu alloc] initWithTitle:@"帮助"];
+    NSMenuItem *helpItem = [bar addItemWithTitle:SNLocalized(@"帮助") action:nil keyEquivalent:@""];
+    NSMenu *help = [[NSMenu alloc] initWithTitle:SNLocalized(@"帮助")];
     helpItem.submenu = help;
-    [help addItemWithTitle:@"键盘与音频输入" action:@selector(help:) keyEquivalent:@"?"].target = self;
-    [help addItemWithTitle:@"快捷键…" action:@selector(showShortcuts:) keyEquivalent:@""];
+    [help addItemWithTitle:SNLocalized(@"键盘与音频输入") action:@selector(help:) keyEquivalent:@"?"].target = self;
+    [help addItemWithTitle:SNLocalized(@"快捷键…") action:@selector(showShortcuts:) keyEquivalent:@""];
     NSApp.mainMenu = bar;
 }
-- (void)panic:(id)sender { _held.clear(); [_host panic]; }
+- (void)panic:(id)sender {
+    _held.clear();
+    [NSApp sendAction:@selector(stopGraph:) to:_window.contentView from:sender];
+}
 - (void)toggleRecording:(id)sender {
     if ([_host isRecording]) {
         NSError *error = nil;
         if (![_host finishRecording:&error]) {
             NSAlert *alert = [NSAlert new];
-            alert.messageText = @"录制失败";
-            alert.informativeText = error.localizedDescription ?: @"无法写入 WAV 文件。";
+            alert.messageText = SNLocalized(@"录制失败");
+            alert.informativeText = error.localizedDescription ?: SNLocalized(@"无法写入 WAV 文件。");
             [alert beginSheetModalForWindow:_window completionHandler:nil];
-            _recordItem.title = @"录制输出…";
+            _recordItem.title = SNLocalized(@"录制输出…");
             return;
         }
-        NSString *note = _host.recordingOverflow ? @"已达到 60 秒上限，末尾被截断。" : @"已保存为 16-bit 立体声 WAV。";
+        NSString *note = _host.recordingOverflow ? SNLocalized(@"已达到 60 秒上限，末尾被截断。") : SNLocalized(@"已保存为 16-bit 立体声 WAV。");
         NSAlert *alert = [NSAlert new];
-        alert.messageText = @"录制完成";
+        alert.messageText = SNLocalized(@"录制完成");
         alert.informativeText = [NSString stringWithFormat:@"%@\n%@", _recordURL.path ?: @"", note];
         [alert beginSheetModalForWindow:_window completionHandler:nil];
-        _recordItem.title = @"录制输出…";
+        _recordItem.title = SNLocalized(@"录制输出…");
         _recordURL = nil;
         return;
     }
     NSSavePanel *panel = [NSSavePanel savePanel];
-    panel.title = @"录制 Soundnet 输出";
-    panel.nameFieldStringValue = @"Soundnet 录制.wav";
+    panel.title = SNLocalized(@"录制 Soundnet 输出");
+    panel.nameFieldStringValue = SNLocalized(@"Soundnet 录制.wav");
     panel.allowedContentTypes = @[UTTypeWAV];
     [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK || !panel.URL) return;
         NSError *error = nil;
         if (![self->_host startRecordingToURL:panel.URL error:&error]) {
             NSAlert *alert = [NSAlert new];
-            alert.messageText = @"无法开始录制";
-            alert.informativeText = error.localizedDescription ?: @"音频引擎尚未就绪。";
+            alert.messageText = SNLocalized(@"无法开始录制");
+            alert.informativeText = error.localizedDescription ?: SNLocalized(@"音频引擎尚未就绪。");
             [alert beginSheetModalForWindow:self->_window completionHandler:nil];
             return;
         }
         self->_recordURL = panel.URL;
-        self->_recordItem.title = @"停止录制";
+        self->_recordItem.title = SNLocalized(@"停止录制");
     }];
 }
 - (void)toggleInputRecording:(id)sender {
@@ -145,44 +165,44 @@
         NSError *error = nil;
         if (![_host finishInputRecording:&error]) {
             NSAlert *alert = [NSAlert new];
-            alert.messageText = @"输入录制失败";
-            alert.informativeText = error.localizedDescription ?: @"无法写入 WAV 文件。";
+            alert.messageText = SNLocalized(@"输入录制失败");
+            alert.informativeText = error.localizedDescription ?: SNLocalized(@"无法写入 WAV 文件。");
             [alert beginSheetModalForWindow:_window completionHandler:nil];
-            _inputRecordItem.title = @"录制输入…";
+            _inputRecordItem.title = SNLocalized(@"录制输入…");
             return;
         }
-        NSString *note = _host.inputRecordingOverflow ? @"已达到 60 秒上限，末尾被截断。" : @"已保存为 16-bit 立体声 WAV。";
+        NSString *note = _host.inputRecordingOverflow ? SNLocalized(@"已达到 60 秒上限，末尾被截断。") : SNLocalized(@"已保存为 16-bit 立体声 WAV。");
         NSAlert *alert = [NSAlert new];
-        alert.messageText = @"输入录制完成";
+        alert.messageText = SNLocalized(@"输入录制完成");
         alert.informativeText = [NSString stringWithFormat:@"%@\n%@", _inputRecordURL.path ?: @"", note];
         [alert beginSheetModalForWindow:_window completionHandler:nil];
-        _inputRecordItem.title = @"录制输入…";
+        _inputRecordItem.title = SNLocalized(@"录制输入…");
         _inputRecordURL = nil;
         return;
     }
     NSSavePanel *panel = [NSSavePanel savePanel];
-    panel.title = @"录制 Soundnet 输入";
-    panel.nameFieldStringValue = @"Soundnet 输入录音.wav";
+    panel.title = SNLocalized(@"录制 Soundnet 输入");
+    panel.nameFieldStringValue = SNLocalized(@"Soundnet 输入录音.wav");
     panel.allowedContentTypes = @[UTTypeWAV];
     [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK || !panel.URL) return;
         NSError *error = nil;
         if (![self->_host startInputRecordingToURL:panel.URL error:&error]) {
             NSAlert *alert = [NSAlert new];
-            alert.messageText = @"无法开始输入录制";
-            alert.informativeText = error.localizedDescription ?: @"请先启用音频输入。";
+            alert.messageText = SNLocalized(@"无法开始输入录制");
+            alert.informativeText = error.localizedDescription ?: SNLocalized(@"请先启用音频输入。");
             [alert beginSheetModalForWindow:self->_window completionHandler:nil];
             return;
         }
         self->_inputRecordURL = panel.URL;
-        self->_inputRecordItem.title = @"停止录制输入";
+        self->_inputRecordItem.title = SNLocalized(@"停止录制输入");
     }];
 }
 - (void)restart:(id)sender { _held.clear(); [_host restartAudio]; }
 - (void)help:(id)sender {
     NSAlert *alert = [NSAlert new];
-    alert.messageText = @"演奏 Soundnet";
-    alert.informativeText = @"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\n外接键盘接入本地 MIDI 节点。DAW 可把音轨和 MIDI 时钟发送至「Soundnet MIDI In」，接入 DAW MIDI 节点。独立版输出到系统所选声卡；在 Logic 的软件乐器轨道中加载 Soundnet AU，可将音频送回该轨道。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。\n\n「文件 → 录制输出」会把当前听到的最终输出录成 16-bit 立体声 WAV，最长 60 秒；「录制输入」会录下硬件输入，便于把外部声音做成采样；两者停止后都可再导入采样器或音频片段。";
+    alert.messageText = SNLocalized(@"演奏 Soundnet");
+    alert.informativeText = SNLocalized(@"A W S E D F T G Y H U J K 从 C4 演奏至 C5。Z / X 下移或上移八度。⌘. 停止所有声音。\n\n外接键盘接入本地 MIDI 节点。DAW 可把音轨和 MIDI 时钟发送至「Soundnet MIDI In」，接入 DAW MIDI 节点。独立版输出到系统所选声卡；在 Logic 的软件乐器轨道中加载 Soundnet AU，可将音频送回该轨道。\n\n音频输入来自系统默认输入设备。为避免啸叫，可使用耳机监听，或把输入切到声卡线路输入。\n\n「文件 → 录制输出」会把当前听到的最终输出录成 16-bit 立体声 WAV，最长 60 秒；「录制输入」会录下硬件输入，便于把外部声音做成采样；两者停止后都可再导入采样器或音频片段。");
     [alert beginSheetModalForWindow:_window completionHandler:nil];
 }
 - (NSEvent *)handle:(NSEvent *)e {
@@ -224,6 +244,7 @@
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
 - (void)applicationWillTerminate:(NSNotification *)note {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     if (_keyboard) [NSEvent removeMonitor:_keyboard];
     [_host savePatch];
     [_host stop];

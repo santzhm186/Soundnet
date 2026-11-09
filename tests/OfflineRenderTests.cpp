@@ -145,6 +145,17 @@ int main() {
     assert(!offline::renderStems(noOutput,.1,48000,stems,why));
     puts("offline stems isolate each audio output");
 
+    // Cancellation never leaves a partial result that a caller could save.
+    std::atomic<bool> cancelled{true};
+    assert(!offline::render(graph,1,48000,result,why,&cancelled));
+    assert(result.left.empty() && result.right.empty() && result.midi.empty());
+    assert(!offline::renderStems(stemGraph,.25,48000,stems,why,&cancelled));
+    assert(stems.empty());
+    cancelled=false;
+    assert(offline::render(graph,.1,48000,result,why,&cancelled));
+    assert(result.left.size()==4800 && result.peak>.01);
+    puts("cancelled exports clear partial audio, MIDI and stems and can restart");
+
     assert(!offline::render(graph,0,48000,result,why));
     assert(!offline::render(graph,200,48000,result,why));
     puts("invalid export durations are rejected");

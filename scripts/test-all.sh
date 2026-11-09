@@ -3,6 +3,9 @@
 # Usage: scripts/test-all.sh [build-directory]
 set -euo pipefail
 export SOUNDNET_NO_AUTOSAVE=1
+# Never race a running app's language preference while UI tests switch locales.
+export SOUNDNET_PREFERENCES_SUITE="com.soundnet.tests.$$"
+trap 'defaults delete "$SOUNDNET_PREFERENCES_SUITE" >/dev/null 2>&1 || true' EXIT
 root="$(cd "$(dirname "$0")/.." && pwd)"
 build="${1:-$root/build/tests}"
 mkdir -p "$build"
@@ -40,6 +43,19 @@ echo "== compile ClipEditorTests"
   -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
   -framework AVFoundation -o "$build/ClipEditorTests"
 
+echo "== compile NodeLibraryTests"
+"${cxx[@]}" -fobjc-arc -I. tests/NodeLibraryTests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
+  -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
+  -framework AVFoundation -o "$build/NodeLibraryTests"
+
+echo "== compile ProcessingUITests"
+"${cxx[@]}" -fobjc-arc -I. tests/ProcessingUITests.mm ui/InstanceEditor.mm src/WorkflowAssets.mm \
+  -framework Cocoa -framework CoreML -framework UniformTypeIdentifiers -framework QuartzCore \
+  -framework AVFoundation -o "$build/ProcessingUITests"
+
+echo "== compile LocalizationTests"
+"${cxx[@]}" -fobjc-arc tests/LocalizationTests.mm -framework Foundation -o "$build/LocalizationTests"
+
 for name in "${tests[@]}"; do
   echo "== run $name"
   "$build/$name"
@@ -64,5 +80,14 @@ SOUNDNET_NO_AUTOSAVE=1 "$build/InstanceEditorTest"
 
 echo "== run ClipEditorTests"
 "$build/ClipEditorTests"
+
+echo "== run NodeLibraryTests"
+"$build/NodeLibraryTests"
+
+echo "== run ProcessingUITests"
+"$build/ProcessingUITests"
+
+echo "== run LocalizationTests"
+"$build/LocalizationTests"
 
 echo "PASS: all Soundnet tests"

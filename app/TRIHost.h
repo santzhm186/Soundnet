@@ -21,5 +21,6 @@
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;
 @property(nonatomic, readonly) NSString *status;
 @property(nonatomic, getter=isInputEnabled) BOOL inputEnabled;
+@property(nonatomic) BOOL processingEnabled;
 + (int)runOfflineCheck;
 @end

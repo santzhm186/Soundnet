@@ -39,6 +39,7 @@ int main() {
         next.nodes[2].parameters[Master]=.1f+.5f*float(i%7)/7.f;
         if(!engine->setGraph(next))failed=true;
         if(i%5==0)engine->panic();
+        if(i%3==0){engine->setProcessingEnabled(false);engine->setProcessingEnabled(true);}
         engine->midi(0x90,60,100);
         engine->midi(0x80,60,0);
     }

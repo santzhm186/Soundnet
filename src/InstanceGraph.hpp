@@ -298,7 +298,10 @@ class InstanceGraph {
     std::atomic<double> bpm{0},beat{0};
     std::atomic<bool> transport{false},playing{false},hosted{false};
     std::atomic<bool> active{false},panicRequested{false};
-    std::array<Event,eventCapacity> local{},daw{};
+    std::atomic<bool> processing{true},stopResetRequested{false};
+    std::atomic<uint64_t> stopGeneration{0};
+    struct QueuedMidi {Event event{};uint64_t generation=0;};
+    std::array<QueuedMidi,eventCapacity> local{},daw{};
     int localCount=0,dawCount=0;
     std::array<Event,eventCapacity> pendingLocal{},pendingDaw{};
     int pendingLocalCount=0,pendingDawCount=0;
@@ -904,22 +907,29 @@ public:
     void clearHostTransport() {transport.store(false,std::memory_order_release);}
     void setMidiOutput(void* ctx,void (*fn)(void*,int,uint8_t,uint8_t,uint8_t)) {outputContext=ctx;output=fn;}
     void midi(bool fromDAW,uint8_t s,uint8_t a,uint8_t b) {
+        const uint64_t generation=stopGeneration.load(std::memory_order_acquire);
+        if(!processing.load(std::memory_order_acquire))return;
         std::lock_guard<std::mutex> lock(midiLock);
+        if(!processing.load(std::memory_order_acquire) || generation!=stopGeneration.load(std::memory_order_acquire))return;
         auto& count=fromDAW?dawCount:localCount;
         auto& queue=fromDAW?daw:local;
-        if(count<eventCapacity)queue[count++]={0,s,a,b};
+        if(count<eventCapacity)queue[count++]={{0,s,a,b},generation};
         else inputOverflow.store(true,std::memory_order_relaxed);
     }
-    void reset() {
+    void reset(bool preserveQueuedMidi=false) {
         for(auto& entry:plans.current().entries) {
             auto& n=*entry.state;
             if(n.type==MidiOutNode && output)for(int k=0;k<2048;++k)
-                if(n.incoming[k].velocity)output(outputContext,0,0x80|(k%16),k/16,0);
+                if(n.incoming[k].velocity)output(outputContext,0,uint8_t(0x80|outputChannel(entry.midiOutChannel,k)),uint8_t(k/16),0);
             if(n.engine)n.engine->reset();
             if(n.processor)n.processor->reset();
             if(n.sampler) {samplerStop(*n.sampler);n.sampler->generation=0;n.sampler->sourcePort=0;n.sampler->bypassed=false;}
             if(n.audioClip) {*n.audioClip=AudioClipState{};}
             if(n.quantizer) {n.quantizer->mapping.fill(-1);n.quantizer->counts.fill(0);n.quantizer->source=nullptr;n.quantizer->sourcePort=0;n.quantizer->root=-1;n.quantizer->scale=-1;n.quantizer->mode=-1;n.quantizer->bypassed=false;}
+            if(n.metronome)*n.metronome=MetronomeState{};
+            if(n.echo)*n.echo=EchoState{};
+            if(n.transpose){*n.transpose=TransposeState{};n.transpose->mapping.fill(-1);}
+            if(n.channelFilter)*n.channelFilter=ChannelFilterState{};
             n.clear();n.incoming={};
             if(n.arranger) {
                 for(auto& port:n.arranger->otherVoices)port.clear();
@@ -928,14 +938,25 @@ public:
             n.waitingSize=0;n.controlSize=0;n.count=0;
         }
         deferredHead=deferredTail=0;dispatchSize=0;deferredOverflow=0;
+        pendingLocalCount=pendingDawCount=0;
+        inputOverflow.store(false,std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lock(midiLock);
-            localCount=dawCount=0;
+            if(!preserveQueuedMidi)localCount=dawCount=0;
         }
     }
     // Only the render thread is allowed to touch live node state. UI/MIDI
     // callers publish a request; the next render block performs the reset.
     void panic() {panicRequested.store(true,std::memory_order_release);}
+    void setProcessingEnabled(bool enabled) {
+        // The reset request survives a rapid Stop -> Play before render runs.
+        if(!enabled) {
+            processing.store(false,std::memory_order_release);
+            stopGeneration.fetch_add(1,std::memory_order_acq_rel);
+            stopResetRequested.store(true,std::memory_order_release);
+        }
+        processing.store(enabled,std::memory_order_release);
+    }
     static void renderMetronome(const Entry& entry,Runtime& node,int n,double rate) {
         const double bpm=std::clamp(double(entry.metronomeBPM),40.0,240.0);
         const double step=bpm/(60.0*rate);
@@ -1076,14 +1097,25 @@ public:
             for(const auto& entry:plans.current().entries)if(entry.state->engine)entry.state->engine->panic();
             reset();
         }
+        const bool stopping=stopResetRequested.exchange(false,std::memory_order_acq_rel);
+        if(stopping)reset(true);
+        if(!processing.load(std::memory_order_acquire)) {
+            // Edits may publish while stopped. Consume their trigger counters
+            // without executing nodes so old clicks cannot fire on resume.
+            if(planChanged || stopping)for(const auto& entry:plans.current().entries)entry.state->seenPulse=entry.pulse;
+            std::fill_n(outL,frames,0.f);std::fill_n(outR,frames,0.f);
+            return;
+        }
         renderingPlan=&plans.current();
         const auto& entries=renderingPlan->entries;
         {
             std::lock_guard<std::mutex> lock(midiLock);
-            pendingLocalCount=std::min(localCount,eventCapacity);
-            pendingDawCount=std::min(dawCount,eventCapacity);
-            std::copy_n(local.begin(),pendingLocalCount,pendingLocal.begin());
-            std::copy_n(daw.begin(),pendingDawCount,pendingDaw.begin());
+            const uint64_t generation=stopGeneration.load(std::memory_order_acquire);
+            pendingLocalCount=pendingDawCount=0;
+            for(int i=0;i<localCount;++i)if(local[i].generation==generation)
+                pendingLocal[pendingLocalCount++]=local[i].event;
+            for(int i=0;i<dawCount;++i)if(daw[i].generation==generation)
+                pendingDaw[pendingDawCount++]=daw[i].event;
             localCount=dawCount=0;
         }
         if(inputOverflow.exchange(false,std::memory_order_relaxed))reset();

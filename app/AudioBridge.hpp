@@ -14,6 +14,7 @@ struct TRIMsg {
     uint64_t order = 0;
     uint8_t status = 0, a = 0, b = 0;
     bool daw = false;
+    uint64_t generation = 0;
 };
 class TRIMidiQueue {
     static constexpr uint64_t capacity = 2048;
@@ -142,7 +143,7 @@ struct TRIRealtime {
     TRIInputFIFO input;
     TRIRecorder recording;
     TRIRecorder inputRecording;
-    std::atomic<bool> panicFlag{false};
+    std::atomic<bool> panicFlag{false},discardMidiRequested{false};
     double framesPerTick = 0;
     double sampleRate = 48000;
     uint64_t outputStart = 0;
@@ -156,8 +157,14 @@ struct TRIRealtime {
     std::array<TRIMsg, 2048> upcoming{};
     size_t count = 0;
 
+    void setProcessingEnabled(bool enabled) {
+        if(!enabled)discardMidiRequested.store(true,std::memory_order_release);
+        dsp.setProcessingEnabled(enabled);
+    }
     void enqueue(uint8_t s, uint8_t a, uint8_t b, uint64_t t=0, bool daw=false) {
-        if (!midi.push({t,0,s,a,b,daw})) panicFlag.store(true);
+        const uint64_t generation=dsp.processingGeneration();
+        if (!dsp.processingEnabled())return;
+        if (!midi.push({t,0,s,a,b,daw,generation})) panicFlag.store(true);
     }
     void clearEvents(bool panic=false) {
         TRIMsg e;
@@ -208,8 +215,15 @@ struct TRIRealtime {
     void render(float *l, float *r, int n, bool enableInput, uint64_t start) {
         outputStart=start; outputOffset=0;
         if (panicFlag.exchange(false)) clearEvents(true);
+        if(discardMidiRequested.exchange(false,std::memory_order_acq_rel) || !dsp.processingEnabled()) {
+            const uint64_t generation=dsp.processingGeneration();
+            count=size_t(std::remove_if(upcoming.begin(),upcoming.begin()+count,
+                [generation](const TRIMsg& e){return e.generation!=generation;})-upcoming.begin());
+            std::make_heap(upcoming.begin(),upcoming.begin()+count,later);
+        }
         TRIMsg e;
         while (midi.pop(e)) {
+            if(e.generation!=dsp.processingGeneration())continue;
             if (count == upcoming.size()) { clearEvents(true); break; }
             upcoming[count++] = e;
             std::push_heap(upcoming.begin(), upcoming.begin()+count, later);
@@ -229,7 +243,8 @@ struct TRIRealtime {
             int position = std::max(offset, int(frame));
             if (offset < position) span(offset, position-offset);
             outputOffset=position;
-            if (next.daw && next.status>=0xF0) clockMessage(next);
+            if (next.generation!=dsp.processingGeneration()) {}
+            else if (next.daw && next.status>=0xF0) clockMessage(next);
             else if (next.daw) dsp.dawMidi(next.status,next.a,next.b);
             else dsp.midi(next.status,next.a,next.b);
             std::pop_heap(upcoming.begin(),upcoming.begin()+count,later);

@@ -1,4 +1,5 @@
 #import "../ui/TriEditor.h"
+#import "../ui/SNLocalization.h"
 #import "../src/WorkflowAssets.h"
 #include "../src/Engine.hpp"
 #include "../src/WavFile.hpp"
@@ -8,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <cassert>
+#include <unistd.h>
 
 @interface NSView (SoundnetTestActions)
 - (void)insert:(NSMenuItem *)item;
@@ -27,11 +29,44 @@
 - (void)choiceChanged:(NSPopUpButton *)popup;
 - (void)nameChanged:(NSTextField *)field;
 - (void)bypassChanged:(NSButton *)button;
+- (void)selectOnly:(uint64_t)uid;
+- (void)stopGraph:(id)sender;
+- (void)playGraph:(id)sender;
+- (void)trigger:(id)sender;
+- (void)languageChanged:(NSPopUpButton *)sender;
+- (void)toggleParameterGroup:(NSButton *)sender;
+- (void)toggleLibrary:(id)sender;
+- (void)cancelProcessing:(id)sender;
 @end
+
+static NSDictionary *snapshot(NSView *editor) {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:[editor valueForKey:@"document"] options:0 error:nil];
+    return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+}
+
+static void savePreview(NSView *editor,NSString *path) {
+    [editor.window display];
+    NSBitmapImageRep *image=[editor bitmapImageRepForCachingDisplayInRect:editor.bounds];
+    [editor cacheDisplayInRect:editor.bounds toBitmapImageRep:image];
+    assert([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES]);
+}
+
+static void waitForJob(NSView *editor) {
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:10];
+    while([[editor valueForKey:@"exportBusy"] boolValue] && deadline.timeIntervalSinceNow>0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    assert(![[editor valueForKey:@"exportBusy"] boolValue]);
+}
 
 int main() {
     @autoreleasepool {
+        BOOL ownPreferences=!getenv("SOUNDNET_PREFERENCES_SUITE");
+        NSString *preferenceSuite=ownPreferences?[NSString stringWithFormat:@"com.soundnet.editor-tests.%d",getpid()]:@(getenv("SOUNDNET_PREFERENCES_SUITE"));
+        if(ownPreferences)setenv("SOUNDNET_PREFERENCES_SUITE",preferenceSuite.UTF8String,1);
         [NSApplication sharedApplication];
+        id originalLanguage=[SNLanguagePreferences() objectForKey:@"SoundnetLanguage"];
+        BOOL originalEnglish=SNIsEnglish();
+        SNSetEnglish(NO);
         auto engine = std::make_shared<tri::Engine>();
         __block NSDictionary *assets = @{};
         NSView *editor = TRICreateEditor(
@@ -46,7 +81,9 @@ int main() {
                 if (!engine->setGraph(graph)) return NO;
                 assets = replacement;
                 return YES;
-            });
+            },
+            ^BOOL { return engine->processingEnabled(); },
+            ^(BOOL enabled) { engine->setProcessingEnabled(enabled); });
         for (int i=0; i<25; ++i) {
             NSMenuItem *item = [NSMenuItem new];
             item.tag = tri::Osc1Node;
@@ -87,22 +124,42 @@ int main() {
         assert(tri::wav::write(dropPath, wave, waveR, 48000, why));
         NSURL *dropURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:dropPath.c_str()]];
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(100, 100) clipMode:NO]);
+        waitForJob(editor);
         assert([assets[@"graph"][@"nodes"] count]==28);
         NSDictionary *samplerDrop = [assets[@"graph"][@"nodes"] lastObject];
         assert(samplerDrop && [samplerDrop[@"nodeKey"] isEqual:samplerKey] && samplerDrop[@"asset"][@"name"]);
+        assert([samplerDrop[@"x"] doubleValue]==100 && [samplerDrop[@"y"] doubleValue]==100);
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(140, 140) clipMode:YES]);
+        waitForJob(editor);
         assert([assets[@"graph"][@"nodes"] count]==29);
         NSDictionary *clipDrop = [assets[@"graph"][@"nodes"] lastObject];
         NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::AudioClipNode)];
         assert(clipDrop && [clipDrop[@"nodeKey"] isEqual:clipKey] && clipDrop[@"asset"][@"name"]);
-        std::remove(dropPath.c_str());
+        assert([clipDrop[@"x"] doubleValue]==140 && [clipDrop[@"y"] doubleValue]==140);
+
+        // A drop is accepted before decoding. Cancellation must discard every
+        // file in the batch, and an outstanding job must reject another drop.
+        NSDictionary *beforeCancelledDrop=snapshot(editor);
+        assert(([editor dropFileURLs:@[dropURL,dropURL] atPoint:NSMakePoint(180,180) clipMode:NO]));
+        assert([[editor valueForKey:@"exportBusy"] boolValue]);
+        assert(![editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(200,200) clipMode:NO]);
+        [editor cancelProcessing:nil];
+        waitForJob(editor);
+        assert([snapshot(editor) isEqual:beforeCancelledDrop]);
 
         // Opening a v4 project must go through the canonicaliser, not the v1/v2
         // migrator.
         NSDictionary *v4=[NSJSONSerialization JSONObjectWithData:
             [NSData dataWithContentsOfFile:@"examples/three-voice-arrangement.v4.json"]
             options:NSJSONReadingMutableContainers error:nil];
+        // A completed decode belongs to the document the user dropped into,
+        // even if the user opens a different workflow before it finishes.
+        assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(180,180) clipMode:NO]);
         assert([editor adoptFile:v4]);
+        NSDictionary *afterOpen=snapshot(editor);
+        waitForJob(editor);
+        assert([snapshot(editor) isEqual:afterOpen]);
+        std::remove(dropPath.c_str());
         NSDictionary *opened=[editor valueForKey:@"document"];
         assert([opened[@"version"] isEqual:@4]);
         assert([opened[@"nodes"] count]==9);
@@ -146,6 +203,75 @@ int main() {
             name.stringValue=@"Lead";
             [editor nameChanged:name];
             assert([assets[@"graph"][@"nodes"][oscIndex][@"name"] isEqual:@"Lead"]);
+
+            // Disclosure controls change presentation only. Rebuilt controls
+            // must retain and continue editing the same stable parameter IDs.
+            NSDictionary *beforeGroups=snapshot(editor);
+            NSButton *mix=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Mix));
+            assert(mix && mix.action==@selector(toggleParameterGroup:));
+            [editor toggleParameterGroup:mix];
+            assert(!find(inspector,[NSSlider class],tri::Level1+100000));
+            assert([snapshot(editor) isEqual:beforeGroups]);
+            mix=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Mix));
+            [editor toggleParameterGroup:mix];
+            level=(NSSlider *)find(inspector,[NSSlider class],tri::Level1+100000);
+            assert(level && std::abs(level.doubleValue-.42)<1e-5);
+            level.doubleValue=.37;[editor sliderChanged:level];
+            assert(std::abs([assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.level"] doubleValue]-.37)<1e-5);
+            NSButton *tone=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Tone));
+            [editor toggleParameterGroup:tone];
+            assert(!find(inspector,[NSPopUpButton class],tri::Wave1));
+            tone=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Tone));
+            [editor toggleParameterGroup:tone];
+            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            assert(wave && wave.indexOfSelectedItem==1);
+            [wave selectItemAtIndex:2];[editor choiceChanged:wave];
+            assert([assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.wave"] intValue]==2);
+
+            // Use a custom name that also exists in the translation dictionary.
+            // It remains user data in both UI languages and in the document.
+            name=(NSTextField *)find(inspector,[NSTextField class],990001);
+            name.stringValue=@"振荡器";[editor nameChanged:name];
+            NSDictionary *beforeLanguage=snapshot(editor);
+            NSPopUpButton *language=[editor valueForKey:@"languagePopup"];
+            [language selectItemAtIndex:1];[editor languageChanged:language];
+            assert(SNIsEnglish());
+            assert([((NSButton *)[editor valueForKey:@"playButton"]).title isEqualToString:@"Play"]);
+            assert([snapshot(editor) isEqual:beforeLanguage]);
+            name=(NSTextField *)find(inspector,[NSTextField class],990001);
+            assert([name.stringValue isEqualToString:@"振荡器"]);
+            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            assert(wave.indexOfSelectedItem==2 && wave.numberOfItems==4);
+            [language selectItemAtIndex:0];[editor languageChanged:language];
+            assert(!SNIsEnglish());
+            assert([((NSButton *)[editor valueForKey:@"playButton"]).title isEqualToString:@"播放"]);
+            assert([snapshot(editor) isEqual:beforeLanguage]);
+
+            NSView *canvas=[editor valueForKey:@"canvas"];
+            NSRect originalCanvas=canvas.frame;
+            [editor toggleLibrary:nil];
+            assert(((NSScrollView *)[editor valueForKey:@"libraryScroll"]).hidden);
+            assert(NSWidth(canvas.frame)>NSWidth(originalCanvas)+200);
+            [editor toggleLibrary:nil];
+            assert(!((NSScrollView *)[editor valueForKey:@"libraryScroll"]).hidden);
+            assert(NSEqualRects(originalCanvas,canvas.frame));
+            assert([snapshot(editor) isEqual:beforeLanguage]);
+
+            NSDictionary *beforeStop=snapshot(editor);
+            [editor stopGraph:nil];
+            assert(!engine->processingEnabled());
+            assert(![[editor valueForKey:@"processingActive"] boolValue]);
+            assert([snapshot(editor) isEqual:beforeStop]);
+            [editor playGraph:nil];
+            assert(engine->processingEnabled());
+            [editor insert:start];
+            [editor stopGraph:nil];
+            uint64_t startID=0;
+            for(NSDictionary *node in assets[@"graph"][@"nodes"])
+                if([node[@"nodeKey"] isEqual:@"soundnet.start"])startID=[node[@"id"] unsignedLongLongValue];
+            assert(startID);
+            [editor selectOnly:startID];[editor trigger:nil];
+            assert(engine->processingEnabled());
         }
 
         NSData *serialized = [NSJSONSerialization dataWithJSONObject:assets options:0 error:nil];
@@ -161,16 +287,34 @@ int main() {
         window.releasedWhenClosed = NO;
         window.contentView = editor;
         [editor setValue:triassets::canonicalGraph(example,nil) forKey:@"document"];
-        [editor setValue:@1 forKey:@"selected"];
+        uint64_t previewID=0;
+        for(NSDictionary *node in [editor valueForKey:@"document"][@"nodes"])
+            if([node[@"nodeKey"] isEqual:@"soundnet.oscillator"]){previewID=[node[@"id"] unsignedLongLongValue];break;}
+        assert(previewID);
+        [editor selectOnly:previewID];
         [editor commit:nil];
         [editor fit:nil];
         [editor inspect];
-        [window display];
-        NSBitmapImageRep *image = [editor bitmapImageRepForCachingDisplayInRect:editor.bounds];
-        [editor cacheDisplayInRect:editor.bounds toBitmapImageRep:image];
-        [[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
-            writeToFile:@"build/qa/instances.png" atomically:YES];
+        [[NSFileManager defaultManager] createDirectoryAtPath:@"build/qa" withIntermediateDirectories:YES attributes:nil error:nil];
+        savePreview(editor,@"build/qa/instances.png");
+        savePreview(editor,@"build/qa/instances-zh.png");
+        SNSetEnglish(YES);
+        [window setContentSize:NSMakeSize(1180,620)];
+        [editor setFrameSize:NSMakeSize(1180,620)];
+        [editor fit:nil];
+        savePreview(editor,@"build/qa/instances-en.png");
+        assert([editor adoptFile:v4]);
+        [editor selectOnly:3];
+        [window setContentSize:NSMakeSize(1180,840)];
+        [editor setFrameSize:NSMakeSize(1180,840)];
+        [editor fit:nil];
+        savePreview(editor,@"build/qa/arranger-en.png");
         [window close];
-        puts("PASS: 25 native oscillator instances, sampler insertion, drag-drop audio, independent trigger, undo/redo, JSON roundtrip and trigger example.");
+        SNSetEnglish(originalEnglish);
+        if(originalLanguage)[SNLanguagePreferences() setObject:originalLanguage forKey:@"SoundnetLanguage"];
+        else [SNLanguagePreferences() removeObjectForKey:@"SoundnetLanguage"];
+        if(ownPreferences)[SNLanguagePreferences() removePersistentDomainForName:preferenceSuite];
+        [SNLanguagePreferences() synchronize];
+        puts("PASS: native insertion/undo/drop/roundtrip, grouped controls, bilingual UI/data preservation, sidebar sizing, stop/resume/trigger and Chinese/English layout previews.");
     }
 }

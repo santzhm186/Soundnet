@@ -1,3 +1,4 @@
+#import "../ui/SNLocalization.h"
 #import "TRIHost.h"
 #import "AudioBridge.hpp"
 #include "PatchRouting.hpp"
@@ -195,7 +196,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         _graph = [AVAudioEngine new];
         AVAudioFormat *device = [_graph.outputNode outputFormatForBus:0];
         if (!(device.sampleRate > 0) || !device.channelCount)
-            return audioError(@"找不到输出设备。请连接声卡或在系统设置中选择声音输出，然后重启音频引擎。");
+            return audioError(SNLocalized(@"找不到输出设备。请连接声卡或在系统设置中选择声音输出，然后重启音频引擎。"));
         _sampleRate = device.sampleRate;
         mach_timebase_info_data_t base;
         mach_timebase_info(&base);
@@ -207,7 +208,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
             AVAudioFormat *micFormat = [mic outputFormatForBus:0];
             if (micFormat.channelCount < 1 || !(micFormat.sampleRate > 0) ||
                 micFormat.commonFormat != AVAudioPCMFormatFloat32)
-                return audioError(@"输入设备未就绪。请在「系统设置 → 声音 → 输入」中选择麦克风或声卡。");
+                return audioError(SNLocalized(@"输入设备未就绪。请在「系统设置 → 声音 → 输入」中选择麦克风或声卡。"));
             inputRate = micFormat.sampleRate;
             TRIRealtime *rt = _rt.get();
             AVAudioSinkNode *sink = [[AVAudioSinkNode alloc] initWithReceiverBlock:^OSStatus(
@@ -232,7 +233,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         [_graph connect:source to:_graph.mainMixerNode format:format];
         NSError *err = nil;
         [_graph prepare];
-        if (![_graph startAndReturnError:&err]) return err ?: audioError(@"音频引擎启动失败。");
+        if (![_graph startAndReturnError:&err]) return err ?: audioError(SNLocalized(@"音频引擎启动失败。"));
         __weak TRIHost *weakSelf = self;
         NSUInteger generation = _generation;
         _configObserver = [[NSNotificationCenter defaultCenter]
@@ -246,7 +247,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         _error = nil;
         return nil;
     } @catch (NSException *e) {
-        return audioError(e.reason ?: @"音频设备配置失败。");
+        return audioError(e.reason ?: SNLocalized(@"音频设备配置失败。"));
     }
 }
 - (void)restartAudio {
@@ -256,7 +257,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         _inputEnabled = NO;
         NSError *outputFailure = [self buildGraphWithInput:NO];
         if (outputFailure) { [self tearDownGraph]; _error = outputFailure.localizedDescription; }
-        displayError(@"音频输入无法启用",failure.localizedDescription);
+        displayError(SNLocalized(@"音频输入无法启用"),failure.localizedDescription);
     } else if (failure) {
         [self tearDownGraph];
         _error = failure.localizedDescription;
@@ -264,12 +265,12 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     }
 }
 - (NSString *)status {
-    if (_recordingURL && _inputRecordingURL) return @"正在录制输出与输入";
-    if (_recordingURL) return _rt->recording.overflow.load() ? @"录制中 · 已达 60 秒上限" : @"录制中 · 再次选择「停止录制」保存";
-    if (_inputRecordingURL) return _rt->inputRecording.overflow.load() ? @"输入录制中 · 已达 60 秒上限" : @"输入录制中 · 再次选择「停止录制输入」保存";
-    if (_error) return @"音频离线 · 从「音频」菜单重试";
-    if (_waitingForInput) return @"正在等待麦克风授权";
-    NSString *midi = _midiReady ? [NSString stringWithFormat:@"MIDI × %zu",_sources.size()] : @"MIDI 离线";
+    if (_recordingURL && _inputRecordingURL) return SNLocalized(@"正在录制输出与输入");
+    if (_recordingURL) return _rt->recording.overflow.load() ? SNLocalized(@"录制中 · 已达 60 秒上限") : SNLocalized(@"录制中 · 再次选择「停止录制」保存");
+    if (_inputRecordingURL) return _rt->inputRecording.overflow.load() ? SNLocalized(@"输入录制中 · 已达 60 秒上限") : SNLocalized(@"输入录制中 · 再次选择「停止录制输入」保存");
+    if (_error) return SNLocalized(@"音频离线 · 从「音频」菜单重试");
+    if (_waitingForInput) return SNLocalized(@"正在等待麦克风授权");
+    NSString *midi = _midiReady ? [NSString stringWithFormat:@"MIDI × %zu",_sources.size()] : SNLocalized(@"MIDI 离线");
     return [NSString stringWithFormat:@"%g kHz  ·  %@",_sampleRate/1000.,midi];
 }
 - (BOOL)isInputEnabled { return _inputEnabled; }
@@ -292,7 +293,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
         return;
     }
     if (status != AVAuthorizationStatusAuthorized) {
-        displayError(@"需要麦克风权限",@"在「系统设置 → 隐私与安全性 → 麦克风」里允许 Soundnet，然后再次打开音频输入。");
+        displayError(SNLocalized(@"需要麦克风权限"),SNLocalized(@"在「系统设置 → 隐私与安全性 → 麦克风」里允许 Soundnet，然后再次打开音频输入。"));
         return;
     }
     _inputEnabled = YES;
@@ -313,15 +314,17 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (void)sendStatus:(uint8_t)status data1:(uint8_t)a data2:(uint8_t)b { _rt->enqueue(status,a,b); }
 - (void)panic { _rt->panicFlag.store(true); }
+- (BOOL)processingEnabled { return _rt->dsp.processingEnabled(); }
+- (void)setProcessingEnabled:(BOOL)enabled { _rt->setProcessingEnabled(enabled); }
 - (BOOL)isRecording { return _recordingURL != nil; }
 - (BOOL)recordingOverflow { return _recordOverflow; }
 - (BOOL)startRecordingToURL:(NSURL *)url error:(NSError **)error {
     if (_closed || !_rt || _sampleRate <= 0) {
-        if (error) *error = audioError(@"音频引擎尚未就绪。");
+        if (error) *error = audioError(SNLocalized(@"音频引擎尚未就绪。"));
         return NO;
     }
     if (_recordingURL || _inputRecordingURL) {
-        if (error) *error = audioError(@"已经有录音在进行。");
+        if (error) *error = audioError(SNLocalized(@"已经有录音在进行。"));
         return NO;
     }
     _recordOverflow = NO;
@@ -333,15 +336,15 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 - (BOOL)inputRecordingOverflow { return _inputRecordOverflow; }
 - (BOOL)startInputRecordingToURL:(NSURL *)url error:(NSError **)error {
     if (_closed || !_rt || _sampleRate <= 0) {
-        if (error) *error = audioError(@"音频引擎尚未就绪。");
+        if (error) *error = audioError(SNLocalized(@"音频引擎尚未就绪。"));
         return NO;
     }
     if (!_inputEnabled) {
-        if (error) *error = audioError(@"请先在「音频」菜单启用音频输入。");
+        if (error) *error = audioError(SNLocalized(@"请先在「音频」菜单启用音频输入。"));
         return NO;
     }
     if (_recordingURL || _inputRecordingURL) {
-        if (error) *error = audioError(@"已经有录音在进行。");
+        if (error) *error = audioError(SNLocalized(@"已经有录音在进行。"));
         return NO;
     }
     _inputRecordOverflow = NO;
@@ -351,7 +354,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (BOOL)finishInputRecording:(NSError **)error {
     if (!_inputRecordingURL) {
-        if (error) *error = audioError(@"当前没有输入录音。");
+        if (error) *error = audioError(SNLocalized(@"当前没有输入录音。"));
         return NO;
     }
     _rt->inputRecording.stop();
@@ -361,7 +364,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     NSString *path = _inputRecordingURL.path;
     _inputRecordingURL = nil;
     if (!frames) {
-        if (error) *error = audioError(@"没有录到音频。");
+        if (error) *error = audioError(SNLocalized(@"没有录到音频。"));
         return NO;
     }
     std::vector<float> left(_rt->inputRecording.left.begin(), _rt->inputRecording.left.begin() + frames);
@@ -375,7 +378,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (BOOL)finishRecording:(NSError **)error {
     if (!_recordingURL) {
-        if (error) *error = audioError(@"当前没有录音。");
+        if (error) *error = audioError(SNLocalized(@"当前没有录音。"));
         return NO;
     }
     _rt->recording.stop();
@@ -385,7 +388,7 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     NSString *path = _recordingURL.path;
     _recordingURL = nil;
     if (!frames) {
-        if (error) *error = audioError(@"没有录到音频。");
+        if (error) *error = audioError(SNLocalized(@"没有录到音频。"));
         return NO;
     }
     std::vector<float> left(_rt->recording.left.begin(), _rt->recording.left.begin() + frames);

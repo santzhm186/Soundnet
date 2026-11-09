@@ -5,6 +5,7 @@ destination="${1:?Usage: build.sh destination-directory}"
 app="$destination/Soundnet.app/Contents"
 mkdir -p "$app/MacOS" "$app/Resources"
 cp "$project/app/Info.plist" "$app/Info.plist"
+cp "$project/LICENSE" "$project/NOTICE" "$app/Resources/"
 if [[ -f "$project/ui/Ternary.icns" ]]; then
   cp "$project/ui/Ternary.icns" "$app/Resources/"
 else

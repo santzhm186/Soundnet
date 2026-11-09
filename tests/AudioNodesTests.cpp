@@ -1,3 +1,4 @@
+#include <memory>
 #include "../src/Engine.hpp"
 #include "../src/StandardMidiFile.hpp"
 #include <cassert>
@@ -76,7 +77,7 @@ int main() {
         add(graph,3,ReverbNode,{{ReverbMix,.5f},{ReverbSize,.7f},{ReverbDamping,.2f},{ReverbWidth,1}});
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double level=rms(left,0,left.size());
@@ -92,7 +93,7 @@ int main() {
         add(graph,3,ReverbNode,{{ReverbMix,1},{ReverbSize,.6f},{ReverbDamping,.2f},{ReverbWidth,1},{ReverbPreDelay,120}});
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -110,7 +111,7 @@ int main() {
         add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,180},{FilterResonance,.7f}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,110);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -134,7 +135,7 @@ int main() {
         add(graph,2,OutputNode,{{Master,1}});
         connect(graph,1,2);
         graph.nodes[1].bypass=true;
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(4096),right(4096);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,left.size())==0);
@@ -156,7 +157,7 @@ int main() {
         std::vector<size_t> order;assert(graphOrder(graph,order));
         assert(!validGraphParam(SamplerNode,NoiseLevel));
         assert(validGraphParam(SamplerNode,SamplerRoot));
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -183,7 +184,7 @@ int main() {
         graph.nodes[sampler].sample=sample;graph.nodes[sampler].bypass=true;
         add(graph,2,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(4096),right(4096);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -201,7 +202,7 @@ int main() {
         graph.nodes[sampler].sample=sample;
         add(graph,2,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(4096),right(4096);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -220,7 +221,7 @@ int main() {
         graph.nodes[sampler].sample=sample;
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,2,0);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,127);
         std::vector<float> left(4800),right(4800);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -241,7 +242,7 @@ int main() {
         graph.nodes[clip].sample=sample;
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,3,0);connect(graph,2,3,0);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(24000),right(24000);
@@ -267,7 +268,7 @@ int main() {
         graph.nodes[clip].sample=sample;
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,1,2,0);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(9600),right(9600);
@@ -291,7 +292,7 @@ int main() {
         graph.nodes[clip].sample=sample;
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,1,2,0);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(4800),right(4800);
@@ -314,7 +315,7 @@ int main() {
         add(graph,2,CompressorNode,{{CompThreshold,-30},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -340,11 +341,11 @@ int main() {
             return graph;
         };
         GraphSpec side=build(true),dry=build(false);
-        Engine a;assert(a.setGraph(side));a.prepare(48000);a.midi(0x90,69,127);
+        auto aStorage=std::make_unique<Engine>();auto& a=*aStorage;assert(a.setGraph(side));a.prepare(48000);a.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         a.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double ducked=rms(left,4800,20000);
-        Engine b;assert(b.setGraph(dry));b.prepare(48000);b.midi(0x90,69,127);
+        auto bStorage=std::make_unique<Engine>();auto& b=*bStorage;assert(b.setGraph(dry));b.prepare(48000);b.midi(0x90,69,127);
         b.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double plain=rms(left,4800,20000);
         assert(ducked<plain*.8);
@@ -357,7 +358,7 @@ int main() {
         add(graph,2,LimiterNode,{{LimiterThreshold,-6},{LimiterRelease,.05f},{LimiterCeiling,-12},{LimiterGain,2}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         float limited=0;for(float sample:left)limited=std::max(limited,std::fabs(sample));
@@ -377,7 +378,7 @@ int main() {
         add(graph,2,ChorusNode,{{ChorusRate,.8f},{ChorusDepth,.5f},{ChorusMix,1},{ChorusDelay,12}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -400,7 +401,7 @@ int main() {
         add(graph,2,TremoloNode,{{TremoloRate,8},{TremoloDepth,1},{TremoloMix,1},{TremoloStereo,0}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -427,7 +428,7 @@ int main() {
         add(graph,2,BitcrusherNode,{{CrushBits,3},{CrushRate,3000},{CrushMix,1}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -451,7 +452,7 @@ int main() {
         add(graph,1,QuantizeNode,{{QuantizeRoot,0},{QuantizeScale,0},{QuantizeMode,2}});
         add(graph,2,MidiOutNode);
         connect(graph,10,1);connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
         engine.midi(0x90,61,100);
         std::vector<float> left(256),right(256);
@@ -490,7 +491,7 @@ int main() {
         add(graph,3,DelayNode,{{DelaySync,1},{DelayDivision,1},{DelayFeedback,.3f},{DelayMix,.4f}});
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(24000),right(24000);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,left.size())>.01);
@@ -504,7 +505,7 @@ int main() {
         add(graph,1,MidiNode);add(graph,2,Osc1Node);add(graph,3,HardwareOutputNode);add(graph,4,CommentNode);
         connect(graph,1,2);connect(graph,2,3);
         assert(validGraphParam(CommentNode,0)==false);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         float peak=0;for(float v:left)peak=std::max(peak,std::abs(v));assert(peak>0.001f);
@@ -517,7 +518,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,MidiNode);add(graph,2,ChannelFilterNode,{{ChannelFilter,4}});add(graph,3,MidiOutNode);
         connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
         engine.midi(0x93,60,100);engine.midi(0x94,62,100);
         std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -538,7 +539,7 @@ int main() {
         GraphSpec graph;
         add(graph,1,MidiNode);add(graph,2,MidiOutNode,{{MidiOutChannel,5}});
         connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
         engine.midi(0x93,60,100);
         std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -559,7 +560,7 @@ int main() {
         add(graph,3,ChorusNode,{{ChorusMix,.5f},{ChorusDepth,.6f}});
         add(graph,4,OutputNode,{{Master,1},{OutputWidth,0}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(12000),right(12000);
         engine.midi(0x90,60,100);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -582,7 +583,7 @@ int main() {
         add(graph,1,TransposeNode,{{TransposeSemitones,7}});
         add(graph,2,MidiOutNode);
         connect(graph,10,1);connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
         engine.midi(0x90,60,100);
         std::vector<float> left(256),right(256);
@@ -604,7 +605,7 @@ int main() {
         add(graph,2,GateNode,{{GateThreshold,-20},{GateRange,.8f},{GateAttack,.001f},{GateRelease,.05f}});
         add(graph,3,OutputNode,{{Master,1}});
         connect(graph,1,2);connect(graph,2,3);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         float open=rms(left,24000,48000);
@@ -626,7 +627,7 @@ int main() {
         add(graph,1,EchoNode,{{EchoTime,.1f},{EchoRepeats,2},{EchoFeedback,.5f},{EchoPitch,12}});
         add(graph,2,MidiOutNode);
         connect(graph,10,1);connect(graph,1,2);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
         engine.midi(0x90,60,100);
         std::vector<float> left(48000),right(48000);
@@ -670,7 +671,7 @@ int main() {
         };
         auto level=[&](float chance){
             GraphSpec graph=build(chance);
-            Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+            auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
             graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
             std::vector<float> left(48000),right(48000);
             engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -688,7 +689,7 @@ int main() {
         add(graph,3,MetronomeNode,{{MetronomeBPM,120},{MetronomeLevel,.5f},{MetronomeAccent,1},{MetronomeBeats,4}});
         add(graph,4,OutputNode,{{Master,1}});
         connect(graph,1,3);connect(graph,2,3);connect(graph,3,4);
-        Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
+        auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());

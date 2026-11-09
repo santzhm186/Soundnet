@@ -48,6 +48,14 @@
         OSStatus err=cache->writeError ? cache->writeError : cache->readError;
         return err ? [NSString stringWithFormat:@"工作流访问失败 (%d)",(int)err] : @"Audio Unit · Host sync";
     }, ^NSDictionary *{ return cache->readAssets(); },
-       ^BOOL(NSDictionary *assets){ return cache->setAssets(assets)==noErr; });
+       ^BOOL(NSDictionary *assets){ return cache->setAssets(assets)==noErr; },
+       ^BOOL {
+           UInt32 enabled=1,size=sizeof(enabled);
+           AudioUnitGetProperty(unit,ternaryAU::processing,kAudioUnitScope_Global,0,&enabled,&size);
+           return enabled!=0;
+       }, ^(BOOL enabled) {
+           UInt32 value=enabled?1:0;
+           cache->writeError=AudioUnitSetProperty(unit,ternaryAU::processing,kAudioUnitScope_Global,0,&value,sizeof(value));
+       });
 }
 @end

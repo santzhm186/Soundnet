@@ -21,6 +21,7 @@ struct Event {
     uint64_t order;
     uint8_t status, a, b;
     bool local = false;
+    uint64_t generation = 0;
 };
 
 // Host and onscreen keyboard may enqueue from separate threads.
@@ -190,9 +191,11 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
         delivery.midiOutputCallback(delivery.userData,unit.renderStamp,0,&list);
     }
     OSStatus localEvent(ternaryAU::LocalMIDI event) {
+        const uint64_t generation=engine.processingGeneration();
+        if(!engine.processingEnabled())return noErr;
         if (event.status<0x80 || event.status>0xef || event.a>127 || event.b>127)
             return kAudioUnitErr_InvalidPropertyValue;
-        if (!queue.push({0,0,event.status,event.a,event.b,true}))
+        if (!queue.push({0,0,event.status,event.a,event.b,true,generation}))
             overflow.store(true,std::memory_order_release);
         return noErr;
     }
@@ -201,7 +204,7 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
         for (size_t i=0;i<state.size();++i) layout[i].store(state[i],std::memory_order_relaxed);
     }
     MidiQueue queue;
-    std::atomic<bool> overflow{false};
+    std::atomic<bool> overflow{false},discardMidiRequested{false};
     std::array<Event,2048> pending{};
     size_t count = 0;
 
@@ -381,6 +384,7 @@ public:
         if (scope == global && element == 0) {
             if (id==kAudioUnitProperty_MIDIOutputCallbackInfo) { size=sizeof(CFArrayRef); writable=false; return noErr; }
             if (id==kAudioUnitProperty_MIDIOutputCallback) { size=sizeof(AUMIDIOutputCallbackStruct); writable=true; return noErr; }
+            if (id==ternaryAU::processing) { size=sizeof(UInt32); writable=true; return noErr; }
             if (id==ternaryAU::localMIDI) { size=sizeof(ternaryAU::LocalMIDI); writable=true; return noErr; }
             if (id==ternaryAU::assets) { size=sizeof(CFDictionaryRef); writable=true; return noErr; }
             if(id==ternaryAU::display) { size=sizeof(ternaryAU::DisplayState); writable=false; return noErr; }
@@ -401,6 +405,10 @@ public:
         return Base::GetPropertyInfo(id,scope,element,size,writable);
     }
     OSStatus GetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element,void* data) override {
+        if(scope==global && element==0 && id==ternaryAU::processing) {
+            const UInt32 enabled=engine.processingEnabled()?1:0;
+            std::memcpy(data,&enabled,sizeof(enabled));return noErr;
+        }
         if (scope==global && element==0 && id==kAudioUnitProperty_MIDIOutputCallbackInfo) {
             const void *names[]={CFSTR("Soundnet MIDI Out")};
             auto streams=CFArrayCreate(nullptr,names,1,&kCFTypeArrayCallBacks);
@@ -469,6 +477,15 @@ public:
 
     OSStatus SetProperty(AudioUnitPropertyID id, AudioUnitScope scope, AudioUnitElement element,
                          const void* data, UInt32 size) override {
+        if(scope==global && element==0 && id==ternaryAU::processing) {
+            if(size!=sizeof(UInt32))return kAudioUnitErr_InvalidPropertyValue;
+            UInt32 enabled=0;std::memcpy(&enabled,data,sizeof(enabled));
+            if(enabled>1)return kAudioUnitErr_InvalidPropertyValue;
+            if(!enabled)discardMidiRequested.store(true,std::memory_order_release);
+            engine.setProcessingEnabled(enabled!=0);
+            PropertyChanged(ternaryAU::processing,global,0);
+            return noErr;
+        }
         if (scope==global && element==0 && id==kAudioUnitProperty_MIDIOutputCallback) {
             if (size!=sizeof(AUMIDIOutputCallbackStruct)) return kAudioUnitErr_InvalidPropertyValue;
             AUMIDIOutputCallbackStruct callback{};
@@ -513,7 +530,9 @@ public:
     }
 
     OSStatus MIDIEvent(UInt32 status, UInt32 a, UInt32 b, UInt32 frame) override {
-        if (!queue.push({frame,0,uint8_t(status),uint8_t(a&127),uint8_t(b&127)}))
+        const uint64_t generation=engine.processingGeneration();
+        if(!engine.processingEnabled())return noErr;
+        if (!queue.push({frame,0,uint8_t(status),uint8_t(a&127),uint8_t(b&127),false,generation}))
             overflow.store(true,std::memory_order_release);
         return noErr;
     }
@@ -566,7 +585,13 @@ public:
             engine.panic();
             discardEvents();
         }
-        while (count<pending.size() && queue.pop(pending[count])) ++count;
+        if(discardMidiRequested.exchange(false,std::memory_order_acq_rel) || !engine.processingEnabled()) {
+            const uint64_t generation=engine.processingGeneration();
+            count=size_t(std::remove_if(pending.begin(),pending.begin()+count,
+                [generation](const Event& e){return e.generation!=generation;})-pending.begin());
+        }
+        while (count<pending.size() && queue.pop(pending[count]))
+            if(pending[count].generation==engine.processingGeneration())++count;
         std::sort(pending.begin(),pending.begin()+count,[](const Event& a,const Event& b) {
             return a.frame!=b.frame ? a.frame<b.frame : a.order<b.order;
         });
@@ -583,6 +608,7 @@ public:
             const Event& e=pending[i++];
             renderTo(e.frame);
             midiOffset=e.frame;
+            if(e.generation!=engine.processingGeneration())continue;
             if (e.local) engine.midi(e.status,e.a,e.b);
             else engine.dawMidi(e.status,e.a,e.b);
         }

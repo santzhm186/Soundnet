@@ -7,7 +7,10 @@ typedef void (^TRIInputWrite)(BOOL enabled);
 typedef NSString * (^TRIStatus)(void);
 typedef NSDictionary * (^TRIAssetsRead)(void);
 typedef BOOL (^TRIAssetsWrite)(NSDictionary *assets);
+typedef BOOL (^TRIProcessingRead)(void);
+typedef void (^TRIProcessingWrite)(BOOL enabled);
 // Fixed 1144 x 650 points. Pass nil for input switches in AU (host routes audio).
 // status is a short connection/engine status, e.g. @"CoreMIDI · 2 sources".
 NSView *TRICreateEditor(TRIRead read, TRIWrite write, TRIMIDI midi, TRIInputRead inputRead, TRIInputWrite inputWrite, TRIStatus status,
-                        TRIAssetsRead assetsRead = nullptr, TRIAssetsWrite assetsWrite = nullptr);
+                        TRIAssetsRead assetsRead = nullptr, TRIAssetsWrite assetsWrite = nullptr,
+                        TRIProcessingRead processingRead = nullptr, TRIProcessingWrite processingWrite = nullptr);

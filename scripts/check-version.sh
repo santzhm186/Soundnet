@@ -21,6 +21,7 @@ actual_au=$(get "$au" "AudioComponents:0:version")
 hex=$(printf '0x%05X' "$expected_au")
 grep -Fq "$hex" "$root/au/verify.mm" || { echo "ERROR: au/verify.mm lacks $hex" >&2; exit 1; }
 grep -Fq "**$major.$minor**" "$root/README.md" || { echo "ERROR: README lacks $major.$minor" >&2; exit 1; }
+grep -Fq "**$major.$minor**" "$root/README.zh-CN.md" || { echo "ERROR: Chinese README lacks $major.$minor" >&2; exit 1; }
 grep -Fq "Soundnet $major.$minor ·" "$root/docs/使用说明.txt" || { echo "ERROR: manual title lacks $major.$minor" >&2; exit 1; }
 grep -Fq "Soundnet $major.$minor" "$root/ui/InstanceEditor.mm" || { echo "ERROR: editor heading lacks $major.$minor" >&2; exit 1; }
 grep -Fq "## $major.$minor" "$root/CHANGELOG.md" || { echo "ERROR: CHANGELOG lacks $major.$minor" >&2; exit 1; }

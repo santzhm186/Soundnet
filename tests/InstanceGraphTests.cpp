@@ -1,3 +1,4 @@
+#include <memory>
 #include "../src/Engine.hpp"
 #include <cassert>
 #include <cstdio>
@@ -20,7 +21,7 @@ int main() {
     graph.nodes[6].parameters={{WaitSeconds,.05}};
     graph.edges={{3,1,0},{3,2,0},{1,4,0,1},{4,5,0},{5,1,1},{6,7,0},{7,2,1},{1,8,0},{2,9,0}};
     assert(graphOrder(graph,order));
-    Engine engine;engine.prepare(48000);
+    auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;engine.prepare(48000);
     std::vector<Sent> sent;sent.reserve(100);
     engine.setMidiOutput(&sent,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});});
     assert(engine.setGraph(graph));
@@ -43,7 +44,7 @@ int main() {
     GraphNode quiet=osc;quiet.id=12;quiet.parameters[Level1]=0;
     audio.nodes={{10,MidiNode},osc,quiet,{13,HardwareOutputNode},{14,HardwareOutputNode}};
     audio.edges={{10,11,0},{10,12,0},{11,13,0},{12,14,0}};
-    Engine synth;synth.prepare(48000);assert(synth.setGraph(audio));
+    auto synthStorage=std::make_unique<Engine>();auto& synth=*synthStorage;synth.prepare(48000);assert(synth.setGraph(audio));
     synth.midi(0x90,69,100);
     float maximum=0;
     for(int block=0;block<20;++block) {
@@ -68,7 +69,7 @@ int main() {
         GraphSpec g;
         g.nodes={{21,MidiNode},{22,MidiOutNode}};
         g.edges={{21,22,0}};
-        Engine e2;e2.prepare(48000);
+        auto e2Storage=std::make_unique<Engine>();auto& e2=*e2Storage;e2.prepare(48000);
         std::vector<Sent> out;out.reserve(32);
         e2.setMidiOutput(&out,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});});
         assert(e2.setGraph(g));
@@ -93,7 +94,7 @@ int main() {
         noise.parameters={{NoiseLevel,.8f}};
         side.nodes={noise,{32,CompressorNode},{33,HardwareOutputNode}};
         side.edges={{31,32,1,0},{32,33,0,0}};
-        Engine comp;comp.prepare(48000);assert(comp.setGraph(side));
+        auto compStorage=std::make_unique<Engine>();auto& comp=*compStorage;comp.prepare(48000);assert(comp.setGraph(side));
         float peak=0;
         for(int block=0;block<10;++block) {
             comp.render(nullptr,nullptr,l,r,128);
@@ -109,7 +110,7 @@ int main() {
         outNode.parameters={{MidiOutChannel,2}};
         g.nodes={{41,MidiNode},outNode};
         g.edges={{41,42,0}};
-        Engine midiEngine;midiEngine.prepare(48000);
+        auto midiEngineStorage=std::make_unique<Engine>();auto& midiEngine=*midiEngineStorage;midiEngine.prepare(48000);
         std::vector<Sent> events;events.reserve(32);
         midiEngine.setMidiOutput(&events,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){
             static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});
@@ -138,7 +139,7 @@ int main() {
         chain.edges.push_back({169,200,0,0});
         chain.nodes.push_back({201,HardwareOutputNode});
         chain.edges.push_back({200,201,0,0});
-        Engine deep;assert(deep.setGraph(chain));deep.prepare(48000);
+        auto deepStorage=std::make_unique<Engine>();auto& deep=*deepStorage;assert(deep.setGraph(chain));deep.prepare(48000);
         // The pulse is published like the editor's play button: a value that is
         // already present at first publish is treated as already seen.
         chain.nodes[0].parameters[TriggerPulse]=1;
@@ -149,6 +150,65 @@ int main() {
             for(int i=0;i<128;++i)peak=std::max(peak,std::max(std::abs(l[i]),std::abs(r[i])));
         }
         assert(peak>0.001f);
+    }
+    // Global Stop gates generators, input and host clock until explicit resume.
+    {
+        GraphSpec g;
+        g.nodes={{1,NoiseNode},{2,HardwareOutputNode}};g.edges={{1,2,0}};
+        auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
+        stopped->render(nullptr,nullptr,l,r,128);
+        bool audible=false;for(float sample:l)audible|=std::abs(sample)>.001f;assert(audible);
+        stopped->setProcessingEnabled(false);assert(!stopped->processingEnabled());
+        for(int block=0;block<8;++block) {
+            stopped->midi(0x90,60,100);stopped->dawMidi(0x90,72,100);
+            stopped->setHostTransport(true,block);stopped->setHostTempo(120);
+            assert(stopped->setGraph(g)); // Editing while stopped cannot restart audio.
+            stopped->render(nullptr,nullptr,l,r,128);
+            for(int i=0;i<128;++i)assert(l[i]==0 && r[i]==0);
+        }
+        stopped->setProcessingEnabled(true);stopped->render(nullptr,nullptr,l,r,128);
+        audible=false;for(float sample:l)audible|=std::abs(sample)>.001f;assert(audible);
+    }
+    // Stop must release the actual forced channel and discard delayed notes,
+    // even when Play arrives before another render callback.
+    {
+        GraphSpec g;GraphNode echo{2,EchoNode};echo.parameters={{EchoTime,.05f},{EchoRepeats,3}};
+        GraphNode sink{3,MidiOutNode};sink.parameters={{MidiOutChannel,2}};
+        g.nodes={{1,MidiNode},echo,sink};g.edges={{1,2,0},{2,3,0}};
+        auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
+        std::vector<Sent> events;events.reserve(256);
+        stopped->setMidiOutput(&events,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){
+            static_cast<std::vector<Sent>*>(p)->push_back({frame,s,a});
+        });
+        stopped->midi(0x90,60,100);stopped->render(nullptr,nullptr,l,r,128);
+        bool on=false;for(auto e:events)on|=e.status==0x91 && e.note==60;assert(on);
+        events.clear();stopped->setProcessingEnabled(false);stopped->setProcessingEnabled(true);
+        stopped->render(nullptr,nullptr,l,r,128);
+        bool off=false;for(auto e:events)off|=e.status==0x81 && e.note==60;assert(off);
+        events.clear();
+        for(int block=0;block<100;++block)stopped->render(nullptr,nullptr,l,r,128);
+        for(auto e:events)assert((e.status&0xf0)!=0x90);
+        stopped->setProcessingEnabled(false);stopped->setProcessingEnabled(true);
+        stopped->midi(0x90,67,100);stopped->render(nullptr,nullptr,l,r,128);
+        on=false;for(auto e:events)on|=e.status==0x91 && e.note==67;assert(on);
+    }
+    // Waiting triggers and a running metronome must not survive a stop/resume.
+    {
+        GraphSpec g;GraphNode wait{2,WaitNode};wait.parameters={{WaitSeconds,.05f}};
+        g.nodes={{1,StartNode},wait,{3,MetronomeNode},{4,HardwareOutputNode}};
+        g.edges={{1,2,0},{2,3,0},{3,4,0}};
+        auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
+        g.nodes[0].parameters[TriggerPulse]=1;assert(stopped->setGraph(g));
+        stopped->render(nullptr,nullptr,l,r,128);
+        stopped->setProcessingEnabled(false);stopped->render(nullptr,nullptr,l,r,128);
+        stopped->setProcessingEnabled(true);
+        for(int block=0;block<100;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)assert(sample==0);}
+        g.nodes[0].parameters[TriggerPulse]=2;assert(stopped->setGraph(g));
+        bool audible=false;
+        for(int block=0;block<30;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)audible|=std::abs(sample)>.001f;}
+        assert(audible);
+        stopped->setProcessingEnabled(false);stopped->setProcessingEnabled(true);
+        for(int block=0;block<100;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)assert(sample==0);}
     }
     puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start, note release on lost input, sidechain isolation, forced-channel release, deep trigger chains and typed validation.");
 }

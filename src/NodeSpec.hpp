@@ -130,6 +130,20 @@ enum class TimeMode : uint8_t { None, Content, Timed, Stream };
 // ---------------------------------------------------------------------------
 // Parameters
 // ---------------------------------------------------------------------------
+enum class ParamGroup : uint8_t { General, Tone, Envelope, Playback, Timing, Modulation, Mix, Dynamics, Harmony };
+inline const char* paramGroupLabel(ParamGroup group) {
+    switch(group) {
+        case ParamGroup::Tone:return "音色与音高";
+        case ParamGroup::Envelope:return "包络与淡化";
+        case ParamGroup::Playback:return "播放与区间";
+        case ParamGroup::Timing:return "节奏与同步";
+        case ParamGroup::Modulation:return "调制与空间";
+        case ParamGroup::Mix:return "电平与混音";
+        case ParamGroup::Dynamics:return "动态控制";
+        case ParamGroup::Harmony:return "和声与音域";
+        default:return "基本参数";
+    }
+}
 struct ParamSpec {
     const ParamInfo* info;
     const char* key;      // stable alias, used by the v4 project format
@@ -138,6 +152,8 @@ struct ParamSpec {
     // builds its popup from here, so a node never ships two copies of the list.
     const char* const* options=nullptr;
     uint8_t optionCount=0;
+    // Presentation metadata only; never changes the stable key or wire order.
+    ParamGroup group=ParamGroup::General;
 };
 
 // Graph-node parameter IDs. These live above the legacy AU parameter range so a
@@ -429,6 +445,28 @@ inline const std::map<int,ParamSpec>& paramSpecs() {
         option(ClockSync,clockSync,2);
         option(TremoloDivision,tremoloDivisions,4);
         option(DelayDivision,delayDivisions,4);
+        auto group=[&](ParamGroup value,std::initializer_list<int> ids) {
+            for(int id:ids) {auto it=m.find(id);if(it!=m.end())it->second.group=value;}
+        };
+        group(ParamGroup::Tone,{Wave1,Tune1,Wave2,Tune2,Wave3,Tune3,FilterType,FilterCutoff,FilterResonance,
+            FilterDrive,NoiseType,SamplerRoot,AudioClipPitch,CrushBits,CrushRate,TransposeSemitones,EchoPitch,EQLow,EQMid,EQHigh});
+        group(ParamGroup::Envelope,{Attack,Decay,Sustain,Release,SamplerAttack,SamplerRelease,AudioClipFade,SamplerXfade,AudioClipXfade});
+        group(ParamGroup::Playback,{ClipRun,ClipLoop,ChordRun,ProgressRun,ArpOn,SamplerLoop,SamplerStart,SamplerEnd,
+            SamplerReverse,AudioClipLoop,AudioClipStart,AudioClipEnd,AudioClipReverse});
+        group(ParamGroup::Timing,{ClockBPM,ClockSync,Tempo,Pattern,Gate,ArpRepeat,ProgressLength,ProgressBars,
+            WaitSeconds,TriggerCount,DelayTime,DelaySync,DelayDivision,TremoloSync,TremoloDivision,
+            MetronomeBPM,MetronomeBeats,EchoTime,EchoRepeats,VelocityRate});
+        group(ParamGroup::Modulation,{ChorusRate,ChorusDepth,ChorusDelay,ChorusFeedback,TremoloRate,TremoloDepth,
+            TremoloStereo,PhaserRate,PhaserDepth,PhaserFeedback,ReverbSize,ReverbDamping,ReverbWidth,ReverbPreDelay,
+            DelayFeedback,EchoFeedback,VelocityShape});
+        group(ParamGroup::Mix,{Level1,Level2,Level3,InputGain,Master,OutputWidth,NoiseLevel,SamplerGain,
+            SamplerVelocity,AudioClipGain,CompMakeup,CompMix,LimiterGain,ChorusMix,TremoloMix,PhaserMix,ReverbMix,
+            DelayMix,CrushMix,MetronomeLevel,MetronomeAccent,VelocityMin,VelocityMax});
+        group(ParamGroup::Dynamics,{CompThreshold,CompRatio,CompAttack,CompRelease,LimiterThreshold,LimiterCeiling,
+            LimiterRelease,GateThreshold,GateAttack,GateRelease,GateRange});
+        group(ParamGroup::Harmony,{ChordRoot,ChordQuality,QuantizeRoot,QuantizeScale,QuantizeMode});
+        for(int id=ProgressRoot1;id<=ProgressQuality8;++id)m.at(id).group=ParamGroup::Harmony;
+        for(int id=ArrHighMin;id<=ArrLowTexture;++id)m.at(id).group=ParamGroup::Harmony;
         return m;
     }();
     return table;

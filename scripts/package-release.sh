@@ -17,7 +17,7 @@ trap 'rm -rf "$tmp"' EXIT
 name="Soundnet-$version"
 mkdir -p "$tmp/$name"
 cp -R "$build/Soundnet.app" "$build/Soundnet.component" "$tmp/$name/"
-cp "$root/README.md" "$root/CHANGELOG.md" "$tmp/$name/"
+cp "$root/README.md" "$root/README.zh-CN.md" "$root/CHANGELOG.md" "$root/LICENSE" "$root/NOTICE" "$tmp/$name/"
 cp -R "$root/examples" "$root/docs" "$root/scripts" "$tmp/$name/"
 (cd "$tmp" && ditto -c -k --sequesterRsrc --keepParent "$name" "$out")
 echo "已打包: $out"

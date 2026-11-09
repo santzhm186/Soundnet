@@ -24,7 +24,7 @@
 			<key>type</key>
 			<string>aumu</string>
 			<key>version</key>
-			<integer>151554</integer>
+			<integer>151808</integer>
 		</dict>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
@@ -40,9 +40,9 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.80.2</string>
+	<string>2.81.0</string>
 	<key>CFBundleVersion</key>
-	<string>88</string>
+	<string>89</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 </dict>
