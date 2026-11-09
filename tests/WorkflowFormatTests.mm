@@ -240,9 +240,9 @@ int main() {
         NSDictionary *document=@{
             @"version":@4,@"projectId":@"texts",
             @"nodes":@[
-                @{@"id":@1,@"nodeKey":@"soundnet.ai-music",@"x":@0,@"y":@0,
-                  @"parameters":@{@"ai.model":@1,@"ai.duration":@90.0},
-                  @"texts":@{@"ai.prompt":@"warm piano",@"ai.lyrics":@"[Verse]\nhello"}},
+                @{@"id":@1,@"nodeKey":@"soundnet.yue2",@"x":@0,@"y":@0,
+                  @"parameters":@{@"gen.steps":@12,@"gen.seed":@90.0},
+                  @"texts":@{@"yue2.style":@"warm piano",@"yue2.lyrics":@"[Verse]\nhello"}},
                 @{@"id":@2,@"nodeKey":@"soundnet.audio-output",@"nodeVersion":@2,@"x":@200,@"y":@0,@"parameters":@{}}
             ],
             @"edges":@[@{@"source":@1,@"sourcePort":@"audio",@"target":@2,@"port":@"audio"}]
@@ -250,12 +250,12 @@ int main() {
         tri::GraphSpec graph;NSString *why=nil;
         assert(triassets::decodeGraph(document,graph,&why));
         assert(graph.nodes[0].texts.size()==2);
-        assert(graph.nodes[0].texts["ai.prompt"]=="warm piano");
-        assert(graph.nodes[0].texts["ai.lyrics"]=="[Verse]\nhello");
+        assert(graph.nodes[0].texts["yue2.style"]=="warm piano");
+        assert(graph.nodes[0].texts["yue2.lyrics"]=="[Verse]\nhello");
         NSMutableDictionary *bad=[document mutableCopy];
         NSMutableArray *nodes=[document[@"nodes"] mutableCopy];
         NSMutableDictionary *first=[nodes[0] mutableCopy];
-        first[@"texts"]=@{@"ai.typo":@"x"};
+        first[@"texts"]=@{@"yue2.typo":@"x"};
         nodes[0]=first;bad[@"nodes"]=nodes;
         assert(!triassets::decodeGraph(bad,graph,&why));   // undeclared key is fatal in v4
     }

@@ -129,12 +129,6 @@ inline const std::map<int,ParamSpec>& legacyParameterSpecs() {
         add(DelaySync,delaySyncInfo,"delay.sync",true);
         add(DelayDivision,delayDivisionInfo,"delay.division",true);
         add(ChannelFilter,channelFilterInfo,"channelFilter.channel",true);
-        add(AiMusicBackend,aiMusicBackendInfo,"ai.backend",true);
-        add(AiMusicModel,aiMusicModelInfo,"ai.model",true);
-        add(AiMusicDuration,aiMusicDurationInfo,"ai.duration",false);
-        add(AiMusicSeed,aiMusicSeedInfo,"ai.seed",true);
-        add(AiMusicQuality,aiMusicQualityInfo,"ai.quality",true);
-        add(AiMusicOutMode,aiMusicOutModeInfo,"ai.outMode",true);
         // Enumerated parameters. Order is the stored value.
         static const char* const waves[]={"正弦","方波","锯齿","三角"};
         static const char* const patterns[]={"直八","Bossa Nova","Reggae","Disco","十六分脉冲"};
@@ -148,10 +142,6 @@ inline const std::map<int,ParamSpec>& legacyParameterSpecs() {
         static const char* const clockSync[]={"自由","同步宿主"};
         static const char* const tremoloDivisions[]={"四分","八分","十六分","附点四分"};
         static const char* const delayDivisions[]={"四分","八分","十六分","附点八分"};
-        static const char* const aiBackends[]={"audio.cpp 命令行","audio.cpp 服务","ComfyUI"};
-        static const char* const aiModels[]={"ACE-Step 1.5","YuE2 BF16","YuE2 INT8","YuE2 GGUF Q4"};
-        static const char* const aiQualities[]={"快速","均衡","精细"};
-        static const char* const aiOutModes[]={"仅音频","音频与乐谱","仅乐谱"};
         auto option=[&](int id,const char* const* labels,uint8_t count) {
             auto it=m.find(id);
             if(it==m.end())return;
@@ -172,10 +162,6 @@ inline const std::map<int,ParamSpec>& legacyParameterSpecs() {
         option(ClockSync,clockSync,2);
         option(TremoloDivision,tremoloDivisions,4);
         option(DelayDivision,delayDivisions,4);
-        option(AiMusicBackend,aiBackends,3);
-        option(AiMusicModel,aiModels,4);
-        option(AiMusicQuality,aiQualities,3);
-        option(AiMusicOutMode,aiOutModes,3);
         auto group=[&](ParamGroup value,std::initializer_list<int> ids) {
             for(int id:ids) {auto it=m.find(id);if(it!=m.end())it->second.group=value;}
         };

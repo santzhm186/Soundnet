@@ -8,15 +8,15 @@
 #import "WorkflowFile.hpp"
 #import "../src/WorkflowAssets.h"
 #import "../src/OfflineRender.hpp"
-#import "../nodes/ai-music/GenerationTask.hpp"
 #include "../platform/TaskService.hpp"
-#import "../src/AbcScore.hpp"
+#import "../nodes/yue2/AbcScore.hpp"
 #import "../src/WavFile.hpp"
 #import "../src/MidiFileWriter.hpp"
 #include "../src/StandardMidiFile.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <cmath>
 
+#include <cstring>
 namespace {
 NSArray *catalog() {
     NSMutableArray *rows=[NSMutableArray new];
@@ -370,9 +370,6 @@ static NSString *autosaveFilePath() {
     std::map<uint64_t,tri::NodeTaskApply> taskApplications;
     uint64_t nextTaskInputRevision;
     NSMutableDictionary<NSNumber *,NSDictionary *> *taskInputs;
-    NSMutableDictionary<NSNumber *,NSString *> *taskMessages;
-    // Set by the "regenerate from score" button; consumed by -generateAudio:.
-    BOOL aiUseScore;
 }
 @property(copy) TRIRead read;
 @property(copy) TRIWrite write;
@@ -385,9 +382,6 @@ static NSString *autosaveFilePath() {
 @property(copy) TRIEnvironmentRead environmentRead;
 @property(copy) TRIProcessingRead processingRead;
 @property(copy) TRIProcessingWrite processingWrite;
-@property BOOL aiBusy;
-@property(strong) NSTextField *aiStatusField;
-@property(strong) NSProgressIndicator *aiProgressView;
 @property BOOL processingActive;
 @property BOOL libraryVisible;
 @property(strong) NSArray<NSButton *> *fileButtons;
@@ -481,12 +475,8 @@ static NSString *autosaveFilePath() {
 -(void)snap:(id)sender;
 -(void)search:(id)sender;
 -(void)inspect;
--(void)generateAudio:(id)sender;
--(void)generateFromScore:(id)sender;
 -(void)importScore:(id)sender;
--(void)aiStop:(id)sender;
 -(void)textChanged:(NSTextField *)field;
--(void)refreshAiStatus;
 -(void)beginTaskSession;
 -(void)reconcileBackgroundTasks;
 -(void)drainBackgroundTasks;
@@ -1491,12 +1481,11 @@ std::vector<ParamPreset> presetsFor(int type) {
 }
 -(void)beginTaskSession {
     if(taskService)taskService->beginSession();
-    taskInputRevisions.clear();taskApplications.clear();taskInputs=[NSMutableDictionary new];taskMessages=[NSMutableDictionary new];
+    taskInputRevisions.clear();taskApplications.clear();taskInputs=[NSMutableDictionary new];
 }
 -(void)reconcileBackgroundTasks {
     if(!taskService)return;
     if(!taskInputs)taskInputs=[NSMutableDictionary new];
-    if(!taskMessages)taskMessages=[NSMutableDictionary new];
     NSMutableSet<NSNumber *> *alive=[NSMutableSet new];
     std::map<uint64_t,uint64_t> revisions;
     for(NSDictionary *node in _document[@"nodes"]) {
@@ -1510,12 +1499,11 @@ std::vector<ParamPreset> presetsFor(int type) {
         if(![taskInputs[uid] isEqual:inputs]) {
             taskInputs[uid]=copyJSON(inputs);
             taskInputRevisions[uid.unsignedLongLongValue]=++nextTaskInputRevision;
-            [taskMessages removeObjectForKey:uid];
         }
         revisions[uid.unsignedLongLongValue]=taskInputRevisions[uid.unsignedLongLongValue];
     }
     for(NSNumber *uid in taskInputs.allKeys)if(![alive containsObject:uid]) {
-        [taskInputs removeObjectForKey:uid];[taskMessages removeObjectForKey:uid];
+        [taskInputs removeObjectForKey:uid];
         taskInputRevisions.erase(uid.unsignedLongLongValue);
     }
     taskService->reconcile(revisions);
@@ -1549,104 +1537,17 @@ std::vector<ParamPreset> presetsFor(int type) {
                 [self message:[NSString stringWithUTF8String:completion.result.message.c_str()]];
             changed=true;continue;
         }
-        if(typeOf(node)!=tri::AiMusicNode)continue;
-        NSString *message=nil;
-        if(completion.result.status==soundnet::TaskStatus::Succeeded) {
-            auto payload=std::dynamic_pointer_cast<const tri::nodes::ai_music::GeneratedMusic>(completion.result.payload);
-            if(!payload)continue;
-            NSDictionary *previous=copyJSON(_document);
-            if(payload->asset)node[@"asset"]=copyJSON(payload->asset);
-            if(payload->score.length) {
-                NSMutableDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]
-                    ? [node[@"texts"] mutableCopy] : [NSMutableDictionary new];
-                texts[@"ai.score"]=payload->score;node[@"texts"]=texts;
-            }
-            if(![self commit:previous]) {
-                taskMessages[@(uid)]=_status.stringValue ?: @"";
-                changed=true;continue;
-            }
-            message=!payload->wantAudio?SNLocalized(@"已生成乐谱（仅乐谱模式）。"):
-                (payload->hadScore?SNLocalized(@"生成完成（含乐谱）。"):SNLocalized(@"生成完成。"));
-        } else if(completion.result.status==soundnet::TaskStatus::Cancelled)message=SNLocalized(@"已取消生成。");
-        else message=completion.result.message.empty()?SNLocalized(@"生成失败。"):
-            [NSString stringWithUTF8String:completion.result.message.c_str()];
-        taskMessages[@(uid)]=message ?: @"";
-        if(uid==_selected)[self message:message];
-        changed=true;
     }
     if(changed)[self inspect];
-    [self refreshAiStatus];
 }
--(void)refreshAiStatus {
-    soundnet::TaskService::Snapshot snapshot;
-    const bool found=taskService && taskService->snapshot(_selected,snapshot);
-    _aiBusy=found && snapshot.active();
-    if(!_aiStatusField)return;
-    if(_aiBusy) {
-        const int p=snapshot.progress;
-        _aiStatusField.stringValue=snapshot.cancellationRequested?SNLocalized(@"正在取消生成…"):
-            (p>=0?[NSString stringWithFormat:SNLocalized(@"正在生成 %d%%"),p]:SNLocalized(@"正在生成…"));
-        if(_aiProgressView)_aiProgressView.hidden=(p>=0);
-    } else {
-        NSString *message=taskMessages[@(_selected)];
-        _aiStatusField.stringValue=message.length?message:SNLocalized(@"空闲");
-        if(_aiProgressView)_aiProgressView.hidden=YES;
-    }
-}
-// Submitting is explicit. Each node owns one task; the platform bounds worker
-// concurrency and discards results from obsolete sessions or input revisions.
--(void)generateAudio:(id)sender {
-    NSMutableDictionary *node=[self node:_selected];
-    if(!node||typeOf(node)!=tri::AiMusicNode)return;
-    if(!taskService)taskService=std::make_unique<soundnet::TaskService>(2,16);
-    [self reconcileBackgroundTasks];[self refreshAiStatus];
-    if(_aiBusy) {[self message:SNLocalized(@"已有生成任务在进行。")];return;}
-    const BOOL feedback=aiUseScore;aiUseScore=NO;
-    NSDictionary *texts=[node[@"texts"] isKindOfClass:NSDictionary.class]?node[@"texts"]:@{};
-    NSString *prompt=texts[@"ai.prompt"] ?: @"";
-    if(!prompt.length&&!feedback) {[self message:SNLocalized(@"请先填写风格描述。")];return;}
-    tri::GenRequest request;
-    request.backend=int(paramValue(node,tri::AiMusicBackend).doubleValue);
-    request.model=int(paramValue(node,tri::AiMusicModel).doubleValue);
-    request.quality=int(paramValue(node,tri::AiMusicQuality).doubleValue);
-    request.outMode=int(paramValue(node,tri::AiMusicOutMode).doubleValue);
-    request.seconds=paramValue(node,tri::AiMusicDuration).doubleValue;
-    request.seed=unsigned(paramValue(node,tri::AiMusicSeed).doubleValue);
-    NSString *lyrics=texts[@"ai.lyrics"] ?: @"";
-    NSString *execPath=texts[@"ai.execPath"] ?: @"";
-    NSString *modelPath=texts[@"ai.modelPath"] ?: @"";
-    NSString *extraArgs=texts[@"ai.extraArgs"] ?: @"";
-    NSString *score=texts[@"ai.score"] ?: @"";
-    if(feedback&&!score.length) {[self message:SNLocalized(@"乐谱为空，请先粘贴或生成乐谱。")];return;}
-    request.prompt=prompt.UTF8String ?: "";request.lyrics=lyrics.UTF8String ?: "";
-    request.abcText=feedback?(score.UTF8String ?: ""):"";
-    request.execPath=execPath.UTF8String ?: "";request.modelPath=modelPath.UTF8String ?: "";
-    request.extraArgs=extraArgs.UTF8String ?: "";
-    NSString *folder=[NSTemporaryDirectory() stringByAppendingPathComponent:
-                      [@"soundnet-ai-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    request.workDir=folder.UTF8String;
-    const uint64_t uid=_selected;
-    soundnet::TaskBinding binding;std::string why;
-    const bool submitted=taskService->submit(uid,taskInputRevisions[uid],
-        tri::nodes::ai_music::generationJob(request),binding,why);
-    if(!submitted) {
-        [[NSFileManager defaultManager] removeItemAtPath:folder error:nil];
-        [self message:[NSString stringWithUTF8String:why.c_str()]];return;
-    }
-    taskMessages[@(uid)]=SNLocalized(@"正在生成…");[self inspect];
-}
-// Re-render from the score the user edited instead of planning a new one
-// (audio.cpp `abc_file`). This is the return half of the score loop.
--(void)generateFromScore:(id)sender {
-    aiUseScore=YES;
-    [self generateAudio:sender];
-}
-// The score loop's other half: ABC becomes an ordinary MIDI clip, so the piano
-// roll, the scale quantiser, the arranger and MIDI export all apply to it.
+// Generation for CapTask nodes is submitted from each node's own panel
+// through configureTaskContext; the central editor only drains results.
+// The score loop's return half: ABC becomes an ordinary MIDI clip, so the
+// piano roll, the scale quantiser, the arranger and MIDI export all apply.
 -(void)importScore:(id)sender {
     NSMutableDictionary *node=[self node:_selected];
-    if(!node||typeOf(node)!=tri::AiMusicNode)return;
-    id raw=node[@"texts"][@"ai.score"];
+    if(!node||![node[@"nodeKey"] isEqual:@"soundnet.yue2"])return;
+    id raw=node[@"texts"][@"yue2.score"];
     NSString *text=[raw isKindOfClass:NSString.class]?raw:@"";
     if(!text.length) {[self message:SNLocalized(@"还没有乐谱，请先生成或粘贴 ABC 文本。")];return;}
     tri::abc::Score score;std::string why;
@@ -1692,15 +1593,6 @@ std::vector<ParamPreset> presetsFor(int type) {
     }
     [self message:summary];
 }
--(void)aiStop:(id)sender {
-    [self refreshAiStatus];
-    if(_aiBusy) {
-        if(taskService)taskService->cancel(_selected);
-        [self refreshAiStatus];[self message:SNLocalized(@"正在取消生成…")];return;
-    }
-    if(_nodeStop) {_nodeStop(_selected);[self message:SNLocalized(@"已停止该节点。")];}
-    else [self message:SNLocalized(@"当前环境不支持节点级停止。")];
-}
 -(void)textChanged:(NSTextField *)field {
     NSMutableDictionary *node=[self node:_selected];
     if(!node)return;
@@ -1722,7 +1614,6 @@ std::vector<ParamPreset> presetsFor(int type) {
     NSPoint scrollOrigin=_inspectorScroll.contentView.bounds.origin;
     BOOL sameNode=_inspectedUID==_selected;_inspectedUID=_selected;
     for(NSView *view in _inspector.subviews.copy)[view removeFromSuperview];
-    _aiStatusField=nil;_aiProgressView=nil;
     if(_selection.count>1) {
         [self label:[NSString stringWithFormat:SNLocalized(@"已选择 %lu 个节点"),(unsigned long)_selection.count] y:12];
         [self label:SNLocalized(@"Shift 点击增减选择，拖动空白框选。拖动任一节点可整体移动。") y:40];
@@ -1810,34 +1701,17 @@ std::vector<ParamPreset> presetsFor(int type) {
             y+=multiline?74:33;
         }
     }
-    if(type==tri::AiMusicNode) {
-        [self label:SNLocalized(@"生成在本机后台进行，产物作为工程素材嵌入；「停止」可取消生成或停止本节点播放。") y:y];y+=48;
-        NSTextField *state=[NSTextField labelWithString:@""];
-        state.font=[NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
-        state.textColor=[NSColor colorWithCalibratedRed:.65 green:.79 blue:.96 alpha:1];
-        state.frame=NSMakeRect(14,y,270,18);_aiStatusField=state;[_inspector addSubview:state];
-        NSProgressIndicator *spinner=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(240,y-2,20,16)];
-        spinner.style=NSProgressIndicatorStyleSpinning;spinner.controlSize=NSControlSizeSmall;
-        _aiProgressView=spinner;[_inspector addSubview:spinner];
-        [self refreshAiStatus];y+=26;
-        NSButton *generate=[self button:SNLocalized(@"生成音频") frame:NSMakeRect(14,y,129,30) action:@selector(generateAudio:) parent:_inspector];
-        generate.enabled=!_aiBusy;
-        NSButton *stop=[self button:SNLocalized(@"停止") frame:NSMakeRect(155,y,129,30) action:@selector(aiStop:) parent:_inspector];
-        stop.enabled=_aiBusy||_nodeStop!=nil;
-        y+=40;
-        // The score loop: ABC -> MIDI clip for editing, and edit -> re-render.
-        id rawScore=node[@"texts"][@"ai.score"];
+    if([node[@"nodeKey"] isEqual:@"soundnet.yue2"]) {
+        // The score loop's host half: ABC becomes an ordinary MIDI clip node
+        // (piano roll, quantiser, arranger and MIDI export all apply). The
+        // generate/re-render actions live in the node's own panel.
+        id rawScore=node[@"texts"][@"yue2.score"];
         const BOOL hasScore=[rawScore isKindOfClass:NSString.class]&&[rawScore length]>0;
-        NSButton *importClip=[self button:SNLocalized(@"导入为 MIDI 剪辑") frame:NSMakeRect(14,y,270,28)
+        NSButton *importClip=[self button:SNNodeLocalized(type,@"导入为 MIDI 剪辑") frame:NSMakeRect(14,y,270,28)
                               action:@selector(importScore:) parent:_inspector];
-        importClip.enabled=hasScore&&!_aiBusy;
+        importClip.enabled=hasScore;
         importClip.toolTip=SNLocalized(@"把乐谱转换成可编辑的 MIDI 剪辑，钢琴卷帘随即可用。");
         y+=36;
-        NSButton *fromScore=[self button:SNLocalized(@"按乐谱重新生成") frame:NSMakeRect(14,y,270,28)
-                             action:@selector(generateFromScore:) parent:_inspector];
-        fromScore.enabled=hasScore&&!_aiBusy;
-        fromScore.toolTip=SNLocalized(@"把改动后的乐谱回喂后端重新渲染，风格描述与歌词不参与。");
-        y+=40;
     }
 
     if(type==tri::ArrangerNode)y=[self arrangerInspector:node y:y];
@@ -1914,7 +1788,8 @@ std::vector<ParamPreset> presetsFor(int type) {
         }
         [self label:node[@"asset"][@"name"] ?: SNLocalized(@"未载入素材") y:y];y+=46;
     }
-    if(type==tri::SamplerNode || type==tri::AudioClipNode || type==tri::AiMusicNode) {
+    if(type==tri::SamplerNode || type==tri::AudioClipNode ||
+       (descriptor&&descriptor->assetKind&&std::strcmp(descriptor->assetKind,"audio")==0)) {
         [self button:SNLocalized(@"载入音频（WAV / AIFF / MP3 / M4A / AAC / CAF / FLAC）…") frame:NSMakeRect(14,y,270,30) action:@selector(import:) parent:_inspector];y+=42;
         NSDictionary *asset=node[@"asset"];
         if(asset[@"name"]) {
@@ -1928,8 +1803,8 @@ std::vector<ParamPreset> presetsFor(int type) {
         } else [self label:SNLocalized(@"未载入音频素材") y:y],y+=28;
         if(type==tri::SamplerNode)
             [self label:SNLocalized(@"音符触发复音采样。Root 为原始音高，Start/End 为采样区间，Loop 循环，Attack/Release 消除爆音；Reverse 反向播放，Velocity 为力度敏感度。") y:y],y+=74;
-        else if(type==tri::AiMusicNode)
-            [self label:SNLocalized(@"生成产物按音频片段播放：触发端口控制开始/停止，Loop 循环，Fade 淡化，Pitch 移调。生成只在检查器内手动发起。") y:y],y+=76;
+        else if([node[@"nodeKey"] isEqual:@"soundnet.yue2"] || [node[@"nodeKey"] isEqual:@"soundnet.ace-step"])
+            [self label:SNLocalized(@"生成产物作为内嵌素材播放：触发端口控制开始/停止，Loop 循环，Start/End 为区间，Fade 淡入淡出，Gain 增益。生成在节点面板内发起；设定工程文件夹后产物同时归档到「AI 生成」。") y:y],y+=76;
         else
             [self label:SNLocalized(@"音频片段由开始/停止触发器控制。Loop 循环，Start/End 为片段区间，Fade 淡入淡出，Gain 为增益；Pitch 为半音移调，Reverse 反向播放。") y:y],y+=76;
     }

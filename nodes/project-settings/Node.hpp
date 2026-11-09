@@ -19,7 +19,8 @@ inline NodeModule module() {
     NodeSpec spec{"soundnet.project-settings",nodeTypeID("soundnet.project-settings"),"项目设定","工程",1,1,true,true,
         0,TimeMode::None,0,{},{},{rateID,bitsID,precisionID},nullptr,
         {{"project.inputDevice","输入设备","system",256,false,false,true},
-         {"project.outputDevice","输出设备","system",256,false,false,true}}};
+         {"project.outputDevice","输出设备","system",256,false,false,true},
+         {"project.folder","工程文件夹","",4096,false,false,false}}};
     spec.kernelFactory=create;spec.validateConfig=validate;
     spec.environmentRole=EnvironmentRole::ProjectSettings;
     return {std::move(spec),{
@@ -29,8 +30,13 @@ inline NodeModule module() {
         {{"项目设定","Project Settings"},{"工程","Project"},{"项目采样率","Sample rate"},
          {"导出位深","Export bit depth"},{"处理精度","Processing precision"},
          {"输入设备","Input Device"},{"输出设备","Output Device"},
+         {"工程文件夹","Project folder"},
          {"跟随系统默认","Follow System Default"},{"设备不可用","Device Unavailable"},
          {"音频设备与采样率由宿主管理","Audio devices and sample rate are managed by the host"},
-         {"处理","Processing"},{"设备","Device"}}};
+         {"处理","Processing"},{"设备","Device"},
+         {"选择文件夹…","Choose Folder…"},
+         {"生成素材将归档到该文件夹的「AI 生成」子文件夹。","Generated material is archived in its “AI Generated” subfolder."},
+         {"未设定（生成结果仅保留在节点内）","Not set (results stay embedded in the node)"},
+         {"无法创建文件夹：%@","Could not create the folder: %@"}}};
 }
 }

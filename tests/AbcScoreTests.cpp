@@ -1,6 +1,6 @@
 // ABC -> MIDI clip conversion: musical semantics, diagnostics and the SMF
 // round trip that puts a generated score into the piano roll.
-#include "../src/AbcScore.hpp"
+#include "../nodes/yue2/AbcScore.hpp"
 #include "../src/StandardMidiFile.hpp"
 
 #include <cmath>

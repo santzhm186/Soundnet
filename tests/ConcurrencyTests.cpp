@@ -51,7 +51,7 @@ int main() {
     {
         auto changing=std::make_unique<Engine>();changing->prepare(48000);
         GraphSpec tasks;
-        for(int i=0;i<16;++i)add(tasks,100+i,AiMusicNode);
+        for(int i=0;i<16;++i)add(tasks,100+i,nodeTypeForKey("soundnet.yue2"));
         if(!changing->setGraph(tasks))return 3;
         std::atomic<bool> started{false},done{false};
         std::atomic<unsigned> blocks{0};

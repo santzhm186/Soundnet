@@ -458,11 +458,15 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 }
 - (NSDictionary *)audioEnvironment {
     const bool running=_graph&&_graph.running;
+    // The project folder is an archive location for generation nodes; it does
+    // not influence the audio engine and may legitimately be empty.
+    NSString* folder=[NSString stringWithUTF8String:_audioConfiguration.projectFolder.c_str()] ?: @"";
     return @{@"requestedRate":@(_audioConfiguration.sampleRate),@"actualRate":@(running?_sampleRate:0),
         @"deviceRate":@(running?_deviceSampleRate:0),@"processingPrecision":@32,
         @"exportBits":@(_audioConfiguration.exportBits),@"hostManaged":@NO,
         @"inputDevice":_graph&&_inputEnabled?tri::hardware::selectedUID(_graph.inputNode):@"",
         @"outputDevice":_graph?tri::hardware::selectedUID(_graph.outputNode):@"",
+        @"projectFolder":folder,
         @"devices":tri::hardware::catalog(),@"error":_projectError ?: _error ?: @""};
 }
 // Node-level stop: the graph applies it at the next block boundary, so this is

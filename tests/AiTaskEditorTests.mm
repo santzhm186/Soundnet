@@ -4,6 +4,7 @@
 #include "../src/NodeRegistry.hpp"
 #include "../platform/NodeEditor.h"
 #include "../nodes/task-example/Task.hpp"
+#include "../nodes/yue2/Task.hpp"
 #include <cassert>
 #include <cstdio>
 #include <functional>
@@ -12,8 +13,6 @@
 #include <unistd.h>
 @interface NSView (SoundnetTaskTests)
 -(void)selectOnly:(uint64_t)uid;
--(void)generateAudio:(id)sender;
--(void)aiStop:(id)sender;
 -(void)tick;
 -(void)beginTaskSession;
 -(BOOL)commit:(NSDictionary *)previous;
@@ -37,6 +36,28 @@ static bool waitFor(NSView *editor,const std::function<bool()>& predicate,double
     } while(until.timeIntervalSinceNow>0);
     return predicate();
 }
+// The exact submission the yue2 panel performs: an immutable request built
+// from the node snapshot, run through the node's job and applied by the
+// node's applier.
+static bool submitGeneration(NSView *editor,uint64_t id) {
+    tri::NodeEditorContext context;
+    [editor configureTaskContext:&context forNode:id];
+    if(!context.submitTask)return false;
+    NSDictionary *node=findNode(editor,id);
+    if(!node)return false;
+    NSString *work=[NSTemporaryDirectory() stringByAppendingPathComponent:
+        [@"soundnet-editor-test-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+    tri::musicgen::GenRequest request=tri::nodes::yue2::makeRequest(node,@{},work,false);
+    std::string why;
+    return context.submitTask(
+        tri::nodes::yue2::makeJob(std::move(request),@"YuE2",@"",@""),
+        tri::nodes::yue2::applyResult,why);
+}
+static void cancelGeneration(NSView *editor,uint64_t id) {
+    tri::NodeEditorContext context;
+    [editor configureTaskContext:&context forNode:id];
+    if(context.cancelTask)context.cancelTask();
+}
 int main() { @autoreleasepool {
     setenv("SOUNDNET_NO_AUTOSAVE","1",1);
     [NSApplication sharedApplication];
@@ -59,45 +80,52 @@ int main() { @autoreleasepool {
     NSMutableArray *nodes=document[@"nodes"];
     uint64_t a=100,b=101;
     auto makeNode=[&](uint64_t id) {
-        return [@{@"id":@(id),@"nodeKey":@"soundnet.ai-music",@"nodeVersion":@1,@"stateVersion":@1,
-            @"x":@0,@"y":@0,@"parameters":@{@"ai.outMode":@2},
-            @"texts":@{@"ai.prompt":@"test",@"ai.execPath":script,@"ai.modelPath":directory}} mutableCopy];
+        return [@{@"id":@(id),@"nodeKey":@"soundnet.yue2",@"nodeVersion":@1,@"stateVersion":@1,
+            @"x":@0,@"y":@0,@"parameters":@{@"gen.output":@1},
+            @"texts":@{@"yue2.style":@"test",@"gen.execPath":script,@"gen.modelPath":directory}} mutableCopy];
     };
     [nodes addObject:makeNode(a)];[nodes addObject:makeNode(b)];
     [editor setValue:document forKey:@"document"];[editor commit:nil];
 
-    // A configured full path succeeds and unchanged input accepts the result.
-    [editor selectOnly:a];[editor generateAudio:nil];
-    assert(waitFor(editor,[&]{return [findNode(editor,a)[@"texts"][@"ai.score"] length]>0;}));
+    // A configured full path succeeds; the score and take log are published.
+    [editor selectOnly:a];
+    assert(submitGeneration(editor,a));
+    assert(waitFor(editor,[&]{return [findNode(editor,a)[@"texts"][@"yue2.score"] length]>0;}));
+    assert([findNode(editor,a)[@"texts"][@"gen.takes"] length]>0);
     assert([assets[@"graph"][@"nodes"] count]>=2);
 
-    // Two nodes run independently. Stopping B must not cancel A.
+    // Two nodes run independently. Cancelling B must not cancel A.
     document=copyDocument([editor valueForKey:@"document"]);
-    findNode(editor,a)[@"texts"]=@{@"ai.prompt":@"second",@"ai.execPath":script,@"ai.modelPath":directory};
+    findNode(editor,a)[@"texts"]=@{@"yue2.style":@"second",@"gen.execPath":script,@"gen.modelPath":directory,
+        @"yue2.score":findNode(editor,a)[@"texts"][@"yue2.score"]};
     [editor commit:document];
-    [editor selectOnly:a];[editor generateAudio:nil];
-    [editor selectOnly:b];[editor generateAudio:nil];[editor aiStop:nil];
-    assert(waitFor(editor,[&]{return [findNode(editor,a)[@"texts"][@"ai.score"] length]>0;}));
-    assert(![findNode(editor,b)[@"texts"][@"ai.score"] length]);
+    [editor selectOnly:a];
+    assert(submitGeneration(editor,a));
+    [editor selectOnly:b];
+    assert(submitGeneration(editor,b));
+    cancelGeneration(editor,b);
+    assert(waitFor(editor,[&]{return [findNode(editor,a)[@"texts"][@"yue2.score"] length]>0;}));
+    assert(![findNode(editor,b)[@"texts"][@"yue2.score"] length]);
 
     // Reopening an equal project creates a new runtime session and rejects the
     // former session's result even though persisted IDs/configuration match.
     [editor selectOnly:b];
-    assert(waitFor(editor,[&]{return ![[editor valueForKey:@"aiBusy"] boolValue];}));
-    [editor generateAudio:nil];[editor beginTaskSession];
+    assert(submitGeneration(editor,b));
+    [editor beginTaskSession];
     NSDate *settled=[NSDate dateWithTimeIntervalSinceNow:.6];
     assert(waitFor(editor,[&]{return settled.timeIntervalSinceNow<=0;}));
-    assert(![findNode(editor,b)[@"texts"][@"ai.score"] length]);
+    assert(![findNode(editor,b)[@"texts"][@"yue2.score"] length]);
 
     // Removing and recreating the same instance ID cannot resurrect a result.
-    [editor selectOnly:b];[editor generateAudio:nil];
+    [editor selectOnly:b];
+    assert(submitGeneration(editor,b));
     document=copyDocument([editor valueForKey:@"document"]);
     [[editor valueForKey:@"document"][@"nodes"] removeObject:findNode(editor,b)];[editor commit:document];
     document=copyDocument([editor valueForKey:@"document"]);
     [[editor valueForKey:@"document"][@"nodes"] addObject:makeNode(b)];[editor commit:document];
     settled=[NSDate dateWithTimeIntervalSinceNow:.6];
     assert(waitFor(editor,[&]{return settled.timeIntervalSinceNow<=0;}));
-    assert(![findNode(editor,b)[@"texts"][@"ai.score"] length]);
+    assert(![findNode(editor,b)[@"texts"][@"yue2.score"] length]);
     [editor beginTaskSession];
 
     // A separately discovered non-AI module uses only the public editor task

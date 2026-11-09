@@ -1,12 +1,19 @@
 #pragma once
-// GenBackend — abstraction over a local music-generation runtime.
+// MusicGen — public cross-node protocol for local music generation.
 //
-// A control-thread caller explicitly submits an immutable request through the
-// platform TaskService. Audio callbacks only play already published resources.
-// This module is free of Objective-C and can run in tests, CLI and host adapters.
+// Shared by the `soundnet.yue2` and `soundnet.ace-step` nodes (and any future
+// model node). It wraps one audio.cpp CLI child process per task: the process
+// is killed on cancel, so a wedged model can never hold the editor hostage.
+// Pure C++ (no Objective-C) so tests, CLI and host adapters can use it.
 //
-// Default implementation: audio.cpp CLI (`audiocpp_cli`), a pure C++/ggml
-// runtime with no Python dependency that serves both ACE-Step 1.5 and YuE2.
+// Interface contract (see docs/节点与连接标准-实现映射.md, "公共生成协议"):
+//   * Ownership: the caller submits an immutable GenRequest; the backend owns
+//     the child process and reaps it in poll() or the destructor.
+//   * Threading: submit/poll/progress/cancel from one control/worker thread;
+//     never from an audio callback.
+//   * Stop/failure: cancel() SIGTERMs the process group, escalates to SIGKILL
+//     after a grace period and reports Cancelled; a nonzero exit code or a
+//     missing artifact is Failed with a reason string.
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -17,31 +24,39 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
-#include "../../platform/TaskService.hpp"
 
 extern char **environ;
 
-namespace tri {
+namespace tri::musicgen {
 
 enum class GenTaskStatus { Running, Succeeded, Failed, Cancelled };
 
 struct GenRequest {
-    int backend=0;                 // 0 audio.cpp CLI, 1 audio.cpp server, 2 ComfyUI
-    int model=0;                   // 0 ACE-Step, 1 YuE2 BF16, 2 YuE2 INT8, 3 YuE2 GGUF Q4
-    int quality=1;                 // 0 fast, 1 balanced, 2 high
-    int outMode=0;                 // 0 audio only, 1 audio + score, 2 score only
-    double seconds=120;
-    unsigned seed=0;
-    std::string prompt,lyrics,execPath,modelPath,extraArgs,workDir;
-    // When set, the backend re-renders from this score instead of planning a new
-    // one (audio.cpp `abc_file`). This is the "edit the score, generate again"
-    // half of the score loop.
+    std::string family;          // "ace_step" or "yue2"
+    int variant=0;               // yue2 main GGUF: 0 Q4, 1 Q8, 2 BF16
+    int cot=2;                   // yue2 symbolic planning: 0 off, 1 melody, 2 full
+    int outMode=0;               // 0 audio, 1 score only (stop_after=abc)
+    double seconds=120;          // ace_step duration
+    int steps=8;                 // inference steps (ace_step --num-inference-steps,
+                                 // yue2 request num_inference_steps)
+    unsigned seed=0;             // 0 = let the backend choose
+    std::string prompt;          // ace_step: --text; yue2: request style=
+    std::string lyrics;          // yue2 (and ace_step vocal runs)
+    std::string execPath;        // audiocpp_cli; empty = PATH lookup
+    std::string modelPath;       // model package directory
+    std::string extraArgs;       // whitespace-split pass-through
+    std::string workDir;         // scratch dir for this task
+    // When set, the backend re-renders from this score instead of planning a
+    // new one (audio.cpp `abc_file`). Mutually exclusive with score-only mode.
     std::string abcText;
-    std::string family() const {return model==0?"ace_step":"yue2";}
+    std::string arLora,narLora;  // yue2 optional adapter paths
+    bool scoreOnly() const {return outMode==1;}
 };
 
 struct GenResult {
@@ -78,8 +93,7 @@ inline std::string tailOf(const std::string& path,size_t bytes=2048) {
 }
 } // namespace detail
 
-// audio.cpp CLI backend. One child process per task; the process is killed on
-// cancel, so a wedged model can never hold the editor hostage.
+// audio.cpp CLI backend. One child process per task.
 class AudioCppCliBackend final : public GenBackend {
 public:
     ~AudioCppCliBackend() override {
@@ -111,8 +125,19 @@ public:
         return false;
     }
     bool submit(const GenRequest& request,uint64_t& task,std::string& why) override {
-        if(request.backend!=0) {
-            why="当前只支持 audio.cpp CLI 后端。";
+        if(request.family!="ace_step"&&request.family!="yue2") {
+            why="不支持的生成模型族："+request.family;
+            return false;
+        }
+        // audio.cpp only YuE2 has a symbolic planner; score-only and external
+        // scores are yue2-only contracts.
+        if(request.family=="ace_step") {
+            if(request.scoreOnly()) {why="ACE-Step 不支持仅乐谱输出。";return false;}
+            if(!request.abcText.empty()) {why="ACE-Step 不接受外部乐谱。";return false;}
+        }
+        if(request.scoreOnly()&&!request.abcText.empty()) {
+            // audio.cpp requires stop_after=abc to have no external score.
+            why="仅乐谱模式不能再回喂外部乐谱。";
             return false;
         }
         if(active) {
@@ -244,12 +269,12 @@ public:
         }
         const std::string wav=current.workDir+"/out.wav";
         const std::string abc=current.workDir+"/score.abc";
-        const bool wantWav=current.outMode!=2;
+        const bool wantWav=!current.scoreOnly();
         if(exitCode!=0||(wantWav&&!detail::fileExists(wav))) {
             why="生成失败（退出码 "+std::to_string(exitCode)+"）。";
             return GenTaskStatus::Failed;
         }
-        if(!wantWav&&!detail::fileExists(abc)) {
+        if(current.scoreOnly()&&!detail::fileExists(abc)) {
             why="后端没有输出乐谱（score.abc）。";
             return GenTaskStatus::Failed;
         }
@@ -264,42 +289,56 @@ private:
         std::vector<std::string> args;
         args.push_back(resolved);
         args.push_back("--task");args.push_back("gen");
-        args.push_back("--family");args.push_back(request.family());
+        args.push_back("--family");args.push_back(request.family);
         args.push_back("--model");args.push_back(request.modelPath);
         args.push_back("--backend");args.push_back("metal");
         if(!request.lyrics.empty()) {
             args.push_back("--lyrics");args.push_back(request.lyrics);
         }
-        if(request.model==0) {
-            // ACE-Step (verified against audio.cpp 0.9.4 CLI): the prompt is
-            // positional text, duration is explicit, and there is no planner.
+        if(request.family=="ace_step") {
+            // Verified against the audio.cpp CLI: the prompt is positional
+            // text, duration is explicit, and there is no symbolic planner.
             args.push_back("--text");args.push_back(request.prompt);
             args.push_back("--duration-seconds");
             args.push_back(std::to_string(request.seconds));
+            args.push_back("--num-inference-steps");
+            args.push_back(std::to_string(request.steps));
         } else {
             args.push_back("--request-option");args.push_back("style="+request.prompt);
             // External ABC forces the planner on: audio.cpp rejects abc_file
             // with cot=off ("external ABC requires cot=melody or cot=full").
-            const bool cot= request.outMode>=1 || !request.abcText.empty();
-            args.push_back("--request-option");
-            args.push_back(cot?"cot=full":"cot=off");
+            const char* cot="cot=off";
+            if(!request.abcText.empty()||request.cot>=2)cot="cot=full";
+            else if(request.cot==1)cot="cot=melody";
+            args.push_back("--request-option");args.push_back(cot);
             // YuE2 packages ship several main GGUFs in one directory; the
             // default session loads q8_0, so pin the file the node selected.
             args.push_back("--session-option");
-            switch(request.model) {
-                case 1: args.push_back("yue2.model_gguf=yue2-3b-bf16.gguf"); break;
-                case 2: args.push_back("yue2.model_gguf=yue2-3b-q8_0.gguf"); break;
+            switch(request.variant) {
+                case 1: args.push_back("yue2.model_gguf=yue2-3b-q8_0.gguf"); break;
+                case 2: args.push_back("yue2.model_gguf=yue2-3b-bf16.gguf"); break;
                 default:args.push_back("yue2.model_gguf=yue2-3b-q4_0.gguf"); break;
+            }
+            if(request.steps>0) {
+                args.push_back("--request-option");
+                args.push_back("num_inference_steps="+std::to_string(request.steps));
+            }
+            if(!request.arLora.empty()) {
+                args.push_back("--session-option");
+                args.push_back("yue2.ar_lora="+request.arLora);
+            }
+            if(!request.narLora.empty()) {
+                args.push_back("--session-option");
+                args.push_back("yue2.nar_lora="+request.narLora);
             }
         }
         // Score-only runs stop after the symbolic stage. audio.cpp requires
         // stop_after=abc to have no external score (nothing left to plan),
         // so feed-back and score-only are mutually exclusive by design.
-        if(request.outMode==2) {
+        if(request.scoreOnly()) {
             args.push_back("--request-option");
             args.push_back("stop_after=abc");
-        }
-        else if(!request.abcText.empty()) {
+        } else if(!request.abcText.empty()) {
             args.push_back("--request-option");
             args.push_back("abc_file="+request.workDir+"/score_in.abc");
         }
@@ -324,16 +363,16 @@ private:
     uint64_t serial=0;
 };
 
-// Node-owned adapter over the platform task context. No editor or audio-engine
-// state is touched here. Configuration is applied by submit before availability
-// probing, so an explicit executable path works without a PATH installation.
+// Node-owned adapter over a cancellation-aware wait loop. No editor or
+// audio-engine state is touched here.
 struct GenerationOutcome {
     GenTaskStatus status=GenTaskStatus::Failed;
     GenResult result;
     std::string reason;
 };
+template<typename TaskContext>
 inline GenerationOutcome executeGeneration(GenBackend& backend,const GenRequest& request,
-                                           soundnet::TaskContext& context,
+                                           TaskContext& context,
                                            std::chrono::milliseconds timeout=std::chrono::minutes(30)) {
     GenerationOutcome outcome;
     if(context.cancelled()) {outcome.status=GenTaskStatus::Cancelled;return outcome;}
@@ -360,4 +399,5 @@ inline GenerationOutcome executeGeneration(GenBackend& backend,const GenRequest&
         else context.waitFor(std::chrono::milliseconds(100));
     }
 }
-} // namespace tri
+
+} // namespace tri::musicgen

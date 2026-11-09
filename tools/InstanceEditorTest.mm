@@ -311,14 +311,14 @@ int main() {
             NSMutableDictionary *document=[@{@"version":@4,@"projectId":@"local",
                 @"nodes":[NSMutableArray new],@"edges":[NSMutableArray new]} mutableCopy];
             [editor setValue:document forKey:@"document"];
-            NSMenuItem *aiItem=[NSMenuItem new];aiItem.tag=tri::AiMusicNode;
+            NSMenuItem *aiItem=[NSMenuItem new];aiItem.tag=tri::nodeTypeForKey("soundnet.yue2");
             [editor insert:aiItem];
             NSMutableArray *nodes=[editor valueForKey:@"document"][@"nodes"];
             assert(nodes.count==1);
             NSMutableDictionary *aiNode=nodes.lastObject;
             uint64_t aiID=[aiNode[@"id"] unsignedLongLongValue];
-            aiNode[@"texts"]=@{@"ai.prompt":@"smoke test",
-                               @"ai.score":@"X:1\nT:Smoke\nM:4/4\nL:1/4\nQ:1/4=110\nK:G\nG A B c | d2 B2 |\n"};
+            aiNode[@"texts"]=@{@"yue2.style":@"smoke test",
+                               @"yue2.score":@"X:1\nT:Smoke\nM:4/4\nL:1/4\nQ:1/4=110\nK:G\nG A B c | d2 B2 |\n"};
             [editor selectOnly:aiID];
             [editor commit:nil];
             assert([assets[@"graph"][@"nodes"] count]==1);

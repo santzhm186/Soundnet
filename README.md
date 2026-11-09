@@ -23,7 +23,7 @@ Use the node library to search by English or Chinese name, category, or stable n
 | Record and process audio | Audio Input → EQ → Compressor → Audio Output |
 | Trigger a clip or loop | Start Trigger → Audio Clip → Limiter → Audio Output |
 | Send notes to another instrument | MIDI Clip → Scale Quantizer → MIDI Output |
-| Generate a song, then edit its score | AI Music → Audio Output, and its ABC score → MIDI Clip → Scale Quantizer |
+| Generate a song, then edit its score | YuE2 (or ACE-Step) → Audio Output, and YuE2’s ABC score → MIDI Clip → Scale Quantizer |
 
 New projects include one Timecode node and one Project Settings node. Timecode supplies a common timeline; tempo belongs to each musical node, with no global BPM or separate tempo node. Project Settings controls the processing format and standalone audio devices; AU devices and the effective sample rate remain host-managed.
 
@@ -35,7 +35,7 @@ Each node instance has its own parameters, assets, and runtime state. MIDI, ster
 - **Audio processing:** mixing, EQ, delay, filtering, reverb, compression, limiting, modulation, and more. Supported effects can be bypassed without removing their connections.
 - **Clips and control:** MIDI clips with a piano-roll editor, audio clips with reverse and loop controls, start/stop triggers, event counters, waits, and probability gates.
 - **Recording and export:** record audio input or output to WAV, or render a workflow offline as stereo WAV, separate WAV stems, or a standard MIDI file. Offline export supports cancellation.
-- **Local generation:** an AI Music node drives a locally installed audio.cpp CLI (ACE-Step 1.5 or YuE2) in the background. The result becomes an embedded audio asset, so playback, export and stems behave exactly like an audio clip; YuE2 also returns an ABC score that converts into an editable MIDI clip for the piano roll, and the edited score can be fed back for another render. Each node has its own stop control for cancelling a run or stopping playback.
+- **Local generation:** two separate nodes — **YuE2** and **ACE-Step** — drive a locally installed audio.cpp CLI in the background. The active result is embedded in the node so graph playback (trigger port → audio output), export and stems behave exactly like an audio clip; when Project Settings declares a project folder, every WAV is also archived under `<folder>/AI 生成/` and logged in the node’s take list. The inspector panel has generate/stop/progress, a take selector and an independent audition transport (play/pause/stop/seek). YuE2 also returns an ABC score that converts into an editable MIDI clip, and an edited score can be fed back for another render.
 - **Local pitch models:** map MIDI pitches with a compatible Core ML model or a JSON pitch table. Try [PitchMirror](examples/PitchMirror.mlmodel) with [FourBeat](examples/FourBeat.mid).
 
 Try [Three-Voice Arrangement](examples/three-voice-arrangement.v4.json), [Sampler Pluck](examples/sampler-pluck.json), or [Audio Clip and Compressor](examples/audio-clip-compressor.json). The [Chinese user guide](docs/使用说明.txt) covers editing shortcuts, routing, and node controls in more detail.

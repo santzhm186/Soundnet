@@ -218,12 +218,6 @@ class InstanceGraph {
                 audioClip=std::make_unique<AudioClipState>();
                 return;
             }
-            if(type==AiMusicNode) {
-                // Generated audio plays through the same clip path once the
-                // asset has been published; the task state only drives the UI.
-                audioClip=std::make_unique<AudioClipState>();
-                return;
-            }
             if(type==QuantizeNode) {
                 quantizer=std::make_unique<QuantizeState>();
                 return;
@@ -466,11 +460,6 @@ class InstanceGraph {
             if(event.start){state.running=true;state.phase=0;state.beat=0;state.envelope=1;state.clickPhase=0;}
             else state.running=false;
         } else if(target.type==AudioClipNode) {
-            auto& clip=*target.audioClip;
-            if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
-            else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
-        } else if(target.type==AiMusicNode) {
-            // Generation belongs to TaskService. Graph triggers only play/stop.
             auto& clip=*target.audioClip;
             if(event.start) {clip.pendingStart=true;clip.startFrame=event.frame;clip.stopping=false;}
             else {clip.pendingStart=false;if(clip.playing)clip.stopping=true;}
@@ -1044,7 +1033,7 @@ public:
                     else renderMetronome(entry,node,n,rate);
                     continue;
                 }
-                if(type==AudioClipNode || type==AiMusicNode) {
+                if(type==AudioClipNode) {
                     bool wasBypassed=node.audioClip->bypassed;
                     if(entry.bypass) {
                         if(!wasBypassed)*node.audioClip=AudioClipState{};

@@ -31,5 +31,17 @@ int main() {
     assert(!tri::projectEnvironment(graph,env,&why));
     graph.nodes.pop_back();graph.nodes[0].unavailable=true;
     assert(!tri::projectEnvironment(graph,env,&why));
-    puts("PASS: project environment defaults, format validation and singleton settings");
+    // Project folder: optional, defaults to empty, bounded in length and not
+    // part of the audio-configuration comparison.
+    graph.nodes[0].unavailable=false;
+    graph.nodes[0].texts["project.folder"]="/Users/someone/Music/My Project";
+    assert(tri::projectEnvironment(graph,env,&why));
+    assert(env.projectFolder=="/Users/someone/Music/My Project");
+    auto beforeFolderChange=env;
+    graph.nodes[0].texts["project.folder"]="";
+    assert(tri::projectEnvironment(graph,env,&why)&&env.projectFolder.empty());
+    assert(beforeFolderChange.sameAudioConfiguration(env));
+    graph.nodes[0].texts["project.folder"]=std::string(5000,'x');
+    assert(!tri::projectEnvironment(graph,env,&why));
+    puts("PASS: project environment defaults, format validation, folder and singleton settings");
 }

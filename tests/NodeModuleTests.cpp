@@ -91,8 +91,8 @@ int main() {
     }
     // All graph entry points execute the module's cross-parameter validator.
     {
-        GraphSpec graph;GraphNode node=graphNode(1,"soundnet.ai-music");
-        node.parameters={{AudioClipStart,.9f},{AudioClipEnd,.1f}};graph.nodes={node};
+        GraphSpec graph;GraphNode node=graphNode(1,"soundnet.yue2");
+        node.parameters={{nodes::yue2::startID,.9f},{nodes::yue2::endID,.1f}};graph.nodes={node};
         CompiledGraph compiled;assert(!compileGraph(graph,compiled));
         graph.nodes={graphNode(1,"soundnet.project-settings")};
         graph.nodes[0].parameters[nodes::project_settings::bitsID]=20;

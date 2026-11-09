@@ -12,6 +12,9 @@ struct ProjectEnvironment {
     int exportBits=24;
     int processingPrecision=32;
     std::string inputDevice="system",outputDevice="system";
+    // Optional archive folder for generated material. Empty means "not set":
+    // generation nodes then keep results embedded in the node only.
+    std::string projectFolder;
 
     bool sameAudioConfiguration(const ProjectEnvironment& other) const {
         return present==other.present && sampleRate==other.sampleRate &&
@@ -50,6 +53,11 @@ inline bool projectEnvironment(const GraphSpec& graph,ProjectEnvironment& result
         next.outputDevice=text("project.outputDevice");
         if(next.inputDevice.size()>1024||next.outputDevice.size()>1024)
             return fail("音频设备 UID 过长。");
+        // A folder is optional; an absolute path is expected but not verified
+        // here (the volume may not be mounted yet when the graph is read).
+        auto folder=node.texts.find("project.folder");
+        if(folder!=node.texts.end())next.projectFolder=folder->second;
+        if(next.projectFolder.size()>4096)return fail("工程文件夹路径过长。");
     }
     result=std::move(next);
     return true;

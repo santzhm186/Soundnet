@@ -22,10 +22,27 @@
     replacement[@"texts"]=texts;
     _commit(replacement);
 }
+-(void)chooseFolder:(id)sender {
+    if(!_commit)return;
+    NSOpenPanel* panel=[NSOpenPanel openPanel];
+    panel.canChooseDirectories=YES;panel.canChooseFiles=NO;panel.canCreateDirectories=YES;
+    NSString* current=_configuration[@"texts"][@"project.folder"];
+    if([current isKindOfClass:NSString.class]&&current.length)
+        panel.directoryURL=[NSURL fileURLWithPath:current.stringByExpandingTildeInPath];
+    [panel beginWithCompletionHandler:^(NSModalResponse result) {
+        if(result!=NSModalResponseOK||!panel.URL.path.length)return;
+        NSMutableDictionary* replacement=[_configuration mutableCopy];
+        NSMutableDictionary* texts=[replacement[@"texts"] isKindOfClass:NSDictionary.class]
+            ? [replacement[@"texts"] mutableCopy] : [NSMutableDictionary new];
+        texts[@"project.folder"]=panel.URL.path;
+        replacement[@"texts"]=texts;
+        _commit(replacement);
+    }];
+}
 @end
 namespace tri::nodes::project_settings {
 inline NSView* editor(NodeEditorContext context) {
-    NSView* view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,270,190)];
+    NSView* view=[[NSView alloc] initWithFrame:NSMakeRect(0,0,270,268)];
     const bool managed=[context.environment[@"hostManaged"] boolValue];
     SNProjectDeviceAction* action=[SNProjectDeviceAction new];
     action.configuration=context.configuration ?: @{};
@@ -33,7 +50,7 @@ inline NSView* editor(NodeEditorContext context) {
     static const char actionKey=0;
     objc_setAssociatedObject(view,&actionKey,action,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     for(int i=0;i<2;++i) {
-        const CGFloat top=166-i*51;
+        const CGFloat top=244-i*51;
         NSTextField* label=[NSTextField labelWithString:context.text(i==0?@"输入设备":@"输出设备")];
         label.font=[NSFont systemFontOfSize:12];label.frame=NSMakeRect(0,top,270,18);
         [view addSubview:label];
@@ -63,12 +80,37 @@ inline NSView* editor(NodeEditorContext context) {
         popup.enabled=!managed&&context.commit!=nil;
         [view addSubview:popup];
     }
+    // Project folder: where generation nodes archive their takes. The path
+    // itself stays an ordinary (visible) text parameter; this picker only
+    // writes it through the normal commit transaction.
+    {
+        const CGFloat top=128;
+        NSTextField* label=[NSTextField labelWithString:context.text(@"工程文件夹")];
+        label.font=[NSFont systemFontOfSize:12];label.frame=NSMakeRect(0,top,270,18);
+        [view addSubview:label];
+        NSButton* choose=[NSButton buttonWithTitle:context.text(@"选择文件夹…")
+                                             target:action action:@selector(chooseFolder:)];
+        choose.frame=NSMakeRect(0,top-30,270,28);
+        choose.enabled=context.commit!=nil;
+        [view addSubview:choose];
+        NSString* folder=context.configuration[@"texts"][@"project.folder"];
+        const bool hasFolder=[folder isKindOfClass:NSString.class]&&folder.length>0;
+        NSString* note=[NSString stringWithFormat:@"%@ %@",
+            hasFolder?folder:@"",
+            context.text(hasFolder?@"生成素材将归档到该文件夹的「AI 生成」子文件夹。"
+                                 :@"未设定（生成结果仅保留在节点内）")];
+        NSTextField* status=[NSTextField wrappingLabelWithString:note];
+        status.frame=NSMakeRect(0,top-58,270,44);status.font=[NSFont systemFontOfSize:10];
+        status.textColor=NSColor.secondaryLabelColor;
+        status.lineBreakMode=NSLineBreakByTruncatingMiddle;
+        [view addSubview:status];
+    }
     const double actual=[context.environment[@"actualRate"] doubleValue];
     const double device=[context.environment[@"deviceRate"] doubleValue];
     NSString* status=managed?context.text(@"音频设备与采样率由宿主管理"):
         [NSString stringWithFormat:@"%@ %.0f Hz · %@ %.0f Hz",context.text(@"处理"),actual,context.text(@"设备"),device];
     NSTextField* statusField=[NSTextField wrappingLabelWithString:status];
-    statusField.frame=NSMakeRect(0,27,270,35);statusField.font=[NSFont systemFontOfSize:11];
+    statusField.frame=NSMakeRect(0,8,270,35);statusField.font=[NSFont systemFontOfSize:11];
     statusField.textColor=NSColor.secondaryLabelColor;[view addSubview:statusField];
     NSString* error=context.environment[@"error"];
     if([error isKindOfClass:NSString.class]&&error.length) {

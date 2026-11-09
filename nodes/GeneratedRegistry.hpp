@@ -6,7 +6,8 @@
 #include "audio-input/Node.hpp"
 #include "chord/Node.hpp"
 #include "progression/Node.hpp"
-#include "ai-music/Node.hpp"
+#include "yue2/Node.hpp"
+#include "ace-step/Node.hpp"
 #include "oscillator/Node.hpp"
 #include "arp/Node.hpp"
 #include "voice-arranger/Node.hpp"
@@ -63,7 +64,8 @@ inline const std::vector<NodeModule>& nodeModules() {
         add("soundnet.audio-input",true,nodes::audio_input::module());
         add("soundnet.chord",true,nodes::chord::module());
         add("soundnet.progression",true,nodes::progression::module());
-        add("soundnet.ai-music",true,nodes::ai_music::module());
+        add("soundnet.yue2",false,nodes::yue2::module());
+        add("soundnet.ace-step",false,nodes::ace_step::module());
         add("soundnet.oscillator",true,nodes::oscillator::module());
         add("soundnet.arp",true,nodes::arp::module());
         add("soundnet.voice-arranger",true,nodes::voice_arranger::module());

@@ -85,7 +85,7 @@ inline bool validArrangerRanges(const GraphNode& node) {
     return true;
 }
 inline bool validAudioRanges(const GraphNode& node) {
-    if(node.type==AudioClipNode || node.type==AiMusicNode)return graphParamValue(node,AudioClipStart)<graphParamValue(node,AudioClipEnd);
+    if(node.type==AudioClipNode)return graphParamValue(node,AudioClipStart)<graphParamValue(node,AudioClipEnd);
     if(node.type==SamplerNode)return graphParamValue(node,SamplerStart)<graphParamValue(node,SamplerEnd);
     return true;
 }

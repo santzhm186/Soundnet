@@ -11,7 +11,7 @@
 // terminated header, one or more V: voices, chords, ties, tuplets, broken
 // rhythm, accidentals with bar scope). Anything it cannot represent is dropped
 // with a warning instead of failing the whole score.
-#include "MidiClip.hpp"
+#include "../../platform/resources/MidiClip.hpp"
 
 #include <algorithm>
 #include <cctype>

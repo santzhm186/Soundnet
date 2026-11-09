@@ -25,9 +25,6 @@ inline constexpr int CommentNode=46;
 // Appended after the v3 format shipped. Reserved gaps are allowed; what is
 // forbidden is treating the last known number as a validity bound.
 inline constexpr int FirstAppendedNode=47;
-// AI music generation: submits an external, long-running task (CapTask) and
-// turns its result into an embedded audio asset.
-inline constexpr int AiMusicNode=FirstAppendedNode;
 
 // Graph-node parameter IDs. These live above the legacy AU parameter range so a
 // graph instance never collides with an AU preset slot.
@@ -61,10 +58,6 @@ inline constexpr int MidiOutChannel=1270;
 inline constexpr int OutputWidth=1280;
 inline constexpr int DelaySync=1290, DelayDivision=1291;
 inline constexpr int ChannelFilter=1300;
-// AI music generation. Numeric parameters only; prompt/lyrics/executable path
-// are text parameters declared by NodeSpec::texts (no numeric identity).
-inline constexpr int AiMusicBackend=1310, AiMusicModel=1311, AiMusicDuration=1312;
-inline constexpr int AiMusicSeed=1313, AiMusicQuality=1314, AiMusicOutMode=1315;
 // Voice texture for the three-voice arranger.
 enum class ArrangerTexture { Highest, Middle, Lowest, Chord };
 // Arranger parameters are stored on the instance, outside the AU parameter list.
@@ -153,12 +146,6 @@ inline constexpr ParamInfo outputWidthInfo{"Width",0,2,1,""};
 inline constexpr ParamInfo delaySyncInfo{"Sync",0,1,0,""};
 inline constexpr ParamInfo delayDivisionInfo{"Division",0,3,1,""};
 inline constexpr ParamInfo channelFilterInfo{"Channel",0,16,0,""};
-inline constexpr ParamInfo aiMusicBackendInfo{"Backend",0,2,0,""};
-inline constexpr ParamInfo aiMusicModelInfo{"Model",0,3,0,""};
-inline constexpr ParamInfo aiMusicDurationInfo{"Duration",10,600,120,"s"};
-inline constexpr ParamInfo aiMusicSeedInfo{"Seed",0,999999,0,""};
-inline constexpr ParamInfo aiMusicQualityInfo{"Quality",0,2,1,""};
-inline constexpr ParamInfo aiMusicOutModeInfo{"Output",0,2,0,""};
 inline constexpr ParamInfo arrangerVoiceInfo[3][3] = {
     {{"Minimum",0,127,72,"MIDI"},{"Maximum",0,127,95,"MIDI"},{"Texture",0,3,0,""}},
     {{"Minimum",0,127,55,"MIDI"},{"Maximum",0,127,71,"MIDI"},{"Texture",0,3,1,""}},

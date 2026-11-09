@@ -1,6 +1,5 @@
 # Existing modules allowed to use the transitional runtime adapter.
 # New modules must provide a kernel or use the pure TaskService contract.
-soundnet.ai-music
 soundnet.arp
 soundnet.audio-clip
 soundnet.audio-input
