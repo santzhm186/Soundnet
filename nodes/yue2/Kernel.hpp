@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/NodeKernel.hpp"
 #include "../../platform/musicgen/PlaybackKernel.hpp"
+#include "ScorePlayback.hpp"
 namespace tri::nodes::yue2 {
 
 inline constexpr int gainID =parameterID("soundnet.yue2","play.gain");
@@ -13,11 +14,18 @@ inline constexpr int fadeID =parameterID("soundnet.yue2","play.fade");
 // playback; generation itself is a platform TaskService job (see Task.hpp).
 class Kernel final : public NodeKernel {
     musicgen::PlaybackCore core{musicgen::PlaybackParamIDs{gainID,loopID,startID,endID,fadeID}};
+    ScorePlayback score;
 public:
     void prepare(double sampleRate,int maxFrames) override {core.prepare(sampleRate,maxFrames);}
-    void configure(const KernelConfig& config) override {core.configure(config,config.audio);}
-    void process(KernelContext& context) noexcept override {core.process(context);}
-    void reset(KernelResetReason) noexcept override {core.reset();}
+    void configure(const KernelConfig& config) override {
+        core.configure(config,config.audio);
+        score.configure(config.text("yue2.score"));
+    }
+    void process(KernelContext& context) noexcept override {
+        core.process(context);
+        score.process(context);
+    }
+    void reset(KernelResetReason) noexcept override {core.reset();score.reset();}
 };
 inline std::unique_ptr<NodeKernel> create() {return std::make_unique<Kernel>();}
 }

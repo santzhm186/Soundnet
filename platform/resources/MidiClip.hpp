@@ -3,6 +3,7 @@
 #include <vector>
 
 namespace tri {
+inline constexpr uint16_t midiClipTicksPerBeat=480;
 // Musical time is measured in quarter notes, independent of the source file's tempo.
 struct ClipEvent {
     double beat;

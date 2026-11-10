@@ -1,5 +1,5 @@
 #pragma once
-#include "../src/GraphSpec.hpp"
+#include "GraphSpec.hpp"
 #include <cmath>
 #include <string>
 

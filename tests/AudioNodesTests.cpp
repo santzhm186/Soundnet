@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include <memory>
 #include "../src/Engine.hpp"
 #include "../src/StandardMidiFile.hpp"
@@ -30,30 +31,30 @@ int main() {
     // New node types are accepted and their parameters are type-scoped.
     {
         GraphSpec graph;
-        add(graph,1,NoiseNode,{{NoiseLevel,.5f},{NoiseType,0}});
-        add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,1000},{FilterResonance,1}});
-        add(graph,3,ReverbNode,{{ReverbMix,.4f},{ReverbSize,.5f}});
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("noise"),{{ntest::param("noise","noise.level"),.5f},{ntest::param("noise","noise.type"),0}});
+        add(graph,2,ntest::type("filter"),{{ntest::param("filter","filter.type"),0},{ntest::param("filter","filter.cutoff"),1000},{ntest::param("filter","filter.resonance"),1}});
+        add(graph,3,ntest::type("reverb"),{{ntest::param("reverb","reverb.mix"),.4f},{ntest::param("reverb","reverb.size"),.5f}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         std::vector<size_t> order;
         assert(graphOrder(graph,order));
-        assert(!validGraphParam(NoiseNode,FilterCutoff));
-        assert(!validGraphParam(FilterNode,ReverbMix));
-        assert(validGraphParam(NoiseNode,NoiseType));
-        assert(validGraphParam(AudioClipNode,AudioClipGain));
-        assert(!validGraphParam(AudioClipNode,CompThreshold));
-        assert(validGraphParam(CompressorNode,CompThreshold));
-        assert(!validGraphParam(CompressorNode,AudioClipGain));
-        assert(validGraphParam(LimiterNode,LimiterCeiling));
-        assert(!validGraphParam(LimiterNode,CompThreshold));
-        assert(validGraphParam(ChorusNode,ChorusDepth));
-        assert(!validGraphParam(ChorusNode,LimiterGain));
-        graph.nodes[0].parameters[FilterCutoff]=1000;
+        assert(!validGraphParam(ntest::type("noise"),ntest::param("filter","filter.cutoff")));
+        assert(!validGraphParam(ntest::type("filter"),ntest::param("reverb","reverb.mix")));
+        assert(validGraphParam(ntest::type("noise"),ntest::param("noise","noise.type")));
+        assert(validGraphParam(ntest::type("audio-clip"),ntest::param("audio-clip","audioClip.gain")));
+        assert(!validGraphParam(ntest::type("audio-clip"),ntest::param("compressor","compressor.threshold")));
+        assert(validGraphParam(ntest::type("compressor"),ntest::param("compressor","compressor.threshold")));
+        assert(!validGraphParam(ntest::type("compressor"),ntest::param("audio-clip","audioClip.gain")));
+        assert(validGraphParam(ntest::type("limiter"),ntest::param("limiter","limiter.ceiling")));
+        assert(!validGraphParam(ntest::type("limiter"),ntest::param("compressor","compressor.threshold")));
+        assert(validGraphParam(ntest::type("chorus"),ntest::param("chorus","chorus.depth")));
+        assert(!validGraphParam(ntest::type("chorus"),ntest::param("limiter","limiter.gain")));
+        graph.nodes[0].parameters[ntest::param("filter","filter.cutoff")]=1000;
         assert(!graphOrder(graph,order));
-        graph.nodes[0].parameters.erase(FilterCutoff);
-        graph.nodes[1].parameters[FilterCutoff]=30000;
+        graph.nodes[0].parameters.erase(ntest::param("filter","filter.cutoff"));
+        graph.nodes[1].parameters[ntest::param("filter","filter.cutoff")]=30000;
         assert(!graphOrder(graph,order));
-        graph.nodes[1].parameters[FilterCutoff]=1000;
+        graph.nodes[1].parameters[ntest::param("filter","filter.cutoff")]=1000;
         graph.nodes[0].type=99;
         assert(!graphOrder(graph,order));
     }
@@ -61,10 +62,10 @@ int main() {
     // Validation reports a specific reason for common graph mistakes.
     {
         GraphSpec graph;std::vector<size_t> order;std::string why;
-        add(graph,1,MidiNode);add(graph,1,MidiNode);
+        add(graph,1,ntest::type("midi-input"));add(graph,1,ntest::type("midi-input"));
         assert(!graphOrder(graph,order,&why));
         assert(why.find("唯一")!=std::string::npos);
-        GraphSpec mismatch;add(mismatch,1,Osc1Node);add(mismatch,2,Osc1Node);connect(mismatch,1,2);
+        GraphSpec mismatch;add(mismatch,1,ntest::type("oscillator"));add(mismatch,2,ntest::type("oscillator"));connect(mismatch,1,2);
         assert(!graphOrder(mismatch,order,&why));
         assert(why.find("信号类型")!=std::string::npos);
         puts("graph validation explains duplicate IDs and bad ports");
@@ -72,10 +73,10 @@ int main() {
     // Noise -> filter -> reverb -> output produces finite, non-silent audio.
     {
         GraphSpec graph;
-        add(graph,1,NoiseNode,{{NoiseLevel,.6f},{NoiseType,1}});
-        add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,1800},{FilterResonance,1.2f}});
-        add(graph,3,ReverbNode,{{ReverbMix,.5f},{ReverbSize,.7f},{ReverbDamping,.2f},{ReverbWidth,1}});
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("noise"),{{ntest::param("noise","noise.level"),.6f},{ntest::param("noise","noise.type"),1}});
+        add(graph,2,ntest::type("filter"),{{ntest::param("filter","filter.type"),0},{ntest::param("filter","filter.cutoff"),1800},{ntest::param("filter","filter.resonance"),1.2f}});
+        add(graph,3,ntest::type("reverb"),{{ntest::param("reverb","reverb.mix"),.5f},{ntest::param("reverb","reverb.size"),.7f},{ntest::param("reverb","reverb.damping"),.2f},{ntest::param("reverb","reverb.width"),1}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
@@ -88,10 +89,10 @@ int main() {
     // Reverb pre-delay postpones the wet signal.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);
-        add(graph,2,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,3,ReverbNode,{{ReverbMix,1},{ReverbSize,.6f},{ReverbDamping,.2f},{ReverbWidth,1},{ReverbPreDelay,120}});
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("midi-input"));
+        add(graph,2,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),1},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,3,ntest::type("reverb"),{{ntest::param("reverb","reverb.mix"),1},{ntest::param("reverb","reverb.size"),.6f},{ntest::param("reverb","reverb.damping"),.2f},{ntest::param("reverb","reverb.width"),1},{ntest::param("reverb","reverb.preDelay"),120}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -99,17 +100,17 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double early=rms(left,0,4000),late=rms(left,12000,26000);
         assert(late>.001 && early<late*.2);
-        assert(validGraphParam(ReverbNode,ReverbPreDelay));
+        assert(validGraphParam(ntest::type("reverb"),ntest::param("reverb","reverb.preDelay")));
         puts("reverb pre-delay postpones the wet signal");
     }
 
     // Bypassing an inline filter must restore the unfiltered level.
     {
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,2,FilterNode,{{FilterType,0},{FilterCutoff,180},{FilterResonance,.7f}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),1},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,2,ntest::type("filter"),{{ntest::param("filter","filter.type"),0},{ntest::param("filter","filter.cutoff"),180},{ntest::param("filter","filter.resonance"),.7f}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,110);
@@ -131,8 +132,8 @@ int main() {
     // A bypassed output node is silent.
     {
         GraphSpec graph;
-        add(graph,1,NoiseNode,{{NoiseLevel,1}});
-        add(graph,2,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("noise"),{{ntest::param("noise","noise.level"),1}});
+        add(graph,2,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);
         graph.nodes[1].bypass=true;
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
@@ -149,14 +150,14 @@ int main() {
         for(size_t i=0;i<sample->samples.size();++i)
             sample->samples[i]=float(std::sin(2*3.14159265358979323846*440.0*double(i)/48000.0))*.4f;
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        size_t sampler=add(graph,1,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,1},{SamplerAttack,.001f},{SamplerRelease,.02f},{SamplerStart,0},{SamplerEnd,1},{SamplerXfade,10}});
+        add(graph,10,ntest::type("midi-input"));
+        size_t sampler=add(graph,1,ntest::type("sampler"),{{ntest::param("sampler","sampler.root"),60},{ntest::param("sampler","sampler.gain"),1},{ntest::param("sampler","sampler.loop"),1},{ntest::param("sampler","sampler.attack"),.001f},{ntest::param("sampler","sampler.release"),.02f},{ntest::param("sampler","sampler.start"),0},{ntest::param("sampler","sampler.end"),1},{ntest::param("sampler","sampler.loopXfade"),10}});
         graph.nodes[sampler].sample=sample;
-        add(graph,2,AudioOutputNode,{{Master,1}});
+        add(graph,2,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);
         std::vector<size_t> order;assert(graphOrder(graph,order));
-        assert(!validGraphParam(SamplerNode,NoiseLevel));
-        assert(validGraphParam(SamplerNode,SamplerRoot));
+        assert(!validGraphParam(ntest::type("sampler"),ntest::param("noise","noise.level")));
+        assert(validGraphParam(ntest::type("sampler"),ntest::param("sampler","sampler.root")));
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(48000),right(48000);
@@ -168,8 +169,8 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,24000,48000)<.005);
         for(float sample:left)assert(std::isfinite(sample));
-        assert(validGraphParam(SamplerNode,SamplerXfade));
-        GraphSpec bad=graph;bad.nodes[sampler].parameters[SamplerStart]=.8f;bad.nodes[sampler].parameters[SamplerEnd]=.2f;
+        assert(validGraphParam(ntest::type("sampler"),ntest::param("sampler","sampler.loopXfade")));
+        GraphSpec bad=graph;bad.nodes[sampler].parameters[ntest::param("sampler","sampler.start")]=.8f;bad.nodes[sampler].parameters[ntest::param("sampler","sampler.end")]=.2f;
         std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
         puts("sampler plays, loops and releases a note");
     }
@@ -179,10 +180,10 @@ int main() {
         auto sample=std::make_shared<AudioSample>();
         sample->rate=48000;sample->channels=1;sample->samples.assign(2400,.5f);
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1}});
+        add(graph,10,ntest::type("midi-input"));
+        size_t sampler=add(graph,1,ntest::type("sampler"),{{ntest::param("sampler","sampler.gain"),1}});
         graph.nodes[sampler].sample=sample;graph.nodes[sampler].bypass=true;
-        add(graph,2,AudioOutputNode,{{Master,1}});
+        add(graph,2,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
@@ -197,10 +198,10 @@ int main() {
         sample->rate=48000;sample->channels=2;sample->samples.resize(4096*2);
         for(size_t i=0;i<sample->samples.size();i+=2){sample->samples[i]=.5f;sample->samples[i+1]=-.5f;}
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        size_t sampler=add(graph,1,SamplerNode,{{SamplerGain,1},{SamplerLoop,1}});
+        add(graph,10,ntest::type("midi-input"));
+        size_t sampler=add(graph,1,ntest::type("sampler"),{{ntest::param("sampler","sampler.gain"),1},{ntest::param("sampler","sampler.loop"),1}});
         graph.nodes[sampler].sample=sample;
-        add(graph,2,AudioOutputNode,{{Master,1}});
+        add(graph,2,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
@@ -216,10 +217,10 @@ int main() {
         sample->rate=48000;sample->channels=1;sample->samples.assign(4800,0.0f);
         for(int i=0;i<2400;++i)sample->samples[i]=.5f;
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        size_t sampler=add(graph,2,SamplerNode,{{SamplerRoot,60},{SamplerGain,1},{SamplerLoop,0},{SamplerAttack,.001f},{SamplerRelease,.01f},{SamplerStart,0},{SamplerEnd,1},{SamplerReverse,1},{SamplerVelocity,1}});
+        add(graph,10,ntest::type("midi-input"));
+        size_t sampler=add(graph,2,ntest::type("sampler"),{{ntest::param("sampler","sampler.root"),60},{ntest::param("sampler","sampler.gain"),1},{ntest::param("sampler","sampler.loop"),0},{ntest::param("sampler","sampler.attack"),.001f},{ntest::param("sampler","sampler.release"),.01f},{ntest::param("sampler","sampler.start"),0},{ntest::param("sampler","sampler.end"),1},{ntest::param("sampler","sampler.reverse"),1},{ntest::param("sampler","sampler.velocity"),1}});
         graph.nodes[sampler].sample=sample;
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,127);
@@ -227,8 +228,8 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,400)<.01);
         assert(rms(left,4000,4800)>.01);
-        assert(validGraphParam(SamplerNode,SamplerReverse));
-        assert(validGraphParam(SamplerNode,SamplerVelocity));
+        assert(validGraphParam(ntest::type("sampler"),ntest::param("sampler","sampler.reverse")));
+        assert(validGraphParam(ntest::type("sampler"),ntest::param("sampler","sampler.velocity")));
         puts("reverse sampler plays from the end");
     }
     // An audio clip starts from a trigger, loops, and stops on a stop trigger.
@@ -236,23 +237,23 @@ int main() {
         auto sample=std::make_shared<AudioSample>();
         sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.4f);
         GraphSpec graph;
-        add(graph,1,StartNode,{{TriggerPulse,0}});
-        add(graph,2,StopNode,{{TriggerPulse,0}});
-        size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
+        add(graph,1,ntest::type("start"),{{ntest::param("start","trigger.pulse"),0}});
+        add(graph,2,ntest::type("stop"),{{ntest::param("stop","trigger.pulse"),0}});
+        size_t clip=add(graph,3,ntest::type("audio-clip"),{{ntest::param("audio-clip","audioClip.gain"),1},{ntest::param("audio-clip","audioClip.loop"),1},{ntest::param("audio-clip","audioClip.start"),0},{ntest::param("audio-clip","audioClip.end"),1},{ntest::param("audio-clip","audioClip.fade"),.005f},{ntest::param("audio-clip","audioClip.loopXfade"),20},{ntest::param("audio-clip","audioClip.pitch"),2}});
         graph.nodes[clip].sample=sample;
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,3,0);connect(graph,2,3,0);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
-        graph.nodes[0].parameters[TriggerPulse]=1;
+        graph.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,2400,20000)>.3); // 20 ms crossfade must not swallow a 100 ms loop
         for(float sample:left)assert(std::isfinite(sample));
-        assert(validGraphParam(AudioClipNode,AudioClipXfade));
-        GraphSpec bad=graph;bad.nodes[clip].parameters[AudioClipStart]=.9f;bad.nodes[clip].parameters[AudioClipEnd]=.1f;
+        assert(validGraphParam(ntest::type("audio-clip"),ntest::param("audio-clip","audioClip.loopXfade")));
+        GraphSpec bad=graph;bad.nodes[clip].parameters[ntest::param("audio-clip","audioClip.start")]=.9f;bad.nodes[clip].parameters[ntest::param("audio-clip","audioClip.end")]=.1f;
         std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
-        graph.nodes[1].parameters[TriggerPulse]=1;
+        graph.nodes[1].parameters[ntest::param(graph.nodes[1],"trigger.pulse")]=1;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,12000,24000)<.005);
@@ -263,13 +264,13 @@ int main() {
         auto sample=std::make_shared<AudioSample>();
         sample->rate=48000;sample->channels=1;sample->samples.assign(2400,.4f);
         GraphSpec graph;
-        add(graph,1,StartNode,{{TriggerPulse,0}});
-        size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f}});
+        add(graph,1,ntest::type("start"),{{ntest::param("start","trigger.pulse"),0}});
+        size_t clip=add(graph,2,ntest::type("audio-clip"),{{ntest::param("audio-clip","audioClip.gain"),1},{ntest::param("audio-clip","audioClip.loop"),0},{ntest::param("audio-clip","audioClip.start"),0},{ntest::param("audio-clip","audioClip.end"),1},{ntest::param("audio-clip","audioClip.fade"),.005f}});
         graph.nodes[clip].sample=sample;
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
-        graph.nodes[0].parameters[TriggerPulse]=1;
+        graph.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(9600),right(9600);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -287,40 +288,40 @@ int main() {
         sample->rate=48000;sample->channels=1;sample->samples.assign(4800,0.0f);
         for(int i=0;i<2400;++i)sample->samples[i]=.5f;
         GraphSpec graph;
-        add(graph,1,StartNode,{{TriggerPulse,0}});
-        size_t clip=add(graph,2,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,0},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,0},{AudioClipReverse,1}});
+        add(graph,1,ntest::type("start"),{{ntest::param("start","trigger.pulse"),0}});
+        size_t clip=add(graph,2,ntest::type("audio-clip"),{{ntest::param("audio-clip","audioClip.gain"),1},{ntest::param("audio-clip","audioClip.loop"),0},{ntest::param("audio-clip","audioClip.start"),0},{ntest::param("audio-clip","audioClip.end"),1},{ntest::param("audio-clip","audioClip.fade"),0},{ntest::param("audio-clip","audioClip.reverse"),1}});
         graph.nodes[clip].sample=sample;
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2,0);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
-        graph.nodes[0].parameters[TriggerPulse]=1;
+        graph.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;
         assert(engine.setGraph(graph));
         std::vector<float> left(4800),right(4800);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,400)<.01);
         assert(rms(left,4000,4800)>.01);
-        graph.nodes[clip].parameters[AudioClipPitch]=12;
-        graph.nodes[clip].parameters[AudioClipReverse]=0;
-        graph.nodes[clip].parameters[ClipRun]=1;
-        assert(validGraphParam(AudioClipNode,AudioClipPitch));
-        assert(validGraphParam(AudioClipNode,AudioClipReverse));
-        assert(!validGraphParam(AudioClipNode,ChorusRate));
+        graph.nodes[clip].parameters[ntest::param("audio-clip","audioClip.pitch")]=12;
+        graph.nodes[clip].parameters[ntest::param("audio-clip","audioClip.reverse")]=0;
+        graph.nodes[clip].parameters[ntest::param("midi-clip","clip.run")]=1;
+        assert(validGraphParam(ntest::type("audio-clip"),ntest::param("audio-clip","audioClip.pitch")));
+        assert(validGraphParam(ntest::type("audio-clip"),ntest::param("audio-clip","audioClip.reverse")));
+        assert(!validGraphParam(ntest::type("audio-clip"),ntest::param("chorus","chorus.rate")));
         puts("audio clip pitch and reverse playback are accepted");
     }
     // The compressor reduces a loud signal and preserves the dry path when mixed out.
     {
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,2,CompressorNode,{{CompThreshold,-30},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),1},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,2,ntest::type("compressor"),{{ntest::param("compressor","compressor.threshold"),-30},{ntest::param("compressor","compressor.ratio"),20},{ntest::param("compressor","compressor.attack"),.001f},{ntest::param("compressor","compressor.release"),.1f},{ntest::param("compressor","compressor.makeup"),1},{ntest::param("compressor","compressor.mix"),1}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double compressed=rms(left,4800,20000);
-        graph.nodes[2].parameters[CompMix]=0;
+        graph.nodes[2].parameters[ntest::param("compressor","compressor.mix")]=0;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double dry=rms(left,4800,20000);
@@ -331,11 +332,11 @@ int main() {
     {
         auto build=[](bool sidechain){
             GraphSpec graph;
-            add(graph,10,MidiNode);
-            add(graph,1,Osc1Node,{{Wave1,0},{Level1,.005f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-            add(graph,2,CompressorNode,{{CompThreshold,-40},{CompRatio,20},{CompAttack,.001f},{CompRelease,.1f},{CompMakeup,1},{CompMix,1}});
-            add(graph,4,NoiseNode,{{NoiseLevel,.5f},{NoiseType,0}});
-            add(graph,3,AudioOutputNode,{{Master,1}});
+            add(graph,10,ntest::type("midi-input"));
+            add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),.005f},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+            add(graph,2,ntest::type("compressor"),{{ntest::param("compressor","compressor.threshold"),-40},{ntest::param("compressor","compressor.ratio"),20},{ntest::param("compressor","compressor.attack"),.001f},{ntest::param("compressor","compressor.release"),.1f},{ntest::param("compressor","compressor.makeup"),1},{ntest::param("compressor","compressor.mix"),1}});
+            add(graph,4,ntest::type("noise"),{{ntest::param("noise","noise.level"),.5f},{ntest::param("noise","noise.type"),0}});
+            add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
             connect(graph,10,1);connect(graph,1,2,0);connect(graph,2,3);
             if(sidechain)connect(graph,4,2,1);
             return graph;
@@ -354,9 +355,9 @@ int main() {
     // A hard ceiling catches peaks above the limiter threshold; bypass exposes them again.
     {
         GraphSpec graph;
-        add(graph,1,NoiseNode,{{NoiseLevel,1},{NoiseType,0}});
-        add(graph,2,LimiterNode,{{LimiterThreshold,-6},{LimiterRelease,.05f},{LimiterCeiling,-12},{LimiterGain,2}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("noise"),{{ntest::param("noise","noise.level"),1},{ntest::param("noise","noise.type"),0}});
+        add(graph,2,ntest::type("limiter"),{{ntest::param("limiter","limiter.threshold"),-6},{ntest::param("limiter","limiter.release"),.05f},{ntest::param("limiter","limiter.ceiling"),-12},{ntest::param("limiter","limiter.gain"),2}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(24000),right(24000);
@@ -373,21 +374,21 @@ int main() {
     // Chorus mixes a modulated delay and is silent at zero mix.
     {
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,2,ChorusNode,{{ChorusRate,.8f},{ChorusDepth,.5f},{ChorusMix,1},{ChorusDelay,12}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),1},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,2,ntest::type("chorus"),{{ntest::param("chorus","chorus.rate"),.8f},{ntest::param("chorus","chorus.depth"),.5f},{ntest::param("chorus","chorus.mix"),1},{ntest::param("chorus","chorus.delay"),12}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
         std::vector<float> left(24000),right(24000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,4800,20000)>.005);
-        graph.nodes[2].parameters[ChorusFeedback]=.7f;
+        graph.nodes[2].parameters[ntest::param("chorus","chorus.feedback")]=.7f;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,4800,20000)>.005);
-        graph.nodes[2].parameters[ChorusMix]=0;
+        graph.nodes[2].parameters[ntest::param("chorus","chorus.mix")]=0;
         assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,4800,20000)>.005);
@@ -396,10 +397,10 @@ int main() {
     // Tremolo modulates amplitude; bypass restores the dry level.
     {
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,Osc1Node,{{Wave1,0},{Level1,1},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,2,TremoloNode,{{TremoloRate,8},{TremoloDepth,1},{TremoloMix,1},{TremoloStereo,0}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),1},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,2,ntest::type("tremolo"),{{ntest::param("tremolo","tremolo.rate"),8},{ntest::param("tremolo","tremolo.depth"),1},{ntest::param("tremolo","tremolo.mix"),1},{ntest::param("tremolo","tremolo.stereo"),0}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -412,10 +413,10 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double dry=rms(left,4800,40000);
         assert(dry>wet*1.4);
-        assert(validGraphParam(TremoloNode,TremoloSync));
-        assert(validGraphParam(TremoloNode,TremoloDivision));
-        graph.nodes[2].parameters[TremoloSync]=1;
-        graph.nodes[2].parameters[TremoloDivision]=1;
+        assert(validGraphParam(ntest::type("tremolo"),ntest::param("tremolo","tremolo.sync")));
+        assert(validGraphParam(ntest::type("tremolo"),ntest::param("tremolo","tremolo.division")));
+        graph.nodes[2].parameters[ntest::param("tremolo","tremolo.sync")]=1;
+        graph.nodes[2].parameters[ntest::param("tremolo","tremolo.division")]=1;
         assert(engine.setGraph(graph));
         for(int b=0;b<8;++b)engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         puts("tremolo modulates level and bypass restores the dry signal");
@@ -423,10 +424,10 @@ int main() {
     // Bit crusher holds and quantizes samples; bypass restores the dry signal.
     {
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,Osc1Node,{{Wave1,0},{Level1,.8f},{Attack,.001f},{Decay,.005f},{Sustain,1},{Release,.01f}});
-        add(graph,2,BitcrusherNode,{{CrushBits,3},{CrushRate,3000},{CrushMix,1}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),.8f},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.decay"),.005f},{ntest::param("oscillator","envelope.sustain"),1},{ntest::param("oscillator","envelope.release"),.01f}});
+        add(graph,2,ntest::type("bitcrusher"),{{ntest::param("bitcrusher","crush.bits"),3},{ntest::param("bitcrusher","crush.rate"),3000},{ntest::param("bitcrusher","crush.mix"),1}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,10,1);connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,69,127);
@@ -439,8 +440,8 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double dry=rms(left,2400,20000);
         assert(dry>crushed*1.1);
-        assert(validGraphParam(BitcrusherNode,CrushBits));
-        assert(!validGraphParam(BitcrusherNode,QuantizeRoot));
+        assert(validGraphParam(ntest::type("bitcrusher"),ntest::param("bitcrusher","crush.bits")));
+        assert(!validGraphParam(ntest::type("bitcrusher"),ntest::param("scale-quantize","quantize.root")));
         puts("bit crusher quantizes samples and bypass restores the dry signal");
     }
     // Scale quantizer transforms incoming notes and tracks note-off mapping.
@@ -448,9 +449,9 @@ int main() {
         struct Sent {uint8_t status,a,b;};
         std::vector<Sent> sent;
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,QuantizeNode,{{QuantizeRoot,0},{QuantizeScale,0},{QuantizeMode,2}});
-        add(graph,2,MidiOutNode);
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("scale-quantize"),{{ntest::param("scale-quantize","quantize.root"),0},{ntest::param("scale-quantize","quantize.scale"),0},{ntest::param("scale-quantize","quantize.mode"),2}});
+        add(graph,2,ntest::type("midi-output"));
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
@@ -480,31 +481,31 @@ int main() {
         bool bypassedOff=false;
         for(const auto& event:sent)if(event.status==0x80 && event.a==61)bypassedOff=true;
         assert(bypassedOff);
-        assert(validGraphParam(QuantizeNode,QuantizeRoot));
-        assert(!validGraphParam(QuantizeNode,ChorusMix));
+        assert(validGraphParam(ntest::type("scale-quantize"),ntest::param("scale-quantize","quantize.root")));
+        assert(!validGraphParam(ntest::type("scale-quantize"),ntest::param("chorus","chorus.mix")));
         puts("scale quantizer maps held notes and releases the mapped pitch");
     }
     // Delay sync parameters are accepted and the synced delay renders.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,Osc1Node,{{Level1,.7f}});
-        add(graph,3,DelayNode,{{DelaySync,1},{DelayDivision,1},{DelayFeedback,.3f},{DelayMix,.4f}});
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("midi-input"));add(graph,2,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.level"),.7f}});
+        add(graph,3,ntest::type("delay"),{{ntest::param("delay","delay.sync"),1},{ntest::param("delay","delay.division"),1},{ntest::param("delay","delay.feedback"),.3f},{ntest::param("delay","delay.mix"),.4f}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(24000),right(24000);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,left.size())>.01);
-        assert(validGraphParam(DelayNode,DelaySync));
-        assert(validGraphParam(DelayNode,DelayDivision));
+        assert(validGraphParam(ntest::type("delay"),ntest::param("delay","delay.sync")));
+        assert(validGraphParam(ntest::type("delay"),ntest::param("delay","delay.division")));
         puts("synced delay accepts musically meaningful divisions");
     }
     // Comment nodes are inert and do not affect the graph.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,Osc1Node);add(graph,3,AudioOutputNode);add(graph,4,CommentNode);
+        add(graph,1,ntest::type("midi-input"));add(graph,2,ntest::type("oscillator"));add(graph,3,ntest::type("audio-output"));add(graph,4,ntest::type("comment"));
         connect(graph,1,2);connect(graph,2,3);
-        assert(validGraphParam(CommentNode,0)==false);
+        assert(validGraphParam(ntest::type("comment"),0)==false);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.midi(0x90,60,100);
         std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
@@ -516,7 +517,7 @@ int main() {
         struct Sent {uint8_t status,a,b;};
         std::vector<Sent> sent;
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,ChannelFilterNode,{{ChannelFilter,4}});add(graph,3,MidiOutNode);
+        add(graph,1,ntest::type("midi-input"));add(graph,2,ntest::type("channel-filter"),{{ntest::param("channel-filter","channelFilter.channel"),4}});add(graph,3,ntest::type("midi-output"));
         connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
@@ -525,11 +526,11 @@ int main() {
         bool passed=false,dropped=true;
         for(const auto& e:sent){if(e.status==0x93&&e.a==60)passed=true;if(e.status==0x94&&e.a==62)dropped=false;}
         assert(passed&&dropped);
-        graph.nodes[1].parameters[ChannelFilter]=0;assert(engine.setGraph(graph));sent.clear();
+        graph.nodes[1].parameters[ntest::param("channel-filter","channelFilter.channel")]=0;assert(engine.setGraph(graph));sent.clear();
         engine.midi(0x94,64,100);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         bool all=false;for(const auto& e:sent)if(e.status==0x94&&e.a==64)all=true;
         assert(all);
-        assert(validGraphParam(ChannelFilterNode,ChannelFilter));
+        assert(validGraphParam(ntest::type("channel-filter"),ntest::param("channel-filter","channelFilter.channel")));
         puts("MIDI channel filter forwards only the selected channel");
     }
     // MidiOut can force a channel while channel 0 follows the input.
@@ -537,7 +538,7 @@ int main() {
         struct Sent {uint8_t status,a,b;};
         std::vector<Sent> sent;
         GraphSpec graph;
-        add(graph,1,MidiNode);add(graph,2,MidiOutNode,{{MidiOutChannel,5}});
+        add(graph,1,ntest::type("midi-input"));add(graph,2,ntest::type("midi-output"),{{ntest::param("midi-output","midiOut.channel"),5}});
         connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
@@ -545,20 +546,20 @@ int main() {
         std::vector<float> left(256),right(256);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         bool forced=false;for(const auto& e:sent)if(e.status==0x94&&e.a==60)forced=true;
         assert(forced);
-        graph.nodes[1].parameters[MidiOutChannel]=0;assert(engine.setGraph(graph));sent.clear();
+        graph.nodes[1].parameters[ntest::param("midi-output","midiOut.channel")]=0;assert(engine.setGraph(graph));sent.clear();
         engine.midi(0x93,62,100);engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         bool follows=false;for(const auto& e:sent)if(e.status==0x93&&e.a==62)follows=true;
         assert(follows);
-        assert(validGraphParam(MidiOutNode,MidiOutChannel));
+        assert(validGraphParam(ntest::type("midi-output"),ntest::param("midi-output","midiOut.channel")));
         puts("MIDI output can force a channel");
     }
     // Output width collapses the stereo image at 0 and widens it at 2.
     {
         GraphSpec graph;
-        add(graph,1,MidiNode);
-        add(graph,2,Osc1Node,{{Level1,.8f}});
-        add(graph,3,ChorusNode,{{ChorusMix,.5f},{ChorusDepth,.6f}});
-        add(graph,4,AudioOutputNode,{{Master,1},{OutputWidth,0}});
+        add(graph,1,ntest::type("midi-input"));
+        add(graph,2,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.level"),.8f}});
+        add(graph,3,ntest::type("chorus"),{{ntest::param("chorus","chorus.mix"),.5f},{ntest::param("chorus","chorus.depth"),.6f}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1},{ntest::param("audio-output","output.width"),0}});
         connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(12000),right(12000);
@@ -566,11 +567,11 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double narrow=0;for(size_t i=0;i<left.size();++i)narrow+=(left[i]-right[i])*(left[i]-right[i]);
         assert(narrow<1e-6);
-        graph.nodes[3].parameters[OutputWidth]=2;assert(engine.setGraph(graph));
+        graph.nodes[3].parameters[ntest::param("audio-output","output.width")]=2;assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         double wide=0;for(size_t i=0;i<left.size();++i)wide+=(left[i]-right[i])*(left[i]-right[i]);
         assert(wide>narrow);
-        assert(validGraphParam(AudioOutputNode,OutputWidth));
+        assert(validGraphParam(ntest::type("audio-output"),ntest::param("audio-output","output.width")));
         puts("output width collapses and widens the stereo image");
     }
     // Transpose shifts note-ons and their matching note-offs.
@@ -578,9 +579,9 @@ int main() {
         struct Sent {uint8_t status,a,b;};
         std::vector<Sent> sent;
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,TransposeNode,{{TransposeSemitones,7}});
-        add(graph,2,MidiOutNode);
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("transpose"),{{ntest::param("transpose","transpose.semitones"),7}});
+        add(graph,2,ntest::type("midi-output"));
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
@@ -593,28 +594,28 @@ int main() {
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         bool off=false;for(const auto& e:sent)if(e.status==0x80 && e.a==67)off=true;
         assert(off);
-        assert(validGraphParam(TransposeNode,TransposeSemitones));
-        assert(!validGraphParam(TransposeNode,ChorusMix));
+        assert(validGraphParam(ntest::type("transpose"),ntest::param("transpose","transpose.semitones")));
+        assert(!validGraphParam(ntest::type("transpose"),ntest::param("chorus","chorus.mix")));
         puts("transpose shifts note-on and note-off pitches");
     }
     // Noise gate closes on low-level input while opening on loud input.
     {
         GraphSpec graph;
-        add(graph,1,NoiseNode,{{NoiseLevel,.6f},{NoiseType,0}});
-        add(graph,2,GateNode,{{GateThreshold,-20},{GateRange,.8f},{GateAttack,.001f},{GateRelease,.05f}});
-        add(graph,3,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("noise"),{{ntest::param("noise","noise.level"),.6f},{ntest::param("noise","noise.type"),0}});
+        add(graph,2,ntest::type("noise-gate"),{{ntest::param("noise-gate","gate.threshold"),-20},{ntest::param("noise-gate","gate.range"),.8f},{ntest::param("noise-gate","gate.attack"),.001f},{ntest::param("noise-gate","gate.release"),.05f}});
+        add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,2);connect(graph,2,3);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         float open=rms(left,24000,48000);
         assert(open>.02);
-        graph.nodes[0].parameters[NoiseLevel]=.001f;assert(engine.setGraph(graph));
+        graph.nodes[0].parameters[ntest::param("noise","noise.level")]=.001f;assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         float closed=rms(left,24000,48000);
         assert(closed<open*.3f);
-        assert(validGraphParam(GateNode,GateThreshold));
-        assert(!validGraphParam(GateNode,ChorusMix));
+        assert(validGraphParam(ntest::type("noise-gate"),ntest::param("noise-gate","gate.threshold")));
+        assert(!validGraphParam(ntest::type("noise-gate"),ntest::param("chorus","chorus.mix")));
         puts("noise gate closes on low-level audio");
     }
     // Note echo schedules delayed repeats with pitch and velocity feedback.
@@ -622,9 +623,9 @@ int main() {
         struct Sent {uint8_t status,a,b;};
         std::vector<Sent> sent;
         GraphSpec graph;
-        add(graph,10,MidiNode);
-        add(graph,1,EchoNode,{{EchoTime,.1f},{EchoRepeats,2},{EchoFeedback,.5f},{EchoPitch,12}});
-        add(graph,2,MidiOutNode);
+        add(graph,10,ntest::type("midi-input"));
+        add(graph,1,ntest::type("note-echo"),{{ntest::param("note-echo","echo.time"),.1f},{ntest::param("note-echo","echo.repeats"),2},{ntest::param("note-echo","echo.feedback"),.5f},{ntest::param("note-echo","echo.pitch"),12}});
+        add(graph,2,ntest::type("midi-output"));
         connect(graph,10,1);connect(graph,1,2);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
         engine.setMidiOutput(&sent,[](void* p,int,uint8_t s,uint8_t a,uint8_t b){static_cast<std::vector<Sent>*>(p)->push_back({s,a,b});});
@@ -634,13 +635,13 @@ int main() {
         int on60=0,on72=0,on84=0;
         for(const auto& e:sent){if(e.status==0x90&&e.a==60)++on60;if(e.status==0x90&&e.a==72)++on72;if(e.status==0x90&&e.a==84)++on84;}
         assert(on60==1 && on72==1 && on84==1);
-        assert(validGraphParam(EchoNode,EchoTime));
-        assert(!validGraphParam(EchoNode,ChorusMix));
-        assert(discreteParam(EchoRepeats) && !discreteParam(EchoTime));
-        GraphSpec bad=graph;bad.nodes[1].parameters[EchoRepeats]=2.5f;
+        assert(validGraphParam(ntest::type("note-echo"),ntest::param("note-echo","echo.time")));
+        assert(!validGraphParam(ntest::type("note-echo"),ntest::param("chorus","chorus.mix")));
+        assert(discreteParam(ntest::param("note-echo","echo.repeats")) && !discreteParam(ntest::param("note-echo","echo.time")));
+        GraphSpec bad=graph;bad.nodes[1].parameters[ntest::param("note-echo","echo.repeats")]=2.5f;
         std::vector<size_t> badOrder;assert(!graphOrder(bad,badOrder));
         GraphSpec huge;
-        for(int i=0;i<4100;++i){GraphNode n;n.id=InstanceID(i+1);n.type=Osc1Node;huge.nodes.push_back(n);}
+        for(int i=0;i<4100;++i){GraphNode n;n.id=InstanceID(i+1);n.type=ntest::type("oscillator");huge.nodes.push_back(n);}
         std::vector<size_t> hugeOrder;assert(!graphOrder(huge,hugeOrder));
         assert(tri::maxGraphNodes==4096);
         puts("note echo repeats with pitch and velocity feedback");
@@ -658,20 +659,20 @@ int main() {
     {
         auto build=[&](float chance){
             GraphSpec graph;
-            add(graph,1,StartNode);
-            add(graph,2,RandomNode,{{RandomChance,chance}});
+            add(graph,1,ntest::type("start"));
+            add(graph,2,ntest::type("random"),{{ntest::param("random","random.chance"),chance}});
             auto sample=std::make_shared<AudioSample>();
             sample->rate=48000;sample->channels=1;sample->samples.resize(4800,.5f);
-            size_t clip=add(graph,3,AudioClipNode,{{AudioClipGain,1},{AudioClipLoop,1},{AudioClipStart,0},{AudioClipEnd,1},{AudioClipFade,.005f},{AudioClipXfade,20},{AudioClipPitch,2}});
+            size_t clip=add(graph,3,ntest::type("audio-clip"),{{ntest::param("audio-clip","audioClip.gain"),1},{ntest::param("audio-clip","audioClip.loop"),1},{ntest::param("audio-clip","audioClip.start"),0},{ntest::param("audio-clip","audioClip.end"),1},{ntest::param("audio-clip","audioClip.fade"),.005f},{ntest::param("audio-clip","audioClip.loopXfade"),20},{ntest::param("audio-clip","audioClip.pitch"),2}});
             graph.nodes[clip].sample=sample;
-            add(graph,4,AudioOutputNode,{{Master,1}});
+            add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
             connect(graph,1,2);connect(graph,2,3);connect(graph,3,4);
             return graph;
         };
         auto level=[&](float chance){
             GraphSpec graph=build(chance);
             auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
-            graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+            graph.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;assert(engine.setGraph(graph));
             std::vector<float> left(48000),right(48000);
             engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
             double peak=0;for(float v:left)peak=std::max(peak,double(std::abs(v)));
@@ -684,16 +685,16 @@ int main() {
     // Metronome runs between start and stop triggers.
     {
         GraphSpec graph;
-        add(graph,1,StartNode);add(graph,2,StopNode);
-        add(graph,3,MetronomeNode,{{MetronomeBPM,120},{MetronomeLevel,.5f},{MetronomeAccent,1},{MetronomeBeats,4}});
-        add(graph,4,AudioOutputNode,{{Master,1}});
+        add(graph,1,ntest::type("start"));add(graph,2,ntest::type("stop"));
+        add(graph,3,ntest::type("metronome"),{{ntest::param("metronome","metronome.bpm"),120},{ntest::param("metronome","metronome.level"),.5f},{ntest::param("metronome","metronome.accent"),1},{ntest::param("metronome","metronome.beats"),4}});
+        add(graph,4,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),1}});
         connect(graph,1,3);connect(graph,2,3);connect(graph,3,4);
         auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;assert(engine.setGraph(graph));engine.prepare(48000);
-        graph.nodes[0].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+        graph.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;assert(engine.setGraph(graph));
         std::vector<float> left(48000),right(48000);
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,0,24000)>.001);
-        graph.nodes[1].parameters[TriggerPulse]=1;assert(engine.setGraph(graph));
+        graph.nodes[1].parameters[ntest::param(graph.nodes[1],"trigger.pulse")]=1;assert(engine.setGraph(graph));
         engine.render(nullptr,nullptr,left.data(),right.data(),left.size());
         assert(rms(left,24000,48000)<.001);
         puts("metronome clicks between start and stop triggers");

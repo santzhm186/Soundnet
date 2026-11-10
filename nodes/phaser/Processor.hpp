@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::phaser {
 class PhaserProcessor final : public AudioProcessor {
     std::atomic<float> rate_{.5f},depth_{.7f},feedback_{.3f},mix_{.5f};
     double sampleRate_=48000,phase_=0;

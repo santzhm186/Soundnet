@@ -88,6 +88,7 @@ inline constexpr uint32_t CapAssetAudio    =1u<<12;
 inline constexpr uint32_t CapAssetModel    =1u<<13;
 inline constexpr uint32_t CapTemporal      =1u<<14; // needs a musical/clock time domain
 inline constexpr uint32_t CapSnapshot      =1u<<15; // may publish an immutable result resource
+inline constexpr uint32_t CapMidiCapture   =1u<<16; // can record its main MIDI input
 
 // How a node relates to content time. Ordinary data nodes are TimeMode::None and
 // must run without a sample rate, BPM or transport.
@@ -120,6 +121,7 @@ struct ParamSpec {
     uint8_t optionCount=0;
     // Presentation metadata only; never changes the stable key or wire order.
     ParamGroup group=ParamGroup::General;
+    bool hidden=false;
 };
 
 // ---------------------------------------------------------------------------
@@ -136,6 +138,11 @@ struct TextSpec {
     bool multiline=false;
     bool readOnly=false;
     bool hidden=false;
+    const char* assetExtension=nullptr; // materialized separately in a project file
+};
+struct NodePreset {
+    const char* name;
+    std::vector<std::pair<int,float>> values;
 };
 struct NodeSpec {
     const char* key;
@@ -159,6 +166,14 @@ struct NodeSpec {
     EnvironmentRole environmentRole=EnvironmentRole::None;
     unsigned sdkVersion=nodeSDKVersion;
     bool legacyAdapter=false;
+    const char* help=nullptr;
+    std::vector<NodePreset> presets;
+    std::vector<const char*> importExtensions;
+    int assetDropPriority=0;
+    std::vector<std::pair<int,float>> importParameters;
+    bool customParameterEditor=false;
+    int triggerParameter=-1;
+    bool triggerStarts=false;
 };
 
 // Display-only strings belong to their node. Stable IDs and user-authored text
@@ -171,6 +186,7 @@ struct NodeModule {
     NodeSpec spec;
     std::vector<std::pair<int,ParamSpec>> parameters;
     std::vector<NodeTranslation> translations;
+    std::string resourceDirectory;
 };
 const std::vector<NodeModule>& nodeModules();
 inline const char* nodeTranslation(int type,const char* source,bool english,

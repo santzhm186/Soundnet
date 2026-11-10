@@ -98,7 +98,7 @@ int main() {
         NSEvent *up=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:location modifierFlags:0
             timestamp:.1 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];
         [library mouseDown:down];[library mouseUp:up];
-        assert(probe.insertedType==tri::Osc1Node);
+        assert(probe.insertedType==tri::nodeTypeID("soundnet.oscillator"));
         [window close];
         if(saved)[defaults setObject:saved forKey:@"SoundnetCollapsedNodeCategories"];
         else [defaults removeObjectForKey:@"SoundnetCollapsedNodeCategories"];

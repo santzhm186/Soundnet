@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::noise {
 class NoiseProcessor final : public AudioProcessor {
     std::atomic<float> level_{.2f},type_{0};
     uint32_t seedL_=0x12345678u,seedR_=0x9e3779b9u;

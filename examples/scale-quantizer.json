@@ -1,88 +1,120 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 23,
       "x": 80,
       "y": 120,
       "parameters": {
-        "85": 0
-      }
+        "trigger.pulse": 0
+      },
+      "nodeKey": "soundnet.start",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 16,
       "nodeVersion": 2,
       "x": 220,
       "y": 120,
-      "parameters": {
-        "24": 1
-      },
+      "parameters": {},
       "asset": {
         "beats": 4,
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
+      },
+      "nodeKey": "soundnet.midi-clip",
+      "stateVersion": 1
     },
     {
       "id": 3,
-      "type": 36,
       "x": 400,
       "y": 120,
       "parameters": {
-        "1180": 0,
-        "1181": 1,
-        "1182": 2
-      }
+        "quantize.root": 0,
+        "quantize.scale": 1,
+        "quantize.mode": 2
+      },
+      "nodeKey": "soundnet.scale-quantize",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 4,
-      "type": 3,
       "x": 560,
       "y": 120,
       "parameters": {
-        "0": 2,
-        "1": 0.34,
-        "2": 0,
-        "9": 0.01,
-        "10": 0.15,
-        "11": 0.7,
-        "12": 0.2
-      }
+        "osc1.wave": 2,
+        "osc1.level": 0.34,
+        "osc1.tune": 0,
+        "envelope.attack": 0.01,
+        "envelope.decay": 0.15,
+        "envelope.sustain": 0.7,
+        "envelope.release": 0.2
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 5,
-      "type": 19,
       "nodeVersion": 2,
       "x": 740,
       "y": 120,
       "parameters": {
-        "24": 1
-      }
+        "output.master": 1
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
+    },
+    {
+      "id": 6,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 7,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
   "edges": [
     {
       "source": 1,
       "target": 2,
-      "port": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 2,
       "target": 3,
-      "port": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 3,
       "target": 4,
-      "port": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 4,
       "target": 5,
-      "port": 0
+      "port": "audio",
+      "sourcePort": "audio"
     }
-  ]
+  ],
+  "projectId": "scale-quantizer",
+  "settings": {
+    "environmentRequired": true
+  }
 }

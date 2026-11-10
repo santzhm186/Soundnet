@@ -10,8 +10,8 @@ inline NSView* editor(NodeEditorContext context) {
         (void)feedback;  // ACE-Step has no score loop
         return makeRequest(node,environment,workDir);
     };
-    spec.job=[](tri::musicgen::GenRequest request,NSString* label,NSString* folder,NSString* takes) {
-        return makeJob(std::move(request),label,folder,takes);
+    spec.job=[](tri::musicgen::GenRequest request,NSString* label) {
+        return makeJob(std::move(request),label);
     };
     spec.apply=applyResult;
     spec.defaultLabel=@"ACE-Step";

@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include "../app/AudioBridge.hpp"
 #include "../src/WavFile.hpp"
 #include <cstdio>
@@ -56,8 +57,8 @@ int main() {
 
     // Standalone transport drops scheduled future MIDI as well as live input.
     // A Stop/Play pair before the next callback still drains the old queue.
-    tri::GraphSpec graph;graph.nodes={{1,tri::MidiNode},{2,tri::Osc1Node},{3,tri::AudioOutputNode}};
-    graph.nodes.back().nodeVersion=tri::nodeSpec(tri::AudioOutputNode)->nodeVersion;
+    tri::GraphSpec graph;graph.nodes={{1,ntest::type("midi-input")},{2,ntest::type("oscillator")},{3,ntest::type("audio-output")}};
+    graph.nodes.back().nodeVersion=tri::nodeSpec(ntest::type("audio-output"))->nodeVersion;
     graph.edges={{1,2,0},{2,3,0}};assert(realtime.dsp.setGraph(graph));
     realtime.framesPerTick=1;
     realtime.enqueue(0x90,60,127,10000);

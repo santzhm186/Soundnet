@@ -1,5 +1,7 @@
 #include <AudioUnitSDK/MusicDeviceBase.h>
 #include "WorkflowProperties.hpp"
+#import "../platform/NodePackageLoader.h"
+#include "../src/MidiCaptureAccess.hpp"
 #include "../app/WorkflowAssetStore.hpp"
 #include <CoreFoundation/CoreFoundation.h>
 #include <algorithm>
@@ -166,6 +168,8 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
     using Base = ausdk::MusicDeviceBase;
     tri::Engine engine;
     tri::WorkflowAssetStore assetStore;
+    std::mutex captureReplyLock;
+    NSDictionary *captureReply=@{};
     // The property thread publishes a matching function/context pair for the next
     // render. Packet timestamps are sample offsets from the original host buffer.
     tri::RealtimeAsset<AUMIDIOutputCallbackStruct> midiDelivery;
@@ -186,7 +190,8 @@ class TernaryUnit final : public ausdk::MusicDeviceBase {
         list.numPackets=1;
         auto &packet=list.packet[0];
         packet.timeStamp=unit.midiOffset+frame;
-        packet.length=3;
+        const int type=status&0xf0;
+        packet.length=(type==0xc0 || type==0xd0)?2:3;
         packet.data[0]=status; packet.data[1]=a; packet.data[2]=b;
         delivery.midiOutputCallback(delivery.userData,unit.renderStamp,0,&list);
     }
@@ -237,6 +242,8 @@ public:
         return 2;
     }
     OSStatus Initialize() override {
+        const auto loaded=tri::refreshNodePackages(tri::defaultNodePackageRoots(tri::nodePlatformBundle()),true);
+        if(!loaded.ok)return kAudioUnitErr_FailedInitialization;
         const auto rate = Output(0).GetStreamFormat().mSampleRate;
         if (Input(0).IsActive() && Input(0).GetStreamFormat().mSampleRate != rate)
             return kAudioUnitErr_FormatNotSupported;
@@ -286,6 +293,15 @@ public:
                 int operation=-1;
                 if(CFGetTypeID(command)!=CFNumberGetTypeID() || !CFNumberGetValue(command,kCFNumberIntType,&operation))
                     return kAudioUnitErr_InvalidPropertyValue;
+                if(operation==ternaryAU::refreshNodeLibrary) {
+                    const auto refreshed=tri::refreshNodePackages(tri::defaultNodePackageRoots(tri::nodePlatformBundle()),true);
+                    if(!refreshed.ok)return kAudioUnitErr_InvalidPropertyValue;
+                    engine.setProcessingEnabled(false);
+                    if(!assetStore.replace(assetStore.current,engine))return kAudioUnitErr_InvalidPropertyValue;
+                    PropertyChanged(kAudioUnitProperty_ClassInfo,global,0);
+                    PropertyChanged(ternaryAU::processing,global,0);
+                    return noErr;
+                }
                 if (operation==ternaryAU::playLocalMIDI) {
                     ternaryAU::LocalMIDI event{};
                     auto bytes=static_cast<CFDataRef>(CFDictionaryGetValue(packet,CFSTR("Soundnet.LocalMIDI")));
@@ -386,6 +402,7 @@ public:
             if (id==ternaryAU::processing) { size=sizeof(UInt32); writable=true; return noErr; }
             if (id==ternaryAU::localMIDI) { size=sizeof(ternaryAU::LocalMIDI); writable=true; return noErr; }
             if (id==ternaryAU::assets) { size=sizeof(CFDictionaryRef); writable=true; return noErr; }
+            if (id==ternaryAU::midiCapture) { size=sizeof(CFDictionaryRef); writable=true; return noErr; }
             if(id==ternaryAU::display) { size=sizeof(ternaryAU::DisplayState); writable=false; return noErr; }
             if (id==ternaryAU::routes || ternaryAU::isLayoutProperty(id)) {
                 size = id==ternaryAU::routes ? sizeof(tri::Routing) : sizeof(float);
@@ -416,6 +433,12 @@ public:
         }
         if (scope==global && element==0 && id==ternaryAU::assets) {
             auto dictionary=(__bridge_retained CFDictionaryRef)assetStore.current;
+            std::memcpy(data,&dictionary,sizeof(dictionary));
+            return noErr;
+        }
+        if(scope==global&&element==0&&id==ternaryAU::midiCapture) {
+            std::lock_guard<std::mutex> lock(captureReplyLock);
+            auto dictionary=(__bridge_retained CFDictionaryRef)captureReply;
             std::memcpy(data,&dictionary,sizeof(dictionary));
             return noErr;
         }
@@ -507,6 +530,19 @@ public:
             PropertyChanged(kAudioUnitProperty_ClassInfo,global,0);
             return noErr;
         }
+        if(scope==global&&element==0&&id==ternaryAU::midiCapture) {
+            if(size!=sizeof(CFDictionaryRef))return kAudioUnitErr_InvalidPropertyValue;
+            CFDictionaryRef raw=nullptr;
+            std::memcpy(&raw,data,sizeof(raw));
+            NSDictionary *command=(__bridge NSDictionary *)raw;
+            if(![command isKindOfClass:NSDictionary.class]||
+               ![command[@"request"] isKindOfClass:NSString.class])return kAudioUnitErr_InvalidPropertyValue;
+            std::lock_guard<std::mutex> lock(captureReplyLock);
+            NSMutableDictionary *reply=[triassets::midiCaptureCommand(engine,command) mutableCopy];
+            reply[@"request"]=command[@"request"];
+            captureReply=reply;
+            return noErr;
+        }
         if (scope==global && element==0 && id==ternaryAU::routes) {
             tri::Routing graph{};
             if(size!=sizeof(graph)) return kAudioUnitErr_InvalidPropertyValue;
@@ -581,7 +617,10 @@ public:
         renderStamp=&ts;
         midiOffset=0;
         for (int ch=0;ch<16 && resetChannels;++ch)
-            if (resetChannels&(1u<<ch)) emitEvent(this,0,0xb0|ch,123,0);
+            if (resetChannels&(1u<<ch)) {
+                emitEvent(this,0,0xb0|ch,121,0);
+                emitEvent(this,0,0xb0|ch,123,0);
+            }
         resetChannels=0;
         if (overflow.exchange(false)) {
             engine.panic();

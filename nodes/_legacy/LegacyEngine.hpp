@@ -4,6 +4,7 @@
 #include "../../src/MidiClip.hpp"
 #include "../../src/NoteModel.hpp"
 #include "../../src/RealtimeAsset.hpp"
+#include "../../platform/runtime/MidiControllerState.hpp"
 
 #include <algorithm>
 #include <array>
@@ -347,23 +348,29 @@ class LegacyEngine {
     }
     void updateMidiOutput() {
         if (!midiEmit) return;
-        const auto& desired=musicNotes[routes[routeIndex(RouteMidiOutIn)]];
+        const int source=routes[routeIndex(RouteMidiOutIn)];
+        const auto& desired=musicNotes[source];
+        const bool clipOutput=clipPerformance && source==ClipNode;
         // Emit releases before attacks. In particular, distinct input notes
         // mapped to the same pitch must never leave a downstream voice stuck.
         for (int k=0;k<2048;++k) if (sentNotes[k].velocity && sentNotes[k].token!=desired[k].token) {
-            midiEmit(midiContext,emitFrame,0x80|(k%16),k/16,0);
+            midiEmit(midiContext,emitFrame,0x80|(k%16),k/16,clipOutput?clipOffVelocity[k]:0);
             sentNotes[k]={};
         }
         for (int k=0;k<2048;++k) if (desired[k].velocity && !sentNotes[k].velocity) {
             midiEmit(midiContext,emitFrame,0x90|(k%16),k/16,desired[k].velocity);
             sentNotes[k]=desired[k];
         }
+        if(clipOutput)clipOffVelocity.fill(0);
     }
     RealtimeAsset<MidiClip> clipAsset;
     RealtimeAsset<NoteModel> modelAsset;
     std::array<unsigned,2048> clipDown{};
+    std::array<uint8_t,2048> clipOffVelocity{};
     double clipPosition=0;
     size_t clipCursor=0;
+    MidiControllerState clipControllers;
+    bool clipPerformance=false,clipAdvanced=false;
     bool clipActive=false, clipFinished=false, clipNeedsReset=true;
     bool sawDAW=false, sawLocal=false;
     bool musicMode=false, isolated=false, chordActive=false, progressActive=false, arpActive=false;
@@ -383,19 +390,42 @@ class LegacyEngine {
         return routes[routeIndex(port)]==ClockNode ? get(ClockBPM) : get(Tempo);
     }
     void clearClipNotes() {
+        clipControllers.release([&](uint8_t status,uint8_t a,uint8_t b) {
+            if(midiEmit)midiEmit(midiContext,emitFrame,status,a,b);
+        });
         musicNotes[ClipNode].fill({});
         clipDown.fill(0);
         clipCursor=0;
+        clipAdvanced=false;
     }
-    void clipEvent(const ClipEvent& e) {
+    bool clipEvent(const ClipEvent& e) {
+        const int type=e.status&0xf0;
+        if(type!=0x80 && type!=0x90) {
+            if(clipPerformance && midiEmit) {
+                clipControllers.observe(e.status,e.data1,e.data2);
+                midiEmit(midiContext,emitFrame,e.status,e.data1,e.data2);
+                if(type==0xb0 && (e.data1==120 || e.data1>=123)) {
+                    for(int k=e.status&15;k<2048;k+=16) {
+                        clipDown[k]=0;
+                        musicNotes[ClipNode][k]={};
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
         const int k=e.data1*16+(e.status&15);
-        if ((e.status&0xf0)==0x90 && e.data2) {
+        if (type==0x90 && e.data2) {
             ++clipDown[k];
             musicNotes[ClipNode][k]={e.data2,++serial,3};
         } else {
             if (clipDown[k]) --clipDown[k];
-            if (!clipDown[k]) musicNotes[ClipNode][k]={};
+            if (!clipDown[k]) {
+                musicNotes[ClipNode][k]={};
+                if(clipPerformance)clipOffVelocity[k]=e.data2;
+            }
         }
+        return true;
     }
     void* cycleContext=nullptr;
     void (*cycleEmit)(void*,int)=nullptr;
@@ -404,6 +434,9 @@ class LegacyEngine {
         const auto& clip=clipAsset.current();
         bool changed=false;
         if (clipPosition+1e-9>=clip.lengthBeats) {
+            // Deliver events at the exact end before releasing and wrapping.
+            if(clipPerformance && clipAdvanced)
+                while(clipCursor<clip.events.size())clipEvent(clip.events[clipCursor++]);
             if(cycleEmit)cycleEmit(cycleContext,emitFrame);
             clearClipNotes();
             if(get(ClipRun)<.5f){clipActive=false;clipFinished=true;return true;}
@@ -412,10 +445,10 @@ class LegacyEngine {
             clipPosition=std::fmod(clipPosition+1e-9,clip.lengthBeats);
         }
         while (clipCursor<clip.events.size() && clip.events[clipCursor].beat<=clipPosition+1e-9) {
-            clipEvent(clip.events[clipCursor++]);
-            changed=true;
+            changed=clipEvent(clip.events[clipCursor++]) || changed;
         }
         clipPosition+=clipIncrement;
+        clipAdvanced=true;
         return changed;
     }
     void syncMusicClocks() {
@@ -777,6 +810,7 @@ public:
     }
     void reset() {
         emitFrame=0; flushMidiOutput();
+        clipOffVelocity.fill(0);
         voices = {}; keys = {}; pedal = {}; bend.fill(1.);
         for (auto& bank:musicNotes) bank.fill({});
         for (auto& bank:soundingNotes) bank.fill({});
@@ -851,6 +885,8 @@ public:
     }
     // Parsing, validation and publication happen off the render thread.
     void setCycleOutput(void* context,void (*emit)(void*,int)) {cycleContext=context;cycleEmit=emit;}
+    // Instance graphs forward channel events. Legacy patches use folded notes.
+    void enableClipPerformance() {clipPerformance=true;}
     bool setClip(const MidiClip& clip) {
         if (!std::isfinite(clip.lengthBeats) || clip.lengthBeats<0 || clip.lengthBeats>65536 ||
             clip.events.size()>32768 || (!clip.events.empty() && clip.lengthBeats<=0)) return false;
@@ -858,7 +894,8 @@ public:
         for (const auto& event:clip.events) {
             const int type=event.status&0xf0;
             if (!std::isfinite(event.beat) || event.beat<previous || event.beat>clip.lengthBeats ||
-                (type!=0x80 && type!=0x90) || event.data1>127 || event.data2>127) return false;
+                (!clipPerformance && type!=0x80 && type!=0x90) ||
+                type<0x80 || type>0xe0 || event.data1>127 || event.data2>127) return false;
             previous=event.beat;
         }
         clipAsset.publish(clip); return true;

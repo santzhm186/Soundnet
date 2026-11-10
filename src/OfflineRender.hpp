@@ -52,9 +52,11 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     if(rate<8000||rate>192000){why="导出采样率需在 8–192 kHz 之间。";return false;}
     // SMF conversion tempo encodes elapsed seconds; it is not a project BPM.
     const double bpm=120;
+    if(!normalizeGraph(graph,&why))return false;
     bool hasStart=false;
     for(GraphNode& node:graph.nodes) {
-        if(node.type==StartNode) {node.parameters[TriggerPulse]=0;hasStart=true;}
+        const auto* spec=nodeSpec(node.type);
+        if(spec&&spec->triggerStarts&&spec->triggerParameter>=0){node.parameters[spec->triggerParameter]=0;hasStart=true;}
     }
     // A graph engine owns over a megabyte of bounded realtime queues. Export
     // runs on a GCD worker whose stack is smaller than that state.
@@ -64,7 +66,8 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
     MidiCapture capture{&result,rate,0};
     engine->setMidiOutput(&capture,captureMidi);
     if(hasStart) {
-        for(GraphNode& node:graph.nodes)if(node.type==StartNode)node.parameters[TriggerPulse]=1;
+        for(GraphNode& node:graph.nodes){const auto* spec=nodeSpec(node.type);
+            if(spec&&spec->triggerStarts&&spec->triggerParameter>=0)node.parameters[spec->triggerParameter]=1;}
         if(!engine->setGraph(graph)){why="工作流未通过校验，无法导出。";return false;}
     }
     size_t total=size_t(std::ceil(seconds*rate));
@@ -101,6 +104,7 @@ inline bool render(GraphSpec graph,double seconds,double rate,Result& result,std
 inline bool renderStems(GraphSpec graph,double seconds,double rate,
         std::vector<Stem>& stems,std::string& why,const std::atomic<bool>* cancelled=nullptr) {
     stems.clear();
+    if(!normalizeGraph(graph,&why))return false;
     std::vector<size_t> outputs;
     // Output detection is a declared capability, not a type list: a new sink
     // node participates in stem export without touching this file.

@@ -50,12 +50,15 @@ int main() {
         check(spec.assetKind&&std::strcmp(spec.assetKind,"audio")==0,"yue2 embeds audio");
         check(!spec.legacyAdapter,"yue2 runs on the public kernel path");
         check(spec.inputs.size()==1&&spec.inputs[0].signal==tri::Signal::Trigger,"yue2 trigger input");
-        check(spec.outputs.size()==1&&spec.outputs[0].signal==tri::Signal::Audio,"yue2 audio output");
+        check(spec.outputs.size()==2&&spec.outputs[0].signal==tri::Signal::Audio&&
+              std::strcmp(spec.outputs[0].id,"audio")==0,"yue2 preserves its audio output");
+        check(spec.outputs.size()==2&&spec.outputs[1].signal==tri::Signal::Midi&&
+              std::strcmp(spec.outputs[1].id,"notes")==0,"yue2 MIDI notes output");
         check(spec.kernelFactory!=nullptr,"yue2 has a kernel factory");
         check(module.parameters.size()==10,"yue2 parameter count");
         bool takes=false;
         for(const auto& text:spec.texts)if(std::strcmp(text.id,"gen.takes")==0)takes=text.hidden;
-        check(takes,"the take log is hidden");
+        check(!takes,"take history is stored as platform resources, not text paths");
         tri::KernelConfig good;
         good.parameters[tri::nodes::yue2::startID]=0.2f;
         good.parameters[tri::nodes::yue2::endID]=0.9f;
@@ -146,6 +149,56 @@ int main() {
         kernel->configure(empty);
         runPlayback(*kernel,context);
         check(outL[255]==0,"missing asset stays silent");
+    }
+
+    // ABC-only playback uses score tempo, even without an audio asset.
+    {
+        auto kernel=tri::nodes::yue2::create();
+        kernel->prepare(48000,256);
+        tri::KernelConfig config;
+        config.texts["yue2.score"]="X:1\nM:4/4\nL:1/4\nQ:1/4=120\nK:C\nC D|\n";
+        kernel->configure(config);
+        tri::KernelMidiEvent midi[8]{};
+        tri::KernelOutput output;
+        output.id="notes";output.midi=midi;output.midiCapacity=8;
+        tri::KernelTriggerEvent start{17,true};
+        tri::KernelInput input;input.id="trigger";input.triggers=&start;
+        tri::KernelContext context;
+        context.frames=256;context.outputs=&output;context.outputCount=1;
+        context.inputs=&input;context.inputCount=1;
+        kernel->process(context);
+        check(output.midiCount==0,"score waits for a trigger");
+        input.triggerCount=1;
+        kernel->process(context);
+        check(output.midiCount==1&&midi[0].status==0x90&&midi[0].a==60&&midi[0].frame==17,
+              "score starts on the trigger frame");
+
+        input.triggerCount=0;
+        for(int frame=256;frame<24000;frame+=256) {
+            output.midiCount=0;
+            context.frames=std::min(256,24000-frame);
+            kernel->process(context);
+            check(output.midiCount==0,"first note sustains for a beat at 120 BPM");
+        }
+        context.frames=64;
+        kernel->process(context);
+        check(output.midiCount==2&&midi[0].status==0x80&&midi[0].a==60&&midi[0].frame==17&&
+              midi[1].status==0x90&&midi[1].a==62&&midi[1].frame==17,"next beat releases before starting");
+
+        output.midiCount=0;
+        tri::KernelTriggerEvent stop{21,false};
+        input.triggers=&stop;input.triggerCount=1;
+        kernel->process(context);
+        check(output.midiCount==1&&midi[0].status==0x80&&midi[0].a==62&&midi[0].frame==21,
+              "stop trigger releases the held pitch");
+        output.midiCount=0;
+        input.triggers=&start;
+        kernel->process(context);
+        kernel->reset(tri::KernelResetReason::Stop);
+        output.midiCount=0;
+        input.triggerCount=0;
+        kernel->process(context);
+        check(output.midiCount==0,"reset clears the score cursor");
     }
 
     // ---- backend contract -------------------------------------------------

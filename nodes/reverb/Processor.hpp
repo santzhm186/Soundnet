@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::reverb {
 class ReverbProcessor final : public AudioProcessor {
     static constexpr int combCount=8,allpassCount=4;
     static constexpr int combTuning[combCount]={1116,1188,1277,1356,1422,1491,1557,1617};
@@ -101,8 +102,8 @@ public:
                 if(++indexR>=bufferR.size())indexR=0;
                 right=output;
             }
-            float yL=dryL*(1.0f-mix)+left*wet1+right*wet2;
-            float yR=dryR*(1.0f-mix)+right*wet1+left*wet2;
+            float yL=dryL*(1.0f-mix)+(left*wet1+right*wet2)*mix;
+            float yR=dryR*(1.0f-mix)+(right*wet1+left*wet2)*mix;
             outL[i]=std::isfinite(yL)?yL:0.0f;
             outR[i]=std::isfinite(yR)?yR:0.0f;
         }

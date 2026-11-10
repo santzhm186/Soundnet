@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::chorus {
 class ChorusProcessor final : public AudioProcessor {
     std::atomic<float> rate_{.6f},depth_{.35f},mix_{.35f},delay_{12},feedback_{0};
     double sampleRate_=48000,phase_=0;

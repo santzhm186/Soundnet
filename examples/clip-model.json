@@ -209,8 +209,29 @@
       "stateVersion": 1,
       "x": 323,
       "y": 151
+    },
+    {
+      "id": 18,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 19,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
   "projectId": "clip-model",
-  "version": 4
+  "version": 4,
+  "settings": {
+    "environmentRequired": true
+  }
 }

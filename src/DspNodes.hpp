@@ -1,3 +1,3 @@
 #pragma once
-// Existing processors live with their node; new nodes register a NodeKernel.
-#include "../nodes/_legacy/AudioProcessorRegistry.hpp"
+// Public processor interface; node factories are discovered through the SDK.
+#include "../platform/AudioProcessor.hpp"

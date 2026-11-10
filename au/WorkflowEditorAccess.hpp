@@ -99,6 +99,10 @@ public:
         invalidate();
         return writeError;
     }
+    OSStatus refreshNodes() {
+        writeError=writeStandard(@{@"Ternary.EditorCommand":@(refreshNodeLibrary)});
+        invalidate();return writeError;
+    }
     OSStatus sendLocalMIDI(LocalMIDI event) {
         if (!remote) {
             writeError=AudioUnitSetProperty(unit,localMIDI,kAudioUnitScope_Global,0,&event,sizeof(event));

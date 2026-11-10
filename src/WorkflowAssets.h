@@ -3,6 +3,7 @@
 #include "MidiClip.hpp"
 #include "NoteModel.hpp"
 #include "GraphSpec.hpp"
+#include "../platform/ProjectResources.h"
 
 namespace triassets {
 // The portable dictionary contains the original SMF and/or an evaluated pitch map.
@@ -18,5 +19,10 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec &graph, NSString **why,
 // Upgrade a v3 document to the canonical v4 shape: nodeKey, stable parameter
 // keys, stable port IDs. Unknown nodes and their edges are preserved verbatim.
 NSDictionary *canonicalGraph(NSDictionary *document, NSString **why);
+// Disk project manifests use references. The in-memory v4 graph and AU state
+// continue to carry the resolved assets for the editor and runtime.
+NSURL *autosaveURL();
+NSDictionary *readProject(NSURL *url, NSString **why);
+bool writeProject(NSDictionary *document, NSURL *url, NSString **why);
 bool validate(NSDictionary *assets, NSString **why);
 }

@@ -1,77 +1,86 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 23,
       "x": 0,
       "y": 180,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.start",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 16,
       "nodeVersion": 2,
       "x": 230,
       "y": 180,
       "parameters": {
-        "57": 112,
-        "81": 0,
-        "82": 1
+        "clock.bpm": 112,
+        "clip.run": 0,
+        "clip.loop": 1
       },
       "asset": {
         "beats": 4,
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
+      },
+      "nodeKey": "soundnet.midi-clip",
+      "stateVersion": 1
     },
     {
       "id": 4,
-      "type": 26,
       "x": 450,
       "y": 0,
       "parameters": {
-        "87": 3
-      }
+        "trigger.count": 3
+      },
+      "nodeKey": "soundnet.count",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 5,
-      "type": 24,
       "x": 670,
       "y": 0,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.stop",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 6,
-      "type": 25,
       "x": 670,
       "y": 340,
       "parameters": {
-        "86": 1
-      }
+        "wait.seconds": 1
+      },
+      "nodeKey": "soundnet.wait",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 7,
-      "type": 16,
       "nodeVersion": 2,
       "x": 900,
       "y": 340,
       "parameters": {
-        "57": 112,
-        "81": 0,
-        "82": 0
+        "clock.bpm": 112,
+        "clip.run": 0,
+        "clip.loop": 0
       },
       "asset": {
         "beats": 4,
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
+      },
+      "nodeKey": "soundnet.midi-clip",
+      "stateVersion": 1
     },
     {
       "id": 8,
-      "type": 17,
       "x": 1120,
       "y": 340,
       "parameters": {},
@@ -207,45 +216,73 @@
           1,
           0
         ]
-      }
+      },
+      "nodeKey": "soundnet.note-model",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 9,
-      "type": 3,
       "x": 670,
       "y": 180,
       "parameters": {
-        "0": 0,
-        "1": 0.7,
-        "9": 0.01,
-        "12": 0.15
-      }
+        "osc1.wave": 0,
+        "osc1.level": 0.7,
+        "envelope.attack": 0.01,
+        "envelope.release": 0.15
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 10,
-      "type": 3,
       "x": 1340,
       "y": 340,
       "parameters": {
-        "0": 3,
-        "1": 0.7,
-        "9": 0.02,
-        "12": 0.3
-      }
+        "osc1.wave": 3,
+        "osc1.level": 0.7,
+        "envelope.attack": 0.02,
+        "envelope.release": 0.3
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 11,
-      "type": 7,
       "x": 1560,
       "y": 180,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 12,
-      "type": 19,
       "nodeVersion": 2,
       "x": 1780,
       "y": 180,
+      "parameters": {},
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
+    },
+    {
+      "id": 13,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 14,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
       "parameters": {}
     }
   ],
@@ -253,74 +290,78 @@
     {
       "source": 1,
       "target": 2,
-      "port": 0,
-      "sourcePort": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 2,
       "target": 4,
-      "port": 0,
-      "sourcePort": 1
+      "port": "trigger",
+      "sourcePort": "cycle"
     },
     {
       "source": 4,
       "target": 5,
-      "port": 0,
-      "sourcePort": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 5,
       "target": 2,
-      "port": 0,
-      "sourcePort": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 4,
       "target": 6,
-      "port": 0,
-      "sourcePort": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 6,
       "target": 7,
-      "port": 0,
-      "sourcePort": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 7,
       "target": 8,
-      "port": 0,
-      "sourcePort": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 2,
       "target": 9,
-      "port": 0,
-      "sourcePort": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 8,
       "target": 10,
-      "port": 0,
-      "sourcePort": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 9,
       "target": 11,
-      "port": 0,
-      "sourcePort": 0
+      "port": "in1",
+      "sourcePort": "audio"
     },
     {
       "source": 10,
       "target": 11,
-      "port": 1,
-      "sourcePort": 0
+      "port": "in2",
+      "sourcePort": "audio"
     },
     {
       "source": 11,
       "target": 12,
-      "port": 0,
-      "sourcePort": 0
+      "port": "audio",
+      "sourcePort": "audio"
     }
-  ]
+  ],
+  "projectId": "three-loops-then-wait",
+  "settings": {
+    "environmentRequired": true
+  }
 }

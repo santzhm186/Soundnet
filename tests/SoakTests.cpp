@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include "../src/Engine.hpp"
 #include <cassert>
 #include <cmath>
@@ -15,31 +16,31 @@ static void connect(GraphSpec& g,uint64_t a,uint64_t b,int port=0) {
 }
 int main(){
     GraphSpec graph;
-    add(graph,1,MidiNode);
+    add(graph,1,ntest::type("midi-input"));
     std::vector<uint64_t> osc;
     for(int i=0;i<40;++i){
         uint64_t id=2+i;osc.push_back(id);
-        add(graph,id,Osc1Node,{{Wave1,float(i%4)},{Level1,.08f},{Tune1,float((i%7)-3)}});
+        add(graph,id,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),float(i%4)},{ntest::param("oscillator","osc1.level"),.08f},{ntest::param("oscillator","osc1.tune"),float((i%7)-3)}});
         connect(graph,1,id);
     }
     // Four-input mix tree: 10 + 3 + 1 mixers.
     std::vector<uint64_t> layer;
     uint64_t next=100;
     for(size_t i=0;i<osc.size();i+=4){
-        add(graph,next,MixNode);
+        add(graph,next,ntest::type("mixer"));
         for(int j=0;j<4 && i+j<osc.size();++j)connect(graph,osc[i+j],next,j);
         layer.push_back(next++);
     }
     while(layer.size()>1){
         std::vector<uint64_t> upper;
         for(size_t i=0;i<layer.size();i+=4){
-            add(graph,next,MixNode);
+            add(graph,next,ntest::type("mixer"));
             for(int j=0;j<4 && i+j<layer.size();++j)connect(graph,layer[i+j],next,j);
             upper.push_back(next++);
         }
         layer=upper;
     }
-    add(graph,next,AudioOutputNode,{{Master,.7f}});connect(graph,layer[0],next,0);
+    add(graph,next,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),.7f}});connect(graph,layer[0],next,0);
 
     Engine engine;assert(engine.setGraph(graph));engine.prepare(48000);
     engine.midi(0x90,60,100);

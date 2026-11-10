@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 // Every registered node must describe itself consistently. This catches drift
 // between the catalog, parameter metadata and graph port validation.
 #include "../src/GraphSpec.hpp"
@@ -36,9 +37,9 @@ int main() {
         for(int port=0;port<outputCount(type);++port)assert(outputType(type,port)!=Signal::None);
         if(meta->visibleInCatalog)assert(catalogSeen.count(type));
     }
-    assert(nodeAcceptsParam(FilterNode,FilterCutoff));
-    assert(!nodeAcceptsParam(NoiseNode,FilterCutoff));
-    assert(nodeAcceptsParam(AudioOutputNode,OutputWidth));
-    assert(nodeAcceptsParam(MidiOutNode,MidiOutChannel));
+    assert(nodeAcceptsParam(ntest::type("filter"),ntest::param("filter","filter.cutoff")));
+    assert(!nodeAcceptsParam(ntest::type("noise"),ntest::param("filter","filter.cutoff")));
+    assert(nodeAcceptsParam(ntest::type("audio-output"),ntest::param("audio-output","output.width")));
+    assert(nodeAcceptsParam(ntest::type("midi-output"),ntest::param("midi-output","midiOut.channel")));
     puts("PASS: node registry metadata and ports are consistent");
 }

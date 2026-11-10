@@ -1,13 +1,15 @@
 #pragma once
-#include "../_legacy/Declarations.hpp"
+#include "Parameters.hpp"
+#include "Translations.hpp"
+#include "Kernel.hpp"
 // soundnet-module: soundnet.progression
 // soundnet-order: 6
-// Descriptor is independent. Existing DSP uses the documented legacy adapter.
+// Independent SDK module; stable keys remain scoped to this node.
 namespace tri::nodes::progression {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.progression",ProgressNode,"和声走向","输入",2,1,true,true,
+    NodeSpec spec{"soundnet.progression",typeID,"和声走向","输入",2,1,true,true,
              CapNoteSource|CapData,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
              {pout("notes","音符",Signal::Midi,RoleMain)},
@@ -16,7 +18,9 @@ inline NodeModule module() {
               ProgressRoot3,ProgressQuality3,ProgressRoot4,ProgressQuality4,
               ProgressRoot5,ProgressQuality5,ProgressRoot6,ProgressQuality6,
               ProgressRoot7,ProgressQuality7,ProgressRoot8,ProgressQuality8,ClockBPM}, nullptr};
-    spec.legacyAdapter=true;
-    return {std::move(spec),{}};
+    spec.kernelFactory=create;
+    NodeModule result{std::move(spec),parameterSpecs()};
+    appendTranslations(result);
+    return result;
 }
 } // namespace tri::nodes::progression

@@ -13,9 +13,17 @@ typedef void (^TRIProcessingWrite)(BOOL enabled);
 // touching the transport or any project parameter. Optional; AU passes nil.
 typedef void (^TRINodeStop)(uint64_t nodeID);
 typedef NSDictionary * (^TRIEnvironmentRead)(void);
+typedef NSDictionary * (^TRIMidiCapture)(NSDictionary *command);
 // Fixed 1144 x 650 points. Pass nil for input switches in AU (host routes audio).
 // status is a short connection/engine status, e.g. @"CoreMIDI · 2 sources".
 NSView *TRICreateEditor(TRIRead read, TRIWrite write, TRIMIDI midi, TRIInputRead inputRead, TRIInputWrite inputWrite, TRIStatus status,
                         TRIAssetsRead assetsRead = nullptr, TRIAssetsWrite assetsWrite = nullptr,
                         TRIProcessingRead processingRead = nullptr, TRIProcessingWrite processingWrite = nullptr,
-                        TRINodeStop nodeStop = nullptr, TRIEnvironmentRead environmentRead = nullptr);
+                        TRINodeStop nodeStop = nullptr, TRIEnvironmentRead environmentRead = nullptr,
+                        TRIMidiCapture midiCapture = nullptr);
+void TRIFlushEditorAutosave(NSView *view);
+typedef void (^TRINodeLibraryRefresh)(void (^completed)(NSString *message));
+void TRISetNodeLibraryRefresh(NSView *view, TRINodeLibraryRefresh refresh);
+// Reconcile the current document and panels after a catalog generation changes.
+BOOL TRIRefreshNodeCatalog(NSView *view, NSString **why);
+BOOL TRIPrepareForNodeRefresh(NSView *view, NSString **why);

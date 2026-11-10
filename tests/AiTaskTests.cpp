@@ -3,6 +3,7 @@
 // (no model required). The per-node suites in nodes/yue2 and nodes/ace-step
 // cover the module-local surface; this file checks the integrated platform.
 #include "../src/Engine.hpp"
+#include "NodeTestLookup.hpp"
 #include "../platform/musicgen/MusicGenBackend.hpp"
 #include "../platform/TaskService.hpp"
 #include "../src/WavFile.hpp"
@@ -39,7 +40,7 @@ tri::GraphSpec generationGraph(const char* key) {
     if(std::strcmp(key,"soundnet.yue2")==0)node.texts["yue2.style"]="warm piano pop";
     spec.nodes.push_back(node);
     tri::GraphNode sink;
-    sink.id=2;sink.type=tri::AudioOutputNode;sink.nodeVersion=tri::nodeSpec(sink.type)->nodeVersion;sink.key=tri::nodeKey(tri::AudioOutputNode);
+    sink.id=2;sink.type=ntest::type("audio-output");sink.nodeVersion=tri::nodeSpec(sink.type)->nodeVersion;sink.key=tri::nodeKey(ntest::type("audio-output"));
     spec.nodes.push_back(sink);
     tri::GraphEdge edge;edge.source=1;edge.target=2;
     edge.sourcePortId="audio";edge.portId="audio";
@@ -60,8 +61,7 @@ int main() {
         check(tri::nodeCapabilities(yue2->type)&tri::CapAssetAudio,"yue2 declares CapAssetAudio");
         check(tri::nodeInputByRole(yue2->type,tri::RoleTrigger)>=0,"yue2 has a trigger input");
         check(tri::nodeTextSpec(yue2->type,"yue2.score")!=nullptr,"yue2 carries the score text");
-        check(tri::nodeTextSpec(yue2->type,"gen.takes")!=nullptr,"yue2 carries the take log");
-        check(tri::nodeTextSpec(yue2->type,"gen.takes")->hidden,"the take log is hidden");
+        check(tri::nodeTextSpec(yue2->type,"gen.takes")==nullptr,"take history uses platform resources");
         check(tri::nodeAcceptsParam(yue2->type,tri::nodeParamIdForKey(yue2->type,"gen.steps")),"accepts steps");
         check(tri::nodeParamDiscrete(yue2->type,tri::nodeParamIdForKey(yue2->type,"gen.variant")),"variant is discrete");
         check(tri::nodeParamDiscrete(yue2->type,tri::nodeParamIdForKey(yue2->type,"gen.steps")),"steps are integral");
@@ -69,10 +69,12 @@ int main() {
     if(ace) {
         check(tri::nodeCapabilities(ace->type)&tri::CapTask,"ace-step declares CapTask");
         check(tri::nodeCapabilities(ace->type)&tri::CapAssetAudio,"ace-step declares CapAssetAudio");
-        check(tri::nodeTextSpec(ace->type,"gen.takes")!=nullptr,"ace-step carries the take log");
+        check(tri::nodeTextSpec(ace->type,"gen.takes")==nullptr,"ACE take history uses platform resources");
     }
     check(tri::nodeSpecForKey("soundnet.ai-music")==nullptr,"the legacy ai-music node is gone");
-    check(tri::registryProblems().empty(),"registry self-check");
+    const std::string registryWhy=tri::registryProblems();
+    if(!registryWhy.empty())std::printf("%s",registryWhy.c_str());
+    check(registryWhy.empty(),"registry self-check");
 
     // Task ownership lives in the control-thread TaskService, not in audio
     // runtime shadow state. Playback remains an ordinary graph operation.
@@ -82,6 +84,84 @@ int main() {
         engine->stopNode(1);
         check(engine->setGraph(generationGraph("soundnet.ace-step")),"ace-step graph publishes");
         engine->stopNode(1);
+    }
+
+    // The same trigger fans out to the existing audio and new MIDI ports.
+    {
+        auto graph=generationGraph("soundnet.yue2");
+        auto sample=std::make_shared<tri::AudioSample>();
+        sample->rate=48000;sample->channels=1;sample->samples.assign(48000,.25f);
+        graph.nodes[0].sample=sample;
+        graph.nodes[0].texts["yue2.score"]="X:1\nL:1/4\nQ:1/4=120\nK:C\nC D|\n";
+        graph.nodes[0].parameters[ntest::param("yue2","play.fade")]=0;
+        tri::GraphNode start;
+        start.id=3;start.key="soundnet.start";start.type=ntest::type("start");
+        graph.nodes.push_back(start);
+        tri::GraphNode sink;
+        sink.id=4;sink.key="soundnet.midi-output";sink.type=ntest::type("midi-output");
+        graph.nodes.push_back(sink);
+        graph.edges.push_back({3,1,0,0,"trigger","trigger"});
+        graph.edges.push_back({1,4,0,0,"notes","notes"});
+
+        auto engine=std::make_unique<tri::Engine>();
+        engine->prepare(48000);
+        std::vector<tri::KernelMidiEvent> midi;
+        midi.reserve(16);
+        engine->setMidiOutput(&midi,[](void* context,int frame,uint8_t status,uint8_t a,uint8_t b) {
+            static_cast<std::vector<tri::KernelMidiEvent>*>(context)->push_back({frame,status,a,b});
+        });
+        float left[128]{},right[128]{};
+        check(engine->setGraph(graph),"YuE2 graph accepts simultaneous audio and MIDI links");
+        engine->render(nullptr,nullptr,left,right,128);
+        check(midi.empty()&&left[64]==0,"both outputs wait for a start");
+        graph.nodes[2].parameters[ntest::param("start","trigger.pulse")]=1;
+        check(engine->setGraph(graph),"start pulse publishes");
+        engine->render(nullptr,nullptr,left,right,128);
+        check(left[64]>0&&right[64]>0,"audio remains available on its original port");
+        check(midi.size()==1&&midi[0].status==0x90&&midi[0].a==60,"score reaches the MIDI sink");
+        midi.clear();
+        engine->stopNode(1);
+        engine->render(nullptr,nullptr,left,right,128);
+        check(midi.size()==1&&midi[0].status==0x80&&midi[0].a==60,"local stop releases MIDI at the sink");
+        check(left[64]==0,"local stop silences audio");
+    }
+
+    // Record from the named YuE2 MIDI outlet into a Clip, preserving timing.
+    {
+        auto graph=generationGraph("soundnet.yue2");
+        graph.nodes[0].texts["yue2.score"]="X:1\nL:1/4\nQ:1/4=120\nK:C\nC D|\n";
+        tri::GraphNode start;
+        start.id=3;start.key="soundnet.start";start.type=ntest::type("start");
+        graph.nodes.push_back(start);
+        tri::GraphNode clip;
+        clip.id=4;clip.key="soundnet.midi-clip";clip.type=ntest::type("midi-clip");
+        clip.nodeVersion=tri::nodeSpec(clip.type)->nodeVersion;
+        clip.parameters[ntest::param("midi-clip","clock.bpm")]=120;
+        graph.nodes.push_back(clip);
+        graph.edges.push_back({3,1,0,0,"trigger","trigger"});
+        graph.edges.push_back({1,4,0,0,"notes","notes"});
+
+        auto engine=std::make_unique<tri::Engine>();
+        engine->prepare(48000);
+        check(engine->setGraph(graph),"YuE2 and MIDI Clip are connectable");
+        const uint64_t token=engine->startMidiCapture(4,ntest::param("midi-clip","clock.bpm"));
+        check(token!=0&&!engine->startMidiCapture(4,ntest::param("midi-clip","clock.bpm")),"arm one capture");
+        graph.nodes[2].parameters[ntest::param("start","trigger.pulse")]=1;
+        check(engine->setGraph(graph),"start the upstream score");
+        float left[128]{},right[128]{};
+        for(int i=0;i<24000;i+=128)engine->render(nullptr,nullptr,left,right,std::min(128,24000-i));
+        auto recording=engine->finishMidiCapture(token);
+        check(bool(recording),"finish a connected recording");
+        if(recording) {
+            auto take=recording->clip();
+            check(take.events.size()==2&&take.events[0].status==0x90&&take.events[0].data1==60&&
+                  take.events[0].beat==0&&take.events[1].status==0x80&&take.events[1].beat==1,
+                  "finish closes held notes at the recording boundary");
+        }
+        const auto stale=engine->startMidiCapture(4,ntest::param("midi-clip","clock.bpm"));
+        graph.edges.pop_back();
+        check(stale&&engine->setGraph(graph)&&!engine->finishMidiCapture(stale),
+              "disconnect invalidates the recording");
     }
 
     // ---- backend: success, failure, cancel, family checks ------------------

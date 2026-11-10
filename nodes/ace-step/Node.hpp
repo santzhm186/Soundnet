@@ -35,8 +35,7 @@ inline NodeModule module() {
          {"ace.lyrics","歌词","",65536,true,false,false},
          {"gen.extraArgs","附加参数","",4096,false,false,false},
          {"gen.execPath","后端可执行文件","",1024,false,false,false},
-         {"gen.modelPath","模型目录","",1024,false,false,false},
-         {"gen.takes","生成记录","",262144,false,false,true}}};
+         {"gen.modelPath","模型目录","",1024,false,false,false}}};
     spec.kernelFactory=create;
     spec.validateConfig=validate;
     return {std::move(spec),{
@@ -61,12 +60,15 @@ inline NodeModule module() {
          {"试听（独立播放，不影响图）","Audition (independent of the graph)"},
          {"播放","Play"},{"暂停","Pause"},{"停止播放","Stop playback"},
          {"请先填写描述。","Enter a description first."},
-         {"该记录未归档或文件已移动（工程未设定文件夹）。","This take was not archived or its file moved (no project folder)."},
+         {"无法读取节点参数，请重新选择节点。","Couldn't read the node settings. Select the node again."},
+         {"该记录的资源不可用。","The resources for this take are unavailable."},
          {"载入失败：文件缺失或已移动。","Load failed: the file is missing or moved."},
          {"还没有素材可试听。","Nothing to audition yet."},
          {"已载入所选记录。","Loaded the selected take."},
          {"试听不经过图；节点内播放由「触发」端口驱动，走音频节点输出。",
           "Audition bypasses the graph; in-graph playback is driven by the trigger port."},
+         {"触发端口控制播放。保存工程时，音频与乐谱存放在独立的素材目录。",
+          "The trigger port controls playback. Saved projects keep audio in a separate asset folder."},
          {"生成完成。","Generation complete."}}};
 }
 }

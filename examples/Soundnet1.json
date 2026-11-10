@@ -1,115 +1,143 @@
 {
-  "version" : 3,
-  "nodes" : [
+  "version": 4,
+  "nodes": [
     {
-      "y" : 489.0258809857649,
-      "id" : 1,
-      "type" : 3,
-      "x" : 648.61409730461139,
-      "parameters" : {
-        "11" : 0.69999998807907104,
-        "0" : 2,
-        "9" : 0.012000000104308128,
-        "1" : 1,
-        "12" : 0.23999999463558197,
-        "10" : 0.2199999988079071,
-        "2" : 0
-      }
+      "y": 489.0258809857649,
+      "id": 1,
+      "x": 648.6140973046114,
+      "parameters": {
+        "envelope.sustain": 0.699999988079071,
+        "osc1.wave": 2,
+        "envelope.attack": 0.012000000104308128,
+        "osc1.level": 1,
+        "envelope.release": 0.23999999463558197,
+        "envelope.decay": 0.2199999988079071,
+        "osc1.tune": 0
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
-      "y" : 486.27857418023092,
-      "id" : 2,
-      "type" : 1,
-      "x" : 252.93689229456777,
-      "parameters" : {
-
-      }
+      "y": 486.2785741802309,
+      "id": 2,
+      "x": 252.93689229456777,
+      "parameters": {},
+      "nodeKey": "soundnet.midi-input",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
-      "y" : 452.77443615534605,
-      "id" : 3,
-      "type" : 19,
-      "nodeVersion" : 2,
-      "x" : 1364.4419545524458,
-      "parameters" : {
-        "1280" : 1,
-        "24" : 0.74000000953674316
-      }
+      "y": 452.77443615534605,
+      "id": 3,
+      "nodeVersion": 2,
+      "x": 1364.4419545524458,
+      "parameters": {
+        "output.width": 1,
+        "output.master": 0.7400000095367432
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
     },
     {
-      "y" : 639.23908011043568,
-      "id" : 4,
-      "type" : 3,
-      "x" : 647.55744084094465,
-      "parameters" : {
-        "11" : 0.69999998807907104,
-        "0" : 2,
-        "9" : 0.012000000104308128,
-        "1" : 1,
-        "12" : 0.23999999463558197,
-        "10" : 0.2199999988079071,
-        "2" : 5
-      }
+      "y": 639.2390801104357,
+      "id": 4,
+      "x": 647.5574408409447,
+      "parameters": {
+        "envelope.sustain": 0.699999988079071,
+        "osc1.wave": 2,
+        "envelope.attack": 0.012000000104308128,
+        "osc1.level": 1,
+        "envelope.release": 0.23999999463558197,
+        "envelope.decay": 0.2199999988079071,
+        "osc1.tune": 5
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
-      "y" : 471.7942525013508,
-      "id" : 5,
-      "type" : 7,
-      "x" : 1027.7966239792606,
-      "parameters" : {
-
-      }
+      "y": 471.7942525013508,
+      "id": 5,
+      "x": 1027.7966239792606,
+      "parameters": {},
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
-      "y" : 709.39502744018284,
-      "id" : 6,
-      "type" : 2,
-      "nodeVersion" : 2,
-      "x" : 412.88490975332371,
-      "parameters" : {
-        "34" : 2,
-        "21" : 0,
-        "20" : 0,
-        "23" : 0.60000002384185791
-      }
+      "y": 709.3950274401828,
+      "id": 6,
+      "nodeVersion": 2,
+      "x": 412.8849097533237,
+      "parameters": {
+        "arp.repeat": 2,
+        "arp.pattern": 0,
+        "arp.enabled": 0,
+        "arp.gate": 0.6000000238418579
+      },
+      "nodeKey": "soundnet.arp",
+      "stateVersion": 1
+    },
+    {
+      "id": 7,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 8,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
-  "edges" : [
+  "edges": [
     {
-      "source" : 1,
-      "sourcePort" : 0,
-      "target" : 5,
-      "port" : 0
+      "source": 1,
+      "sourcePort": "audio",
+      "target": 5,
+      "port": "in1"
     },
     {
-      "source" : 4,
-      "sourcePort" : 0,
-      "target" : 5,
-      "port" : 1
+      "source": 4,
+      "sourcePort": "audio",
+      "target": 5,
+      "port": "in2"
     },
     {
-      "source" : 5,
-      "sourcePort" : 0,
-      "target" : 3,
-      "port" : 0
+      "source": 5,
+      "sourcePort": "audio",
+      "target": 3,
+      "port": "audio"
     },
     {
-      "source" : 6,
-      "sourcePort" : 0,
-      "target" : 4,
-      "port" : 0
+      "source": 6,
+      "sourcePort": "notes",
+      "target": 4,
+      "port": "notes"
     },
     {
-      "source" : 6,
-      "sourcePort" : 0,
-      "target" : 1,
-      "port" : 0
+      "source": 6,
+      "sourcePort": "notes",
+      "target": 1,
+      "port": "notes"
     },
     {
-      "source" : 2,
-      "sourcePort" : 0,
-      "target" : 6,
-      "port" : 0
+      "source": 2,
+      "sourcePort": "notes",
+      "target": 6,
+      "port": "notes"
     }
-  ]
+  ],
+  "projectId": "Soundnet1",
+  "settings": {
+    "environmentRequired": true
+  }
 }

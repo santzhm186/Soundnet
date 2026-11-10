@@ -130,4 +130,7 @@ if [[ -f tests/EnvironmentUITests.mm ]]; then
   "$build/EnvironmentUITests"
 fi
 
+echo "== independent node package refresh"
+"$root/scripts/test-node-packages.sh" "$build/node-packages"
+
 echo "PASS: all Soundnet tests"

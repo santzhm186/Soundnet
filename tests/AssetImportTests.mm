@@ -1,5 +1,6 @@
 #import "../src/WorkflowAssets.h"
 #include "../src/StandardMidiFile.hpp"
+#include "NodeTestLookup.hpp"
 #include <cassert>
 #include <cstdio>
 
@@ -41,81 +42,81 @@ int main() { @autoreleasepool {
         assert(failed);
     }
     tri::GraphSpec bypassGraph;NSString *graphWhy=nil;
-    NSDictionary *filterDocument=@{@"version":@3,@"nodes":@[
-        @{@"id":@1,@"type":@(tri::FilterNode),@"x":@0,@"y":@0,@"bypass":@YES,
-          @"parameters":@{@"1100":@0,@"1101":@8000}}],@"edges":@[]};
+    NSDictionary *filterDocument=@{@"version":@4,@"nodes":@[
+        @{@"id":@1,@"nodeKey":@"soundnet.filter",@"x":@0,@"y":@0,@"bypass":@YES,
+          @"parameters":@{@"filter.type":@0,@"filter.cutoff":@8000}}],@"edges":@[]};
     assert(triassets::decodeGraph(filterDocument,bypassGraph,&graphWhy));
     assert(bypassGraph.nodes.size()==1 && bypassGraph.nodes[0].bypass);
     NSMutableDictionary *badBypass=[filterDocument mutableCopy];
-    badBypass[@"nodes"]=@[@{@"id":@1,@"type":@(tri::FilterNode),@"x":@0,@"y":@0,@"bypass":@"yes",
+    badBypass[@"nodes"]=@[@{@"id":@1,@"nodeKey":@"soundnet.filter",@"x":@0,@"y":@0,@"bypass":@"yes",
                             @"parameters":@{}}];
     assert(!triassets::decodeGraph(badBypass,bypassGraph,&graphWhy));
     tri::GraphSpec noiseGraph;
-    assert(triassets::decodeGraph(@{@"version":@3,@"nodes":@[@{@"id":@1,@"type":@(tri::NoiseNode),@"x":@0,@"y":@0,
-        @"parameters":@{@"1120":@.3}}],@"edges":@[]},noiseGraph,&graphWhy));
+    assert(triassets::decodeGraph(@{@"version":@4,@"nodes":@[@{@"id":@1,@"nodeKey":@"soundnet.noise",@"x":@0,@"y":@0,
+        @"parameters":@{@"noise.level":@.3}}],@"edges":@[]},noiseGraph,&graphWhy));
     NSDictionary *example=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/filter-reverb-noise.json"] options:0 error:nil];
     tri::GraphSpec exampleGraph;
     assert(triassets::decodeGraph(example,exampleGraph,&graphWhy));
-    assert(exampleGraph.nodes.size()==7 && exampleGraph.edges.size()==6);
+    assert(exampleGraph.nodes.size()==9 && exampleGraph.edges.size()==6);
     NSDictionary *samplerExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/sampler-pluck.json"] options:0 error:nil];
     tri::GraphSpec samplerExampleGraph;
     assert(triassets::decodeGraph(samplerExample,samplerExampleGraph,&graphWhy));
-    assert(samplerExampleGraph.nodes.size()==5 && samplerExampleGraph.edges.size()==4);
+    assert(samplerExampleGraph.nodes.size()==7 && samplerExampleGraph.edges.size()==4);
     assert(samplerExampleGraph.nodes[1].sample && samplerExampleGraph.nodes[1].sample->frames()>1000);
     NSDictionary *limiterExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/master-limiter.json"] options:0 error:nil];
     tri::GraphSpec limiterGraph;
     assert(triassets::decodeGraph(limiterExample,limiterGraph,&graphWhy));
-    assert(limiterGraph.nodes.size()==6 && limiterGraph.edges.size()==5);
-    assert(limiterGraph.nodes[4].type==tri::LimiterNode);
+    assert(limiterGraph.nodes.size()==8 && limiterGraph.edges.size()==5);
+    assert(limiterGraph.nodes[4].type==ntest::type("limiter"));
     NSDictionary *clipExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/audio-clip-compressor.json"] options:0 error:nil];
     NSDictionary *midiExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/clip-to-midi.json"] options:0 error:nil];
     tri::GraphSpec midiExampleGraph;
     assert(triassets::decodeGraph(midiExample,midiExampleGraph,&graphWhy));
-    assert(midiExampleGraph.nodes.size()==3 && midiExampleGraph.edges.size()==2);
+    assert(midiExampleGraph.nodes.size()==5 && midiExampleGraph.edges.size()==2);
     tri::GraphSpec clipExampleGraph;
     assert(triassets::decodeGraph(clipExample,clipExampleGraph,&graphWhy));
-    assert(clipExampleGraph.nodes.size()==5 && clipExampleGraph.edges.size()==4);
+    assert(clipExampleGraph.nodes.size()==7 && clipExampleGraph.edges.size()==4);
     NSDictionary *quantizeExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/scale-quantizer.json"] options:0 error:nil];
     tri::GraphSpec quantizeGraph;
     assert(triassets::decodeGraph(quantizeExample,quantizeGraph,&graphWhy));
-    assert(quantizeGraph.nodes.size()==5 && quantizeGraph.edges.size()==4);
-    assert(quantizeGraph.nodes[2].type==tri::QuantizeNode);
+    assert(quantizeGraph.nodes.size()==7 && quantizeGraph.edges.size()==4);
+    assert(quantizeGraph.nodes[2].type==ntest::type("scale-quantize"));
     NSDictionary *randomExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/random-gate.json"] options:0 error:nil];
     tri::GraphSpec randomGraph;
     assert(triassets::decodeGraph(randomExample,randomGraph,&graphWhy));
-    assert(randomGraph.nodes.size()==5 && randomGraph.edges.size()==4);
-    assert(randomGraph.nodes[1].type==tri::RandomNode);
+    assert(randomGraph.nodes.size()==7 && randomGraph.edges.size()==4);
+    assert(randomGraph.nodes[1].type==ntest::type("random"));
     NSDictionary *metronomeExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/metronome-click.json"] options:0 error:nil];
     tri::GraphSpec metronomeGraph;
     assert(triassets::decodeGraph(metronomeExample,metronomeGraph,&graphWhy));
-    assert(metronomeGraph.nodes.size()==4 && metronomeGraph.edges.size()==3);
-    assert(metronomeGraph.nodes[2].type==tri::MetronomeNode);
+    assert(metronomeGraph.nodes.size()==6 && metronomeGraph.edges.size()==3);
+    assert(metronomeGraph.nodes[2].type==ntest::type("metronome"));
     NSDictionary *transposeExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/transpose.json"] options:0 error:nil];
     tri::GraphSpec transposeGraph;
     assert(triassets::decodeGraph(transposeExample,transposeGraph,&graphWhy));
-    assert(transposeGraph.nodes.size()==5 && transposeGraph.edges.size()==4);
-    assert(transposeGraph.nodes[2].type==tri::TransposeNode);
+    assert(transposeGraph.nodes.size()==7 && transposeGraph.edges.size()==4);
+    assert(transposeGraph.nodes[2].type==ntest::type("transpose"));
     NSDictionary *echoExample=[NSJSONSerialization JSONObjectWithData:
         [NSData dataWithContentsOfFile:@"examples/note-echo.json"] options:0 error:nil];
     tri::GraphSpec echoGraph;
     assert(triassets::decodeGraph(echoExample,echoGraph,&graphWhy));
-    assert(echoGraph.nodes.size()==5 && echoGraph.edges.size()==4);
-    assert(echoGraph.nodes[2].type==tri::EchoNode);
+    assert(echoGraph.nodes.size()==7 && echoGraph.edges.size()==4);
+    assert(echoGraph.nodes[2].type==ntest::type("note-echo"));
     assert(clipExampleGraph.nodes[2].sample && clipExampleGraph.nodes[2].sample->frames()>1000);
     tri::GraphSpec samplerGraph;
     float pcm[4]={.5f,0,-.5f,0};
     NSData *pcmData=[NSData dataWithBytes:pcm length:sizeof(pcm)];
-    NSDictionary *samplerDocument=@{@"version":@3,@"nodes":@[
-        @{@"id":@1,@"type":@(tri::SamplerNode),@"x":@0,@"y":@0,@"parameters":@{@"1130":@60},
+    NSDictionary *samplerDocument=@{@"version":@4,@"nodes":@[
+        @{@"id":@1,@"nodeKey":@"soundnet.sampler",@"x":@0,@"y":@0,@"parameters":@{@"sampler.root":@60},
           @"asset":@{@"name":@"pluck.wav",@"rate":@48000,@"channels":@1,
                       @"pcm":[pcmData base64EncodedStringWithOptions:0]}}],@"edges":@[]};
     assert(triassets::decodeGraph(samplerDocument,samplerGraph,&graphWhy));
@@ -130,19 +131,19 @@ int main() { @autoreleasepool {
     badAsset[@"channels"]=@3;badNode[@"asset"]=badAsset;badChannels[@"nodes"]=@[badNode];
     assert(!triassets::decodeGraph(badChannels,samplerGraph,&graphWhy));
     tri::GraphSpec chorusGraph;
-    NSDictionary *chorusDocument=@{@"version":@3,@"nodes":@[
-        @{@"id":@1,@"type":@(tri::ChorusNode),@"x":@0,@"y":@0,
-          @"parameters":@{@"1170":@.5,@"1171":@.4,@"1172":@.3,@"1173":@12}}],@"edges":@[]};
+    NSDictionary *chorusDocument=@{@"version":@4,@"nodes":@[
+        @{@"id":@1,@"nodeKey":@"soundnet.chorus",@"x":@0,@"y":@0,
+          @"parameters":@{@"chorus.rate":@.5,@"chorus.depth":@.4,@"chorus.mix":@.3,@"chorus.delay":@12}}],@"edges":@[]};
     assert(triassets::decodeGraph(chorusDocument,chorusGraph,&graphWhy));
-    assert(chorusGraph.nodes.size()==1 && chorusGraph.nodes[0].type==tri::ChorusNode);
+    assert(chorusGraph.nodes.size()==1 && chorusGraph.nodes[0].type==ntest::type("chorus"));
     puts("chorus JSON decodes");
     tri::GraphSpec clipGraph;
-    NSDictionary *clipDocument=@{@"version":@3,@"nodes":@[
-        @{@"id":@1,@"type":@(tri::AudioClipNode),@"x":@0,@"y":@0,@"parameters":@{@"1140":@.8},
+    NSDictionary *clipDocument=@{@"version":@4,@"nodes":@[
+        @{@"id":@1,@"nodeKey":@"soundnet.audio-clip",@"x":@0,@"y":@0,@"parameters":@{@"audioClip.gain":@.8},
           @"asset":@{@"name":@"loop.wav",@"rate":@48000,@"channels":@1,
                       @"pcm":[pcmData base64EncodedStringWithOptions:0]}},
-        @{@"id":@2,@"type":@(tri::CompressorNode),@"x":@200,@"y":@0,
-          @"parameters":@{@"1150":@-20,@"1151":@8}}],@"edges":@[]};
+        @{@"id":@2,@"nodeKey":@"soundnet.compressor",@"x":@200,@"y":@0,
+          @"parameters":@{@"compressor.threshold":@-20,@"compressor.ratio":@8}}],@"edges":@[]};
     assert(triassets::decodeGraph(clipDocument,clipGraph,&graphWhy));
     assert(clipGraph.nodes.size()==2 && clipGraph.nodes[0].sample &&
            clipGraph.nodes[0].sample->frames()==4);
@@ -160,7 +161,7 @@ int main() { @autoreleasepool {
         NSDictionary *imported=triassets::importAsset(@"audio",[NSURL fileURLWithPath:path],&why);
         assert(imported && [imported[@"rate"] doubleValue]==48000 && [imported[@"channels"] intValue]==1);
         tri::GraphSpec importedGraph;
-        assert(triassets::decodeGraph(@{@"version":@3,@"nodes":@[@{@"id":@1,@"type":@(tri::SamplerNode),
+        assert(triassets::decodeGraph(@{@"version":@4,@"nodes":@[@{@"id":@1,@"nodeKey":@"soundnet.sampler",
             @"x":@0,@"y":@0,@"parameters":@{},@"asset":imported}],@"edges":@[]},importedGraph,&graphWhy));
         assert(importedGraph.nodes[0].sample && importedGraph.nodes[0].sample->frames()==4);
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];

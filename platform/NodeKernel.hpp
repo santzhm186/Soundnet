@@ -13,7 +13,7 @@
 #include "resources/NoteModel.hpp"
 
 namespace tri {
-inline constexpr unsigned nodeSDKVersion=1;
+inline constexpr unsigned nodeSDKVersion=2;
 constexpr uint32_t stableNodeHash(const char* text,uint32_t seed=2166136261u) {
     while(*text) {seed^=static_cast<unsigned char>(*text++);seed*=16777619u;}
     return seed;
@@ -32,6 +32,12 @@ struct KernelConfig {
     std::shared_ptr<const AudioSample> audio;
     std::shared_ptr<const MidiClip> clip;
     std::shared_ptr<const NoteModel> model;
+    uint64_t instanceID=0;
+    bool hasPreviousConfiguration=false;
+    std::map<int,float> previousParameters;
+    // Immutable installed package resources; file work belongs to configure
+    // or background tasks, never process/reset.
+    std::string resourceDirectory;
     float value(int id,float fallback=0) const {
         auto i=parameters.find(id);return i==parameters.end()?fallback:i->second;
     }
@@ -88,6 +94,16 @@ struct KernelContext {
     size_t inputCount=0;
     KernelOutput* outputs=nullptr;
     size_t outputCount=0;
+    uint64_t instanceID=0;
+    // Read-only host input views. Valid only for this process call.
+    const float* hostAudioLeft=nullptr;
+    const float* hostAudioRight=nullptr;
+    const KernelMidiEvent* localMidi=nullptr;
+    size_t localMidiCount=0;
+    const KernelMidiEvent* dawMidi=nullptr;
+    size_t dawMidiCount=0;
+    // A bounded host MIDI sink; the platform owns release tracking.
+    KernelOutput* hostMidi=nullptr;
     const KernelInput* input(const char* id) const noexcept {
         for(size_t i=0;i<inputCount;++i)if(inputs[i].id&&std::strcmp(inputs[i].id,id)==0)return inputs+i;
         return nullptr;
@@ -103,6 +119,11 @@ public:
     virtual void prepare(double sampleRate,int maxFrames)=0;
     virtual void configure(const KernelConfig& config)=0;
     virtual void process(KernelContext& context) noexcept=0;
+    // The runtime releases tracked host MIDI and clears the reset instance's
+    // published output state before invoking reset. Downstream held-input
+    // reconciliation supplies corresponding Note Off events for a local reset.
+    // Clear all private held notes/controllers and cursors here; do not queue
+    // duplicate releases for the next process call. Reset cannot emit events.
     virtual void reset(KernelResetReason reason) noexcept=0;
 };
 using KernelFactory=std::unique_ptr<NodeKernel>(*)();

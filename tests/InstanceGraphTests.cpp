@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include <memory>
 #include "../src/Engine.hpp"
 #include <cassert>
@@ -5,25 +6,25 @@
 using namespace tri;
 struct Sent {int frame;int status,note;};
 static GraphNode audioOutput(InstanceID id) {
-    GraphNode node{id,AudioOutputNode};
-    node.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;
+    GraphNode node{id,ntest::type("audio-output")};
+    node.nodeVersion=nodeSpec(ntest::type("audio-output"))->nodeVersion;
     return node;
 }
 int main() {
     GraphSpec graph;
-    for(int i=1;i<=40;++i)graph.nodes.push_back({uint64_t(i),Osc1Node});
+    for(int i=1;i<=40;++i)graph.nodes.push_back({uint64_t(i),ntest::type("oscillator")});
     std::vector<size_t> order;
     assert(graphOrder(graph,order) && order.size()==40);
     graph={};
-    GraphNode a{1,ClipNode},b{2,ClipNode};
-    a.nodeVersion=b.nodeVersion=nodeSpec(ClipNode)->nodeVersion;
+    GraphNode a{1,ntest::type("midi-clip")},b{2,ntest::type("midi-clip")};
+    a.nodeVersion=b.nodeVersion=nodeSpec(ntest::type("midi-clip"))->nodeVersion;
     a.clip={{{0,0x90,60,100},{.1,0x80,60,0}},.25};
     b.clip={{{0,0x90,72,100},{.1,0x80,72,0}},.25};
-    a.parameters={{ClipRun,1},{ClipLoop,1},{ClockBPM,120}};
-    b.parameters={{ClipRun,0},{ClipLoop,1},{ClockBPM,120}};
-    graph.nodes={a,b,{3,nodeTypeID("soundnet.timecode")},{4,CountNode},{5,StopNode},{6,StartNode},{7,WaitNode},{8,MidiOutNode},{9,MidiOutNode}};
-    graph.nodes[3].parameters={{TriggerCount,3}};
-    graph.nodes[6].parameters={{WaitSeconds,.05}};
+    a.parameters={{ntest::param("midi-clip","clip.run"),1},{ntest::param("midi-clip","clip.loop"),1},{ntest::param("midi-clip","clock.bpm"),120}};
+    b.parameters={{ntest::param("midi-clip","clip.run"),0},{ntest::param("midi-clip","clip.loop"),1},{ntest::param("midi-clip","clock.bpm"),120}};
+    graph.nodes={a,b,{3,nodeTypeID("soundnet.timecode")},{4,ntest::type("count")},{5,ntest::type("stop")},{6,ntest::type("start")},{7,ntest::type("wait")},{8,ntest::type("midi-output")},{9,ntest::type("midi-output")}};
+    graph.nodes[3].parameters={{ntest::param("count","trigger.count"),3}};
+    graph.nodes[6].parameters={{ntest::param("wait","wait.seconds"),.05}};
     graph.edges={{1,4,0,1},{4,5,0},{5,1,0},{6,7,0},{7,2,0},{1,8,0},{2,9,0}};
     assert(graphOrder(graph,order));
     auto engineStorage=std::make_unique<Engine>();auto& engine=*engineStorage;engine.prepare(48000);
@@ -34,8 +35,12 @@ int main() {
     int aOn=0,bOn=0;
     for(int i=0;i<230;++i)engine.render(nullptr,nullptr,l,r,128);
     for(auto e:sent)if((e.status&0xf0)==0x90){if(e.note==60)++aOn;if(e.note==72)++bOn;}
-    assert(aOn==3 && bOn==0);
-    graph.nodes[5].parameters[TriggerPulse]=1;
+    // SDK2 feedback has one-block delay: cycle 3 starts the next iteration,
+    // then its Stop returns in the following block and releases that attack.
+    assert(aOn==4 && bOn==0);
+    int aOff=0;for(auto e:sent)if((e.status&0xf0)==0x80&&e.note==60)++aOff;
+    assert(aOff==aOn);
+    graph.nodes[5].parameters[ntest::param("start","trigger.pulse")]=1;
     assert(engine.setGraph(graph));sent.clear();
     for(int i=0;i<30;++i)engine.render(nullptr,nullptr,l,r,128);
     int start=-1;
@@ -45,9 +50,9 @@ int main() {
     auto bad=graph;bad.edges.push_back({1,3,0});assert(!engine.setGraph(bad));
 
     GraphSpec audio;
-    GraphNode osc{11,Osc1Node};osc.parameters={{Wave1,0},{Level1,.8f},{Attack,.001f},{Release,.005f}};
-    GraphNode quiet=osc;quiet.id=12;quiet.parameters[Level1]=0;
-    audio.nodes={{10,MidiNode},osc,quiet,audioOutput(13),audioOutput(14)};
+    GraphNode osc{11,ntest::type("oscillator")};osc.parameters={{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),.8f},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.release"),.005f}};
+    GraphNode quiet=osc;quiet.id=12;quiet.parameters[ntest::param("oscillator","osc1.level")]=0;
+    audio.nodes={{10,ntest::type("midi-input")},osc,quiet,audioOutput(13),audioOutput(14)};
     audio.edges={{10,11,0},{10,12,0},{11,13,0},{12,14,0}};
     auto synthStorage=std::make_unique<Engine>();auto& synth=*synthStorage;synth.prepare(48000);assert(synth.setGraph(audio));
     synth.midi(0x90,69,100);
@@ -57,7 +62,7 @@ int main() {
         for(float sample:l)maximum=std::max(maximum,std::abs(sample));
     }
     assert(maximum>.05f);
-    auto muted=audio;muted.nodes[1].parameters[Level1]=0;
+    auto muted=audio;muted.nodes[1].parameters[ntest::param("oscillator","osc1.level")]=0;
     assert(synth.setGraph(muted));
     synth.render(nullptr,nullptr,l,r,128);
     for(float sample:l)assert(sample==0);
@@ -65,14 +70,14 @@ int main() {
     // Resource count is determined by the document. All forty audio instances
     // can actually compile, render and be removed.
     GraphSpec many;
-    for(int id=1;id<=40;++id)many.nodes.push_back({uint64_t(id),Osc1Node});
+    for(int id=1;id<=40;++id)many.nodes.push_back({uint64_t(id),ntest::type("oscillator")});
     assert(synth.setGraph(many));synth.render(nullptr,nullptr,l,r,128);
     assert(synth.setGraph({}));synth.render(nullptr,nullptr,l,r,128);
     // Dropping the upstream of a MIDI output must release its sounding notes
     // instead of leaving a stuck note at the host.
     {
         GraphSpec g;
-        g.nodes={{21,MidiNode},{22,MidiOutNode}};
+        g.nodes={{21,ntest::type("midi-input")},{22,ntest::type("midi-output")}};
         g.edges={{21,22,0}};
         auto e2Storage=std::make_unique<Engine>();auto& e2=*e2Storage;e2.prepare(48000);
         std::vector<Sent> out;out.reserve(32);
@@ -95,9 +100,9 @@ int main() {
     // is not the payload.
     {
         GraphSpec side;
-        GraphNode noise{31,NoiseNode};
-        noise.parameters={{NoiseLevel,.8f}};
-        side.nodes={noise,{32,CompressorNode},audioOutput(33)};
+        GraphNode noise{31,ntest::type("noise")};
+        noise.parameters={{ntest::param("noise","noise.level"),.8f}};
+        side.nodes={noise,{32,ntest::type("compressor")},audioOutput(33)};
         side.edges={{31,32,1,0},{32,33,0,0}};
         auto compStorage=std::make_unique<Engine>();auto& comp=*compStorage;comp.prepare(48000);assert(comp.setGraph(side));
         float peak=0;
@@ -111,9 +116,9 @@ int main() {
     // upstream disappears.
     {
         GraphSpec g;
-        GraphNode outNode{42,MidiOutNode};
-        outNode.parameters={{MidiOutChannel,2}};
-        g.nodes={{41,MidiNode},outNode};
+        GraphNode outNode{42,ntest::type("midi-output")};
+        outNode.parameters={{ntest::param("midi-output","midiOut.channel"),2}};
+        g.nodes={{41,ntest::type("midi-input")},outNode};
         g.edges={{41,42,0}};
         auto midiEngineStorage=std::make_unique<Engine>();auto& midiEngine=*midiEngineStorage;midiEngine.prepare(48000);
         std::vector<Sent> events;events.reserve(32);
@@ -136,10 +141,10 @@ int main() {
     // block instead of dropping the event.
     {
         GraphSpec chain;
-        for(int i=0;i<70;++i) chain.nodes.push_back({uint64_t(100+i),StartNode});
+        for(int i=0;i<70;++i) chain.nodes.push_back({uint64_t(100+i),ntest::type("start")});
         for(int i=0;i<69;++i)chain.edges.push_back({uint64_t(100+i),uint64_t(101+i),0,0});
-        GraphNode metronome{200,MetronomeNode};
-        metronome.parameters={{MetronomeLevel,.8f},{MetronomeBPM,120},{MetronomeBeats,4}};
+        GraphNode metronome{200,ntest::type("metronome")};
+        metronome.parameters={{ntest::param("metronome","metronome.level"),.8f},{ntest::param("metronome","metronome.bpm"),120},{ntest::param("metronome","metronome.beats"),4}};
         chain.nodes.push_back(metronome);
         chain.edges.push_back({169,200,0,0});
         chain.nodes.push_back(audioOutput(201));
@@ -147,7 +152,7 @@ int main() {
         auto deepStorage=std::make_unique<Engine>();auto& deep=*deepStorage;assert(deep.setGraph(chain));deep.prepare(48000);
         // The pulse is published like the editor's play button: a value that is
         // already present at first publish is treated as already seen.
-        chain.nodes[0].parameters[TriggerPulse]=1;
+        chain.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;
         assert(deep.setGraph(chain));
         float peak=0;
         for(int block=0;block<6;++block) {
@@ -159,7 +164,7 @@ int main() {
     // Global Stop gates generators, input and host clock until explicit resume.
     {
         GraphSpec g;
-        g.nodes={{1,NoiseNode},audioOutput(2)};g.edges={{1,2,0}};
+        g.nodes={{1,ntest::type("noise")},audioOutput(2)};g.edges={{1,2,0}};
         auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
         stopped->render(nullptr,nullptr,l,r,128);
         bool audible=false;for(float sample:l)audible|=std::abs(sample)>.001f;assert(audible);
@@ -177,9 +182,9 @@ int main() {
     // Stop must release the actual forced channel and discard delayed notes,
     // even when Play arrives before another render callback.
     {
-        GraphSpec g;GraphNode echo{2,EchoNode};echo.parameters={{EchoTime,.05f},{EchoRepeats,3}};
-        GraphNode sink{3,MidiOutNode};sink.parameters={{MidiOutChannel,2}};
-        g.nodes={{1,MidiNode},echo,sink};g.edges={{1,2,0},{2,3,0}};
+        GraphSpec g;GraphNode echo{2,ntest::type("note-echo")};echo.parameters={{ntest::param("note-echo","echo.time"),.05f},{ntest::param("note-echo","echo.repeats"),3}};
+        GraphNode sink{3,ntest::type("midi-output")};sink.parameters={{ntest::param("midi-output","midiOut.channel"),2}};
+        g.nodes={{1,ntest::type("midi-input")},echo,sink};g.edges={{1,2,0},{2,3,0}};
         auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
         std::vector<Sent> events;events.reserve(256);
         stopped->setMidiOutput(&events,[](void* p,int frame,uint8_t s,uint8_t a,uint8_t){
@@ -199,21 +204,21 @@ int main() {
     }
     // Waiting triggers and a running metronome must not survive a stop/resume.
     {
-        GraphSpec g;GraphNode wait{2,WaitNode};wait.parameters={{WaitSeconds,.05f}};
-        g.nodes={{1,StartNode},wait,{3,MetronomeNode},audioOutput(4)};
+        GraphSpec g;GraphNode wait{2,ntest::type("wait")};wait.parameters={{ntest::param("wait","wait.seconds"),.05f}};
+        g.nodes={{1,ntest::type("start")},wait,{3,ntest::type("metronome")},audioOutput(4)};
         g.edges={{1,2,0},{2,3,0},{3,4,0}};
         auto stopped=std::make_unique<Engine>();stopped->prepare(48000);assert(stopped->setGraph(g));
-        g.nodes[0].parameters[TriggerPulse]=1;assert(stopped->setGraph(g));
+        g.nodes[0].parameters[ntest::param("start","trigger.pulse")]=1;assert(stopped->setGraph(g));
         stopped->render(nullptr,nullptr,l,r,128);
         stopped->setProcessingEnabled(false);stopped->render(nullptr,nullptr,l,r,128);
         stopped->setProcessingEnabled(true);
         for(int block=0;block<100;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)assert(sample==0);}
-        g.nodes[0].parameters[TriggerPulse]=2;assert(stopped->setGraph(g));
+        g.nodes[0].parameters[ntest::param("start","trigger.pulse")]=2;assert(stopped->setGraph(g));
         bool audible=false;
         for(int block=0;block<30;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)audible|=std::abs(sample)>.001f;}
         assert(audible);
         stopped->setProcessingEnabled(false);stopped->setProcessingEnabled(true);
         for(int block=0;block<100;++block){stopped->render(nullptr,nullptr,l,r,128);for(float sample:l)assert(sample==0);}
     }
-    puts("PASS: 40 independent instances, distinct clips, third-loop stop feedback, delayed manual start, note release on lost input, sidechain isolation, forced-channel release, deep trigger chains and typed validation.");
+    puts("PASS: 40 independent instances, distinct clips, third-cycle stop with one-block feedback delay, delayed manual start, note release on lost input, sidechain isolation, forced-channel release, deep trigger chains and typed validation.");
 }

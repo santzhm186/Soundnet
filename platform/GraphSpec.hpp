@@ -1,0 +1,437 @@
+#pragma once
+// Graph document model and its compiler.
+//
+// A GraphSpec is the editable document: stable identity, stable port IDs,
+// parameters by stable ID. compileGraph() turns it into a CompiledGraph — a run
+// plan with resolved port indices, adjacency and diagnostics. Validation rules
+// come exclusively from NodeSpec; there is no type ceiling, no "port 0 is the
+// main input" convention and no second copy of the port tables.
+#include "NodeRegistry.hpp"
+#include "resources/AudioSample.hpp"
+#include <memory>
+#include <string>
+#include <map>
+#include <set>
+#include <vector>
+
+namespace tri {
+using InstanceID=uint64_t;
+
+struct GraphNode {
+    InstanceID id=0;
+    int type=0;                 // kernel selector, resolved from `key`
+    std::string key;            // canonical identity, e.g. "soundnet.oscillator"
+    uint16_t nodeVersion=1;
+    uint8_t stateVersion=1;
+    float x=0,y=0;
+    std::map<int,float> parameters;
+    // Text parameters (prompt, lyrics, backend path). Declared by
+    // NodeSpec::texts; persisted in the v4 `texts` dictionary. Kept apart from
+    // numeric parameters because they have no value range and no numeric ID.
+    std::map<std::string,std::string> texts;
+    MidiClip clip;
+    NoteModel model;
+    std::shared_ptr<const AudioSample> sample;
+    bool bypass=false;
+    // Unknown/unavailable nodes stay in the document so a project written by a
+    // newer build still round-trips. They are excluded from execution.
+    bool unavailable=false;
+    std::string unavailableReason;
+};
+
+struct GraphEdge {
+    InstanceID source=0,target=0;
+    int port=0,sourcePort=0;             // resolved indices for the engine
+    std::string portId,sourcePortId;     // persisted stable IDs
+};
+
+struct GraphSpec {
+    std::vector<GraphNode> nodes;
+    std::vector<GraphEdge> edges;
+    std::string projectId;
+    bool environmentRequired=false;
+};
+
+
+inline const ParamInfo& graphParamInfo(int id) {
+    const ParamSpec* spec=paramSpec(id);
+    static const ParamInfo unknown{"?",0,0,0,""};
+    return spec?*spec->info:unknown;
+}
+inline float graphParamValue(const GraphNode& node,int id) {
+    auto it=node.parameters.find(id);
+    return it==node.parameters.end() ? graphParamInfo(id).def : it->second;
+}
+// One resolved configuration for validation and execution. Missing values use
+// descriptor defaults; only declared immutable resource kinds reach a kernel.
+// Resource handles can be absent while validating an undecoded document.
+inline KernelConfig resolvedKernelConfig(const GraphNode& node) {
+    KernelConfig config{node.parameters,node.texts};config.instanceID=node.id;
+    const NodeSpec* spec=node.type?nodeSpec(node.type):nodeSpecForKey(node.key.c_str());
+    if(!spec)return config;
+    for(const auto& module:nodeModules())if(module.spec.type==spec->type){config.resourceDirectory=module.resourceDirectory;break;}
+    for(int id:spec->params)config.parameters.emplace(id,graphParamInfo(id).def);
+    for(const auto& text:spec->texts)
+        config.texts.emplace(text.id,text.defaultValue?text.defaultValue:"");
+    if(nodeHas(spec->capabilities,CapAssetAudio))config.audio=node.sample;
+    if(nodeHas(spec->capabilities,CapAssetClip))config.clip=std::make_shared<const MidiClip>(node.clip);
+    if(nodeHas(spec->capabilities,CapAssetModel))config.model=std::make_shared<const NoteModel>(node.model);
+    return config;
+}
+inline bool validGraphParam(int type,int id) {return nodeAcceptsParam(type,id);}
+inline constexpr size_t maxGraphNodes=4096;
+inline constexpr size_t maxGraphEdges=16384;
+
+// ---------------------------------------------------------------------------
+// Compiled run plan
+// ---------------------------------------------------------------------------
+struct PortLink {
+    int node=-1;   // index into GraphSpec::nodes / CompiledGraph::nodes
+    int port=-1;   // source output port index
+    bool delayed=false;
+    bool connected() const {return node>=0;}
+};
+
+struct PlanNode {
+    int type=0;
+    const NodeSpec* spec=nullptr;
+    std::vector<PortLink> inputs;                    // one entry per input port
+    std::vector<std::vector<PortLink>> triggerInputs;     // upstream nodes per trigger port
+    bool bypass=false;
+};
+
+struct Diagnostic {
+    InstanceID node=0;
+    std::string message;
+    bool fatal=false;
+};
+
+struct CompiledGraph {
+    std::vector<PlanNode> nodes;   // aligned with GraphSpec::nodes
+    std::vector<size_t> order;     // topological order of index positions
+    std::vector<Diagnostic> diagnostics;
+    bool ok=true;
+    std::shared_ptr<const NodeCatalog> catalog;
+
+    bool fatal() const {
+        for(const auto& d:diagnostics) if(d.fatal) return true;
+        return !ok;
+    }
+    // Build the reason string used by validators and the editor status line.
+    std::string reason() const;
+};
+
+namespace detail {
+inline bool graphFailure(std::string* why,const char* message) {
+    if(why)*why=message;
+    return false;
+}
+}
+
+// Resolve keys into types, types into keys, and edges into their stable IDs.
+// A present ID always wins over an index; a missing ID is derived from the
+// index. This is the single place where legacy v3 documents become v4-shaped
+// in memory, and where v4 documents become executable indices.
+inline bool normalizeGraph(GraphSpec& graph,std::string* why=nullptr) {
+    NodeCatalogReadScope catalogScope;
+    if(why)why->clear();
+    const bool strict=true;
+    for(auto& node:graph.nodes) {
+        if(node.unavailable)continue;
+        if(node.type!=0 && !node.key.empty()) {
+            const NodeSpec* declared=nodeSpec(node.type);
+            if(!declared || node.key!=declared->key)
+                return detail::graphFailure(why,"节点类型编号与稳定标识不一致。");
+        }
+        if(node.type==0 && !node.key.empty()) node.type=nodeTypeForKey(node.key.c_str());
+        if(node.key.empty()) node.key=nodeKey(node.type);
+        if(node.type!=0 && node.key.empty()) return detail::graphFailure(why,"节点类型没有稳定标识。");
+    }
+    // One index for the whole edge list: a scan per edge would be O(E*N), which
+    // matters at the 4096/16384 project budget.
+    std::map<InstanceID,const GraphNode*> byId;
+    for(const auto& node:graph.nodes) byId.emplace(node.id,&node);
+    for(auto& edge:graph.edges) {
+        auto foundSource=byId.find(edge.source),foundTarget=byId.find(edge.target);
+        const GraphNode* source=foundSource==byId.end()?nullptr:foundSource->second;
+        const GraphNode* target=foundTarget==byId.end()?nullptr:foundTarget->second;
+        if(!source||!target)continue;   // reported by compileGraph
+        // Edges that touch an unavailable node are carried through untouched so
+        // a newer project can be saved again without losing them.
+        if(source->unavailable||target->unavailable||!source->type||!target->type)continue;
+        if(!edge.sourcePortId.empty()) {
+            const int index=nodePortIndex(source->type,false,edge.sourcePortId.c_str());
+            if(index<0) {
+                if(strict) return detail::graphFailure(why,"连线引用了不存在的输出端口名称。");
+            } else edge.sourcePort=index;
+        } else {
+            edge.sourcePortId=nodePortId(source->type,false,size_t(edge.sourcePort));
+        }
+        if(!edge.portId.empty()) {
+            const int index=nodePortIndex(target->type,true,edge.portId.c_str());
+            if(index<0) {
+                if(strict) return detail::graphFailure(why,"连线引用了不存在的输入端口名称。");
+            } else edge.port=index;
+        } else {
+            edge.portId=nodePortId(target->type,true,size_t(edge.port));
+        }
+    }
+    return true;
+}
+
+// Compile the document into a run plan. `allowUnknownNodes` keeps unavailable
+// node types in the document (the editor and project loader use it); strict
+// callers such as the offline exporter reject them.
+inline bool compileGraph(const GraphSpec& source,CompiledGraph& plan,std::string* why=nullptr,
+                         bool allowUnknownNodes=false) {
+    NodeCatalogReadScope catalogScope;
+    try {
+    if(why)why->clear();
+    plan=CompiledGraph{};
+    plan.catalog=nodeCatalogSnapshot();
+    auto fail=[&](const char* message){
+        plan.ok=false;
+        plan.diagnostics.push_back({0,message,true});
+        if(why)*why=message;
+        return false;
+    };
+    if(source.nodes.size()>maxGraphNodes)return fail("节点数量超过上限。");
+    if(source.edges.size()>maxGraphEdges)return fail("连线数量超过上限。");
+
+    GraphSpec graph=source;
+    std::string normalizeWhy;
+    if(!normalizeGraph(graph,&normalizeWhy)) {
+        plan.ok=false;
+        plan.diagnostics.push_back({0,normalizeWhy,true});
+        if(why)*why=normalizeWhy;
+        return false;
+    }
+
+    std::map<InstanceID,size_t> index;
+    std::map<EnvironmentRole,size_t> environmentCounts;
+    plan.nodes.resize(graph.nodes.size());
+    for(size_t i=0;i<graph.nodes.size();++i) {
+        const auto& node=graph.nodes[i];
+        if(!node.id)return fail("节点 ID 必须非零。");
+        if(!index.emplace(node.id,i).second)return fail("节点 ID 必须唯一。");
+        auto& entry=plan.nodes[i];
+        entry.spec=node.unavailable?nullptr:nodeSpec(node.type);
+        if(!entry.spec) {
+            entry.type=0;
+            const std::string message="未知节点类型："+(node.key.empty()?std::to_string(node.type):node.key);
+            plan.diagnostics.push_back({node.id,message,!allowUnknownNodes});
+            if(!allowUnknownNodes) {plan.ok=false;if(why)*why=message;return false;}
+            continue;
+        }
+        if(node.nodeVersion==0 || node.nodeVersion!=entry.spec->nodeVersion ||
+           node.stateVersion==0 || node.stateVersion!=entry.spec->stateVersion) {
+            const std::string message="节点版本不受当前平台支持："+node.key;
+            if(!allowUnknownNodes) {plan.ok=false;if(why)*why=message;return false;}
+            plan.diagnostics.push_back({node.id,message,false});
+            entry.spec=nullptr;entry.type=0;
+            continue;
+        }
+        if(entry.spec->sdkVersion!=nodeSDKVersion)return fail("节点 SDK 版本不受当前平台支持。");
+        if(entry.spec->legacyAdapter && entry.spec->kernelFactory)
+            return fail("节点不能同时使用旧内核适配与 SDK 内核工厂。");
+        const uint32_t executionCaps=CapData|CapStream|CapGenerator|CapTriggerSource|CapTriggerTarget|
+                                     CapNoteSource|CapClockSource|CapOutputSink;
+        const bool requiresKernel=(entry.spec->capabilities&executionCaps)!=0 ||
+                                  !entry.spec->inputs.empty() || !entry.spec->outputs.empty();
+        if(requiresKernel && !entry.spec->legacyAdapter && !entry.spec->kernelFactory)
+            return fail("节点声明了执行能力，但未注册内核工厂。");
+        if(entry.spec->environmentRole!=EnvironmentRole::None && ++environmentCounts[entry.spec->environmentRole]>1)
+            return fail("工程中每种环境节点只能有一个实例。");
+        for(bool input:{true,false})for(const auto& port:input?entry.spec->inputs:entry.spec->outputs)
+            if(const char* problem=nodePortContractProblem(*entry.spec,port,input))return fail(problem);
+        if(!entry.spec->instantiable) {
+            const std::string message=std::string("节点类型不可实例化：")+entry.spec->key;
+            plan.diagnostics.push_back({node.id,message,true});
+            plan.ok=false;if(why)*why=message;
+            return false;
+        }
+        entry.type=node.type;
+        entry.bypass=node.bypass && nodeHas(entry.spec->capabilities,CapBypassable);
+        entry.inputs.assign(entry.spec->inputs.size(),PortLink{});
+        entry.triggerInputs.resize(entry.spec->inputs.size());
+        if(node.bypass && !nodeHas(entry.spec->capabilities,CapBypassable)) {
+            plan.diagnostics.push_back({node.id,std::string("节点不支持旁通：")+entry.spec->title,false});
+        }
+        for(const auto& [id,value]:node.parameters) {
+            const ParamSpec* param=nodeParamSpec(node.type,id);
+            if(!param) {
+                // A parameter this build knows but this node does not declare is a
+                // document error. A parameter this build has never heard of is
+                // preserved for a newer version instead of rejecting the project.
+                if(paramSpec(id)) {
+                    const std::string message=std::string("参数不属于该节点：")+paramKey(id);
+                    plan.diagnostics.push_back({node.id,message,true});
+                    plan.ok=false;if(why)*why=message;
+                    return false;
+                }
+                plan.diagnostics.push_back({node.id,std::string("保留未知参数：")+std::to_string(id),false});
+                continue;
+            }
+            const ParamInfo& info=*param->info;
+            if(!std::isfinite(value)||value<info.min||value>info.max) {
+                const std::string message=std::string("参数超出范围：")+param->key;
+                plan.diagnostics.push_back({node.id,message,true});
+                plan.ok=false;if(why)*why=message;
+                return false;
+            }
+            if(param->discrete && std::trunc(value)!=value) {
+                const std::string message=std::string("参数必须为整数：")+param->key;
+                plan.diagnostics.push_back({node.id,message,true});
+                plan.ok=false;if(why)*why=message;
+                return false;
+            }
+        }
+        KernelConfig configuration=resolvedKernelConfig(node);
+        for(const auto& text:node.texts) {
+            const TextSpec* declared=nodeTextSpec(node.type,text.first.c_str());
+            if(!declared)return fail("文本参数不属于该节点。");
+            if(text.second.size()>declared->maxBytes)return fail("文本参数过长。");
+        }
+        if(entry.spec->validateConfig) {
+            std::string validationWhy;
+            if(!entry.spec->validateConfig(configuration,validationWhy)) {
+                plan.ok=false;
+                plan.diagnostics.push_back({node.id,validationWhy,true});
+                if(why)*why=validationWhy;
+                return false;
+            }
+        }
+        // Asset presence is not checked here: the compiler also runs on documents
+        // whose assets were deliberately not decoded. The loader reports it.
+    }
+
+    if(graph.environmentRequired &&
+       (environmentCounts[EnvironmentRole::Timecode]!=1 || environmentCounts[EnvironmentRole::ProjectSettings]!=1))
+        return fail("工程必须包含一个时间码节点和一个项目设定节点。");
+
+    // Edges.
+    std::set<std::pair<InstanceID,int>> occupied;
+    std::vector<std::vector<size_t>> next(graph.nodes.size()),allNext(graph.nodes.size()),reverse(graph.nodes.size());
+    struct Dependency {size_t source,target,port,link;bool trigger,feedback;};
+    std::vector<Dependency> dependencies;
+    std::vector<size_t> pending(graph.nodes.size(),0);
+    for(auto edge:graph.edges) {
+        auto a=index.find(edge.source),b=index.find(edge.target);
+        if(a==index.end()||b==index.end())return fail("连接引用了不存在的节点。");
+        auto& targetPlan=plan.nodes[b->second];
+        const auto& targetNode=graph.nodes[b->second];
+        const auto& sourceNode=graph.nodes[a->second];
+        if(!targetPlan.spec) {
+            plan.diagnostics.push_back({targetNode.id,"连接指向缺失节点，已忽略。",false});
+            continue;
+        }
+
+        if(edge.port<0||size_t(edge.port)>=targetPlan.spec->inputs.size())
+            return fail("连线指向不存在的输入端口。");
+        if(!plan.nodes[a->second].spec) {
+            plan.diagnostics.push_back({sourceNode.id,"连接来自缺失节点，已忽略。",false});
+            continue;
+        }
+        const PortSpec& inputPort=targetPlan.spec->inputs[size_t(edge.port)];
+        if(edge.sourcePort<0||size_t(edge.sourcePort)>=plan.nodes[a->second].spec->outputs.size())
+            return fail("连线引用了不存在的输出端口。");
+        const Signal produced=plan.nodes[a->second].spec->outputs[size_t(edge.sourcePort)].signal;
+        if(produced!=inputPort.signal)return fail("连接两端的信号类型不匹配。");
+        const bool trigger=inputPort.signal==Signal::Trigger;
+        if(a==b && !(trigger && (inputPort.flags&PortFeedback)))return fail("自连接须使用显式延迟触发端口。");
+        // Ordinary inputs are single-source: the run plan stores one upstream
+        // link per port, so accepting a second edge would silently drop one.
+        // Trigger inputs accept several distinct sources; identical duplicates
+        // are dropped below.
+        if(!trigger && !occupied.emplace(edge.target,edge.port).second)
+            return fail("同一输入端口只能有一条连接。");
+        auto& links=targetPlan.triggerInputs[size_t(edge.port)];
+        if(trigger) {
+            // Identical duplicates used to double-trigger downstream nodes.
+            bool duplicate=false;
+            for(const auto& existing:links) if(existing.node==int(a->second) && existing.port==edge.sourcePort)duplicate=true;
+            if(duplicate) {
+                plan.diagnostics.push_back({targetNode.id,"忽略重复的触发连线。",false});
+                continue;
+            }
+            if(!links.empty() && !(inputPort.flags&PortMultiSource))
+                return fail("此触发输入未声明多源，只能有一条连接。");
+            links.push_back({int(a->second),edge.sourcePort});
+        } else {
+            targetPlan.inputs[size_t(edge.port)]=PortLink{int(a->second),edge.sourcePort};
+        }
+        dependencies.push_back({a->second,b->second,size_t(edge.port),trigger?links.size()-1:0,
+                                trigger,trigger&&bool(inputPort.flags&PortFeedback)});
+        allNext[a->second].push_back(b->second);reverse[b->second].push_back(a->second);
+    }
+    // Iterative strongly-connected components keep control-thread stack use
+    // bounded even for a 4096-node chain. Ordinary trigger edges stay sample
+    // accurate; only explicitly permitted edges inside a cycle are delayed.
+    std::vector<bool> visited(graph.nodes.size(),false);
+    std::vector<size_t> cursor(graph.nodes.size(),0),finish,stack;
+    for(size_t root=0;root<graph.nodes.size();++root)if(!visited[root]) {
+        stack.push_back(root);visited[root]=true;
+        while(!stack.empty()) {
+            const size_t node=stack.back();
+            if(cursor[node]<allNext[node].size()) {
+                const size_t dest=allNext[node][cursor[node]++];
+                if(!visited[dest]){visited[dest]=true;stack.push_back(dest);}
+            } else {finish.push_back(node);stack.pop_back();}
+        }
+    }
+    std::vector<size_t> component(graph.nodes.size(),SIZE_MAX);size_t serial=0;
+    for(auto it=finish.rbegin();it!=finish.rend();++it)if(component[*it]==SIZE_MAX) {
+        stack.push_back(*it);component[*it]=serial;
+        while(!stack.empty()) {
+            const size_t node=stack.back();stack.pop_back();
+            for(size_t dest:reverse[node])if(component[dest]==SIZE_MAX){component[dest]=serial;stack.push_back(dest);}
+        }
+        ++serial;
+    }
+    for(const auto& edge:dependencies) {
+        const bool delayed=edge.feedback&&component[edge.source]==component[edge.target];
+        if(delayed)plan.nodes[edge.target].triggerInputs[edge.port][edge.link].delayed=true;
+        else {++pending[edge.target];next[edge.source].push_back(edge.target);}
+    }
+    // Missing required inputs are an editable incomplete graph, not a fatal
+    // document error. SDK kernels must safely process null/empty inputs.
+    for(size_t i=0;i<plan.nodes.size();++i) {
+        const auto& node=plan.nodes[i];
+        if(!node.spec || !node.spec->kernelFactory)continue;
+        for(size_t p=0;p<node.spec->inputs.size();++p) {
+            const auto& input=node.spec->inputs[p];
+            if(!(input.flags&PortOptional) && !node.inputs[p].connected() && node.triggerInputs[p].empty())
+                plan.diagnostics.push_back({graph.nodes[i].id,std::string("必连输入尚未连接：")+input.id,false});
+        }
+    }
+    plan.order.clear();
+    for(size_t i=0;i<pending.size();++i) if(!pending[i]) plan.order.push_back(i);
+    for(size_t j=0;j<plan.order.size();++j)
+        for(size_t dest:next[plan.order[j]]) if(--pending[dest]==0) plan.order.push_back(dest);
+    if(plan.order.size()!=graph.nodes.size())return fail("图中存在回路。");
+    for(const auto& node:graph.nodes)
+        if(node.unavailable) plan.diagnostics.push_back({node.id,node.unavailableReason,false});
+    return plan.ok;
+    } catch(const std::exception& error) {
+        plan.ok=false;plan.diagnostics.push_back({0,std::string("节点配置校验失败：")+error.what(),true});
+        if(why)*why=plan.diagnostics.back().message;return false;
+    } catch(...) {
+        plan.ok=false;plan.diagnostics.push_back({0,"节点配置校验发生异常。",true});
+        if(why)*why=plan.diagnostics.back().message;return false;
+    }
+}
+
+inline std::string CompiledGraph::reason() const {
+    for(const auto& d:diagnostics) if(d.fatal) return d.message;
+    for(const auto& d:diagnostics) if(!d.message.empty()) return d.message;
+    return {};
+}
+
+// Legacy entry point kept for tests and callers that only need the order.
+inline bool graphOrder(const GraphSpec& graph,std::vector<size_t>& order,std::string* why=nullptr) {
+    CompiledGraph plan;
+    if(!compileGraph(graph,plan,why)) {order.clear();return false;}
+    order=plan.order;
+    return true;
+}
+} // namespace tri

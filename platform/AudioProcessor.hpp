@@ -1,5 +1,5 @@
 #pragma once
-#include "../src/NodeRegistry.hpp"
+#include "NodeKernel.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>

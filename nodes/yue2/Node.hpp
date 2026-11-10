@@ -47,7 +47,8 @@ inline NodeModule module() {
     NodeSpec spec{"soundnet.yue2",nodeTypeID("soundnet.yue2"),"YuE2 生成","输入",1,1,true,true,
         CapTask|CapGenerator|CapAssetAudio|CapStream|CapBypassable,TimeMode::Timed,0,
         {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional)},
-        {pout("audio","音频",Signal::Audio,RoleMain)},
+        {pout("audio","音频",Signal::Audio,RoleMain),
+         pout("notes","MIDI 音符",Signal::Midi,RoleMain)},
         {gainID,loopID,startID,endID,fadeID,cotID,outputID,variantID,stepsID,seedID},
         "audio",
         {{"yue2.style","风格描述","English, indie pop, bright acoustic guitar, soft drums",4096,false,false,false},
@@ -57,8 +58,7 @@ inline NodeModule module() {
          {"gen.extraArgs","附加参数","",4096,false,false,false},
          {"yue2.arLora","AR LoRA 路径","",1024,false,false,false},
          {"yue2.narLora","NAR LoRA 路径","",1024,false,false,false},
-         {"yue2.score","乐谱（ABC）","",262144,true,false,false},
-         {"gen.takes","生成记录","",262144,false,false,true}}};
+         {"yue2.score","乐谱（ABC）","",262144,true,false,false,"abc"}}};
     spec.kernelFactory=create;
     spec.validateConfig=validate;
     return {std::move(spec),{
@@ -72,7 +72,7 @@ inline NodeModule module() {
         {variantID,ParamSpec{&variantInfo,"gen.variant",true,variantOptions,3,ParamGroup::General}},
         {stepsID,ParamSpec{&stepsInfo,"gen.steps",true,nullptr,0,ParamGroup::General}},
         {seedID, ParamSpec{&seedInfo, "gen.seed",  true,nullptr,0,ParamGroup::General}}},
-        {{"YuE2 生成","YuE2 Generation"},{"输入","Input"},{"触发","Trigger"},{"音频","Audio"},
+        {{"YuE2 生成","YuE2 Generation"},{"输入","Input"},{"触发","Trigger"},{"音频","Audio"},{"MIDI 音符","MIDI Notes"},
          {"风格描述","Style"},{"歌词","Lyrics"},{"后端可执行文件","Backend executable"},
          {"模型目录","Model directory"},{"附加参数","Extra arguments"},
          {"AR LoRA 路径","AR LoRA path"},{"NAR LoRA 路径","NAR LoRA path"},
@@ -87,14 +87,19 @@ inline NodeModule module() {
          {"试听（独立播放，不影响图）","Audition (independent of the graph)"},
          {"播放","Play"},{"暂停","Pause"},{"停止播放","Stop playback"},
          {"请先填写风格描述。","Enter a style description first."},
+         {"无法读取节点参数，请重新选择节点。","Couldn't read the node settings. Select the node again."},
          {"乐谱为空，请先生成或粘贴 ABC 文本。","The score is empty; generate or paste ABC text first."},
-         {"该记录未归档或文件已移动（工程未设定文件夹）。","This take was not archived or its file moved (no project folder)."},
+         {"该记录的资源不可用。","The resources for this take are unavailable."},
          {"载入失败：文件缺失或已移动。","Load failed: the file is missing or moved."},
          {"还没有素材可试听。","Nothing to audition yet."},
          {"已载入所选记录。","Loaded the selected take."},
          {"试听不经过图；节点内播放由「触发」端口驱动，走音频节点输出。",
           "Audition bypasses the graph; in-graph playback is driven by the trigger port."},
          {"按乐谱重新生成","Regenerate from score"},{"导入为 MIDI 剪辑","Import as MIDI clip"},
+         {"乐谱无法转换为 MIDI 剪辑。","The score could not be converted to a MIDI clip."},
+         {"MIDI 剪辑速度必须在 40–240 BPM 之间。","MIDI clip tempo must be between 40 and 240 BPM."},
+         {"触发端口控制播放。保存工程时，音频与乐谱存放在独立的素材目录。",
+          "The trigger port controls playback. Saved projects keep audio and scores in a separate asset folder."},
          {"生成完成。","Generation complete."},
          {"乐谱已写入「乐谱（ABC）」。","The score was written to “Score (ABC)”."}}};
 }

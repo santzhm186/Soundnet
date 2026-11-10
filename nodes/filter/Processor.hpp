@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::filter {
 class FilterProcessor final : public AudioProcessor {
     std::atomic<float> mode_{0},cutoff_{8000},resonance_{.9f},drive_{0};
     double rate_=48000;

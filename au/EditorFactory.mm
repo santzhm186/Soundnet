@@ -3,6 +3,7 @@
 #import <AudioToolbox/AUCocoaUIView.h>
 #import "../ui/TriEditor.h"
 #include "WorkflowEditorAccess.hpp"
+#import "../platform/NodePackageLoader.h"
 #include <memory>
 @interface TrnyTernaryViewFactory : NSObject<AUCocoaUIBase>
 @end
@@ -13,7 +14,9 @@
     auto edit=std::make_shared<tri::RouteEdit>();
     auto cache=std::make_shared<ternaryAU::EditorAccess>(unit);
     auto readGraph=[cache] {cache->refresh(true); return cache->state.graph;};
-    return TRICreateEditor(^float(int id) {
+    const auto loaded=tri::refreshNodePackages(tri::defaultNodePackageRoots(tri::nodePlatformBundle()),true);
+    if(!loaded.ok)return nil;
+    NSView* editor=TRICreateEditor(^float(int id) {
         if (tri::layout::contains(id)) {
             cache->refresh();
             return cache->state.layout[id-tri::layout::first];
@@ -61,6 +64,28 @@
            AudioUnitGetProperty(unit,kAudioUnitProperty_StreamFormat,kAudioUnitScope_Output,0,&format,&size);
            return @{@"actualRate":@(format.mSampleRate),@"deviceRate":@(format.mSampleRate),
                @"processingPrecision":@32,@"hostManaged":@YES,@"devices":@[]};
+       }, ^NSDictionary *(NSDictionary *command) {
+           NSMutableDictionary *request=[command mutableCopy];
+           request[@"request"]=NSUUID.UUID.UUIDString;
+           CFDictionaryRef raw=(__bridge CFDictionaryRef)request;
+           if(AudioUnitSetProperty(unit,ternaryAU::midiCapture,kAudioUnitScope_Global,0,&raw,sizeof(raw))!=noErr)
+               return @{};
+           CFDictionaryRef response=nullptr;
+           UInt32 size=sizeof(response);
+           if(AudioUnitGetProperty(unit,ternaryAU::midiCapture,kAudioUnitScope_Global,0,&response,&size)!=noErr)
+               return @{};
+           NSDictionary *reply=CFBridgingRelease(response);
+           return [reply[@"request"] isEqual:request[@"request"]]?reply:@{};
        });
+    __weak NSView* weakEditor=editor;
+    TRISetNodeLibraryRefresh(editor,^(void (^completed)(NSString*)) {
+        if(cache->refreshNodes()!=noErr){completed(@"宿主无法刷新节点库。");return;}
+        auto refreshed=tri::refreshNodePackages(tri::defaultNodePackageRoots(tri::nodePlatformBundle()),true);
+        NSString* why=nil;
+        if(refreshed.ok&&weakEditor&&!TRIRefreshNodeCatalog(weakEditor,&why))
+            completed(why ?: @"节点已加载，工程包含不可用节点。");
+        else completed([NSString stringWithUTF8String:refreshed.message.c_str()]);
+    });
+    return editor;
 }
 @end

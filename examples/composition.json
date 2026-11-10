@@ -268,8 +268,29 @@
       "stateVersion": 1,
       "x": 630,
       "y": 650
+    },
+    {
+      "id": 15,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 16,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
   "projectId": "composition",
-  "version": 4
+  "version": 4,
+  "settings": {
+    "environmentRequired": true
+  }
 }

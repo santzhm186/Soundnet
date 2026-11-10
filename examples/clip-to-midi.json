@@ -1,36 +1,57 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 23,
       "x": 60,
       "y": 160,
       "parameters": {
-        "85": 0
-      }
+        "trigger.pulse": 0
+      },
+      "nodeKey": "soundnet.start",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 16,
       "nodeVersion": 2,
       "x": 300,
       "y": 160,
-      "parameters": {
-        "24": 1
-      },
+      "parameters": {},
       "asset": {
         "beats": 4,
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
+      },
+      "nodeKey": "soundnet.midi-clip",
+      "stateVersion": 1
     },
     {
       "id": 3,
-      "type": 18,
       "x": 540,
       "y": 160,
+      "parameters": {},
+      "nodeKey": "soundnet.midi-output",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 4,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 5,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
       "parameters": {}
     }
   ],
@@ -38,12 +59,18 @@
     {
       "source": 1,
       "target": 2,
-      "port": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 2,
       "target": 3,
-      "port": 0
+      "port": "notes",
+      "sourcePort": "notes"
     }
-  ]
+  ],
+  "projectId": "clip-to-midi",
+  "settings": {
+    "environmentRequired": true
+  }
 }

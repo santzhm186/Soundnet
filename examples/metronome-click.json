@@ -1,58 +1,90 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 23,
       "x": 80,
       "y": 80,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.start",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 24,
       "x": 80,
       "y": 220,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.stop",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 3,
-      "type": 41,
       "x": 330,
       "y": 130,
       "parameters": {
-        "1230": 120,
-        "1231": 0.5,
-        "1232": 1,
-        "1233": 4
-      }
+        "metronome.bpm": 120,
+        "metronome.level": 0.5,
+        "metronome.accent": 1,
+        "metronome.beats": 4
+      },
+      "nodeKey": "soundnet.metronome",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 4,
-      "type": 19,
       "nodeVersion": 2,
       "x": 600,
       "y": 130,
       "parameters": {
-        "24": 0.7
-      }
+        "output.master": 0.7
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
+    },
+    {
+      "id": 5,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 6,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
   "edges": [
     {
       "source": 1,
       "target": 3,
-      "port": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 2,
       "target": 3,
-      "port": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 3,
       "target": 4,
-      "port": 0
+      "port": "audio",
+      "sourcePort": "audio"
     }
-  ]
+  ],
+  "projectId": "metronome-click",
+  "settings": {
+    "environmentRequired": true
+  }
 }

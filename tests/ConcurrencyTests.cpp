@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 // Render, graph publication, panic requests and MIDI input happen on different
 // threads in the host. This test exercises that combination under TSan/ASan too.
 #include "../src/Engine.hpp"
@@ -18,9 +19,9 @@ static void connect(GraphSpec& graph, InstanceID source, InstanceID target, int 
 
 int main() {
     GraphSpec graph;
-    add(graph,1,MidiNode);
-    add(graph,2,Osc1Node,{{Wave1,0},{Level1,.3f},{Attack,.001f},{Sustain,1}});
-    add(graph,3,AudioOutputNode,{{Master,.5f}});
+    add(graph,1,ntest::type("midi-input"));
+    add(graph,2,ntest::type("oscillator"),{{ntest::param("oscillator","osc1.wave"),0},{ntest::param("oscillator","osc1.level"),.3f},{ntest::param("oscillator","envelope.attack"),.001f},{ntest::param("oscillator","envelope.sustain"),1}});
+    add(graph,3,ntest::type("audio-output"),{{ntest::param("audio-output","output.master"),.5f}});
     connect(graph,1,2);connect(graph,2,3);
     auto engine=std::make_unique<Engine>();
     if(!engine->setGraph(graph))return 1;
@@ -36,7 +37,7 @@ int main() {
     });
     for(int i=0;i<80;++i) {
         GraphSpec next=graph;
-        next.nodes[2].parameters[Master]=.1f+.5f*float(i%7)/7.f;
+        next.nodes[2].parameters[ntest::param("audio-output","output.master")]=.1f+.5f*float(i%7)/7.f;
         if(!engine->setGraph(next))failed=true;
         if(i%5==0)engine->panic();
         if(i%3==0){engine->setProcessingEnabled(false);engine->setProcessingEnabled(true);}

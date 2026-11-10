@@ -10,10 +10,12 @@ struct DisplayState {
     tri::layout::State layout=tri::layout::defaults();
 };
 inline constexpr int editAssets = 2000, playLocalMIDI = 2001;
+inline constexpr int refreshNodeLibrary = 2002;
 struct LocalMIDI { UInt8 status, a, b; };
 inline constexpr AudioUnitPropertyID processing = 0x53505243; // SPRC: UInt32, 0 stopped / 1 running
 inline constexpr AudioUnitPropertyID localMIDI = 0x534d4944; // SMID
 inline constexpr AudioUnitPropertyID assets = 0x53415354; // SAST
+inline constexpr AudioUnitPropertyID midiCapture = 0x534d4350; // SMCP: command / response dictionaries
 inline constexpr AudioUnitPropertyID display=0x54445350; // TDSP
 inline constexpr AudioUnitPropertyID routes = 0x54524752; // TRGR
 inline constexpr AudioUnitPropertyID layoutBase = 0x544c5900; // TLY + offset

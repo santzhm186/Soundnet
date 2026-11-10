@@ -53,7 +53,7 @@ int main() {
         check(module.parameters.size()==8,"ace-step parameter count");
         bool takes=false;
         for(const auto& text:spec.texts)if(std::strcmp(text.id,"gen.takes")==0)takes=text.hidden;
-        check(takes,"the take log is hidden");
+        check(!takes,"take history is stored as platform resources, not text paths");
         tri::KernelConfig good;
         good.parameters[tri::nodes::ace_step::startID]=0.1f;
         good.parameters[tri::nodes::ace_step::endID]=0.9f;

@@ -18,6 +18,7 @@
 - (BOOL)finishInputRecording:(NSError **)error;
 - (void)savePatch;
 - (void)stopNode:(uint64_t)nodeID;
+- (NSDictionary *)midiCaptureCommand:(NSDictionary *)command;
 - (NSDictionary *)workflowAssets;
 - (BOOL)replaceWorkflowAssets:(NSDictionary *)assets;
 // Requested processing format, effective device format, and device UID choices.

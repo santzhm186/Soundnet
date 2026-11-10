@@ -1,5 +1,6 @@
 #import "../ui/TriEditor.h"
 #import "../src/WorkflowAssets.h"
+#import "../platform/NodeEditor.h"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,8 @@
 
 @interface NSView (SoundnetProcessingActions)
 - (BOOL)adoptFile:(NSDictionary *)file;
+- (void)insert:(NSMenuItem *)item;
+- (tri::NodeEditorContext)editorContextForNode:(uint64_t)uid;
 - (void)runExport:(NSInteger)kind toURL:(NSURL *)url seconds:(double)seconds rate:(double)rate bits:(int)bits;
 - (void)cancelProcessing:(id)sender;
 - (void)stopGraph:(id)sender;
@@ -17,6 +20,11 @@
 - (void)press:(int)note;
 @end
 
+@interface NSWindowController (ClipWindowConstruction)
+- (instancetype)initWithContext:(tri::NodeEditorContext)context owner:(NSWindow *)owner;
+- (void)clipAudition:(id)sender;
+- (void)clipPreview:(id)sender;
+@end
 static NSArray<NSString *> *stagingDirectories(NSURL *folder) {
     NSArray *names=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:folder.path error:nil];
     return [names filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *name,NSDictionary *) {
@@ -46,7 +54,7 @@ int main() { setenv("SOUNDNET_NO_AUTOSAVE","1",1); @autoreleasepool {
     __block BOOL processing=YES;
     NSMutableArray<NSArray<NSNumber *> *> *midiEvents=[NSMutableArray new];
     NSView *editor=TRICreateEditor(
-        ^float(int p){return tri::params[p].def;},^(int p,float value){},
+        ^float(int p){return 0.f;},^(int p,float value){},
         ^(uint8_t status,uint8_t note,uint8_t velocity){[midiEvents addObject:@[@(status),@(note),@(velocity)]];},
         ^BOOL{return NO;},^(BOOL){},^NSString *{return @"PROCESSING TEST";},
         ^NSDictionary *{return assets;},^BOOL(NSDictionary *replacement){assets=replacement;return YES;},
@@ -55,7 +63,8 @@ int main() { setenv("SOUNDNET_NO_AUTOSAVE","1",1); @autoreleasepool {
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     window.releasedWhenClosed=NO;window.contentView=editor;
     NSDictionary *fixture=[NSJSONSerialization JSONObjectWithData:
-        [NSData dataWithContentsOfFile:@"examples/three-voice-arrangement.v4.json"] options:0 error:nil];
+        [NSData dataWithContentsOfFile:@"examples/three-voice-arrangement.v4.json"] options:NSJSONReadingMutableContainers error:nil];
+    for(NSMutableDictionary *node in fixture[@"nodes"])if(const auto* spec=tri::nodeSpecForKey([node[@"nodeKey"] UTF8String])) {node[@"nodeVersion"]=@(spec->nodeVersion);node[@"stateVersion"]=@(spec->stateVersion);}
     assert(fixture && [editor adoptFile:fixture]);
     NSURL *folder=[[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
         URLByAppendingPathComponent:[@"Soundnet-ProcessingUITests-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
@@ -95,9 +104,13 @@ int main() { setenv("SOUNDNET_NO_AUTOSAVE","1",1); @autoreleasepool {
     NSView *roll=[[NSClassFromString(@"SNNoteRollView") alloc]initWithFrame:NSMakeRect(0,0,500,300)];
     [roll setValue:@[[ @{ @"pitch":@60,@"start":@0.2,@"length":@0.1,@"velocity":@100 } mutableCopy]] forKey:@"notes"];
     [roll setValue:@0 forKey:@"selectedIndex"];
-    [editor setValue:roll forKey:@"clipRoll"];
+    NSMenuItem *insert=[NSMenuItem new];insert.tag=tri::nodeTypeID("soundnet.midi-clip");[editor insert:insert];
+    const uint64_t clipID=[[editor valueForKey:@"selected"] unsignedLongLongValue];
+    auto context=[editor editorContextForNode:clipID];
+    NSWindowController *clipEditor=[[NSClassFromString(@"SNMidiClipWindowController") alloc]initWithContext:context owner:window];
+    [clipEditor setValue:roll forKey:@"clipRoll"];
     for(NSInteger mode=0;mode<2;++mode) {
-        if(mode==0)[editor clipAudition:nil];else [editor clipPreview:nil];
+        if(mode==0)[clipEditor clipAudition:nil];else [clipEditor clipPreview:nil];
         [editor stopGraph:nil];[editor playGraph:nil];[midiEvents removeAllObjects];
         NSDate *until=[NSDate dateWithTimeIntervalSinceNow:.4];
         while(until.timeIntervalSinceNow>0)

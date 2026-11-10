@@ -42,6 +42,11 @@
 - (void)selectOnly:(uint64_t)uid;
 @end
 
+static NSButton *buttonWithAction(NSView *view,SEL action) {
+    if([view isKindOfClass:NSButton.class]&&((NSButton *)view).action==action)return (NSButton *)view;
+    for(NSView *child in view.subviews)if(NSButton *found=buttonWithAction(child,action))return found;
+    return nil;
+}
 static NSDictionary *snapshot(NSView *editor) {
     NSData *data=[NSJSONSerialization dataWithJSONObject:[editor valueForKey:@"document"] options:0 error:nil];
     return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
@@ -95,12 +100,12 @@ int main() {
         assert(([environmentKeys isEqualToSet:[NSSet setWithArray:@[@"soundnet.timecode",@"soundnet.project-settings"]]]));
         for (int i=0; i<25; ++i) {
             NSMenuItem *item = [NSMenuItem new];
-            item.tag = tri::Osc1Node;
+            item.tag = tri::nodeTypeID("soundnet.oscillator");
             [editor insert:item];
         }
         assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+25);
         NSMenuItem *start = [NSMenuItem new];
-        start.tag = tri::StartNode;
+        start.tag = tri::nodeTypeID("soundnet.start");
         [editor insert:start];
         assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         [editor undo:nil];
@@ -128,10 +133,10 @@ int main() {
         [editor redo:nil];
         assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+26);
         NSMenuItem *sampler = [NSMenuItem new];
-        sampler.tag = tri::SamplerNode;
+        sampler.tag = tri::nodeTypeID("soundnet.sampler");
         [editor insert:sampler];
         assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+27);
-        NSString *samplerKey=[NSString stringWithUTF8String:tri::nodeKey(tri::SamplerNode)];
+        NSString *samplerKey=[NSString stringWithUTF8String:tri::nodeKey(tri::nodeTypeID("soundnet.sampler"))];
         NSDictionary *samplerNode = [[assets[@"graph"][@"nodes"] filteredArrayUsingPredicate:
             [NSPredicate predicateWithFormat:@"nodeKey == %@", samplerKey]] firstObject];
         assert(samplerNode && [samplerNode[@"parameters"] count]==10);
@@ -151,7 +156,7 @@ int main() {
         waitForJob(editor);
         assert([assets[@"graph"][@"nodes"] count]==initialNodeCount+29);
         NSDictionary *clipDrop = [assets[@"graph"][@"nodes"] lastObject];
-        NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::AudioClipNode)];
+        NSString *clipKey=[NSString stringWithUTF8String:tri::nodeKey(tri::nodeTypeID("soundnet.audio-clip"))];
         assert(clipDrop && [clipDrop[@"nodeKey"] isEqual:clipKey] && clipDrop[@"asset"][@"name"]);
         assert([clipDrop[@"x"] doubleValue]==140 && [clipDrop[@"y"] doubleValue]==140);
 
@@ -165,25 +170,19 @@ int main() {
         waitForJob(editor);
         assert([snapshot(editor) isEqual:beforeCancelledDrop]);
 
-        // Legacy routes skip retired clocks and use the current I/O defaults.
-        NSMutableDictionary *legacyParams=[NSMutableDictionary new];
-        for(int pid=0;pid<tri::ParamCount;++pid)
-            if(!tri::routeParam(pid))legacyParams[@(tri::params[pid].name)]=@(tri::params[pid].def);
-        NSDictionary *converted=[editor migrate:@{@"format":@"audio.ternary.workflow",@"version":@2,
-            @"parameters":legacyParams,@"nodes":@{@"input":@[@0,@0],@"output":@[@200,@0],
-                @"clock":@[@0,@200],@"velocity":@[@200,@200]},
-            @"connections":@{@"output.audio":@"input",@"velocity.clock":@"clock"}}];
-        tri::GraphSpec legacyGraph;
-        assert(triassets::decodeGraph(converted,legacyGraph,nullptr));
-        assert(legacyGraph.nodes.size()==3 && legacyGraph.edges.size()==1);
-        for(const auto& node:legacyGraph.nodes)if(node.type==tri::AudioOutputNode)
-            assert(node.parameters.at(tri::OutputWidth)==1);
+        // Historical patch formats are rejected explicitly by this platform.
+        NSDictionary *beforeLegacy=snapshot(editor);
+        assert((![editor adoptFile:@{@"format":@"audio.ternary.workflow",@"version":@2}]));
+        assert([snapshot(editor) isEqual:beforeLegacy]);
 
         // Opening a v4 project must go through the canonicaliser, not the v1/v2
         // migrator.
         NSDictionary *v4=[NSJSONSerialization JSONObjectWithData:
             [NSData dataWithContentsOfFile:@"examples/three-voice-arrangement.v4.json"]
             options:NSJSONReadingMutableContainers error:nil];
+        for(NSMutableDictionary *node in v4[@"nodes"])if(const auto* spec=tri::nodeSpecForKey([node[@"nodeKey"] UTF8String])) {
+            node[@"nodeVersion"]=@(spec->nodeVersion);node[@"stateVersion"]=@(spec->stateVersion);
+        }
         // A completed decode belongs to the document the user dropped into,
         // even if the user opens a different workflow before it finishes.
         assert([editor dropFileURLs:@[dropURL] atPoint:NSMakePoint(180,180) clipMode:NO]);
@@ -194,7 +193,7 @@ int main() {
         std::remove(dropPath.c_str());
         NSDictionary *opened=[editor valueForKey:@"document"];
         assert([opened[@"version"] isEqual:@4]);
-        assert([opened[@"nodes"] count]==7);
+        assert([opened[@"nodes"] count]==[v4[@"nodes"] count]);
         assert([opened[@"nodes"][1][@"nodeKey"] isEqual:@"soundnet.voice-arranger"]);
         assert([opened[@"edges"][1][@"sourcePort"] isEqual:@"high"]);
 
@@ -219,13 +218,13 @@ int main() {
                 }
                 return nil;
             };
-            NSSlider *level=(NSSlider *)find(inspector,[NSSlider class],tri::Level1+100000);
+            NSSlider *level=(NSSlider *)find(inspector,[NSSlider class],tri::parameterID("soundnet.oscillator","osc1.level")+100000);
             assert(level);
             level.doubleValue=0.42;
             [editor sliderChanged:level];
             double stored=[assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.level"] doubleValue];
             assert(std::abs(stored-0.42)<1e-5);
-            NSPopUpButton *wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            NSPopUpButton *wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::parameterID("soundnet.oscillator","osc1.wave"));
             assert(wave && wave.numberOfItems==4);
             [wave selectItemAtIndex:1];
             [editor choiceChanged:wave];
@@ -242,20 +241,20 @@ int main() {
             NSButton *mix=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Mix));
             assert(mix && mix.action==@selector(toggleParameterGroup:));
             [editor toggleParameterGroup:mix];
-            assert(!find(inspector,[NSSlider class],tri::Level1+100000));
+            assert(!find(inspector,[NSSlider class],tri::parameterID("soundnet.oscillator","osc1.level")+100000));
             assert([snapshot(editor) isEqual:beforeGroups]);
             mix=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Mix));
             [editor toggleParameterGroup:mix];
-            level=(NSSlider *)find(inspector,[NSSlider class],tri::Level1+100000);
+            level=(NSSlider *)find(inspector,[NSSlider class],tri::parameterID("soundnet.oscillator","osc1.level")+100000);
             assert(level && std::abs(level.doubleValue-.42)<1e-5);
             level.doubleValue=.37;[editor sliderChanged:level];
             assert(std::abs([assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.level"] doubleValue]-.37)<1e-5);
             NSButton *tone=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Tone));
             [editor toggleParameterGroup:tone];
-            assert(!find(inspector,[NSPopUpButton class],tri::Wave1));
+            assert(!find(inspector,[NSPopUpButton class],tri::parameterID("soundnet.oscillator","osc1.wave")));
             tone=(NSButton *)find(inspector,[NSButton class],990200+int(tri::ParamGroup::Tone));
             [editor toggleParameterGroup:tone];
-            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::parameterID("soundnet.oscillator","osc1.wave"));
             assert(wave && wave.indexOfSelectedItem==1);
             [wave selectItemAtIndex:2];[editor choiceChanged:wave];
             assert([assets[@"graph"][@"nodes"][oscIndex][@"parameters"][@"osc1.wave"] intValue]==2);
@@ -272,7 +271,7 @@ int main() {
             assert([snapshot(editor) isEqual:beforeLanguage]);
             name=(NSTextField *)find(inspector,[NSTextField class],990001);
             assert([name.stringValue isEqualToString:@"振荡器"]);
-            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::Wave1);
+            wave=(NSPopUpButton *)find(inspector,[NSPopUpButton class],tri::parameterID("soundnet.oscillator","osc1.wave"));
             assert(wave.indexOfSelectedItem==2 && wave.numberOfItems==4);
             [language selectItemAtIndex:0];[editor languageChanged:language];
             assert(!SNIsEnglish());
@@ -322,7 +321,8 @@ int main() {
             [editor selectOnly:aiID];
             [editor commit:nil];
             assert([assets[@"graph"][@"nodes"] count]==1);
-            [editor importScore:nil];
+            NSButton *import=buttonWithAction([editor valueForKey:@"inspector"],@selector(importScore:));
+            assert(import&&import.target!=editor);[NSApp sendAction:import.action to:import.target from:import];
             nodes=[editor valueForKey:@"document"][@"nodes"];
             assert(nodes.count==2);
             NSDictionary *scoreClip=nodes.lastObject;
@@ -341,8 +341,9 @@ int main() {
         assert(triassets::validate([NSJSONSerialization JSONObjectWithData:serialized options:0 error:nil],nullptr));
 
         NSDictionary *example = [NSJSONSerialization JSONObjectWithData:
-            [NSData dataWithContentsOfFile:@"examples/three-loops-then-wait.json"]
+            [NSData dataWithContentsOfFile:@"examples/composition.json"]
             options:NSJSONReadingMutableContainers error:nil];
+        for(NSMutableDictionary *node in example[@"nodes"])if(const auto* spec=tri::nodeSpecForKey([node[@"nodeKey"] UTF8String])) {node[@"nodeVersion"]=@(spec->nodeVersion);node[@"stateVersion"]=@(spec->stateVersion);}
         tri::GraphSpec decoded;
         assert(triassets::decodeGraph(example,decoded,nullptr));
         NSWindow *window = [[NSWindow alloc] initWithContentRect:editor.frame

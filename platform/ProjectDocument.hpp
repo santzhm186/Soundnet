@@ -1,6 +1,6 @@
 #pragma once
 #import <Foundation/Foundation.h>
-#include "../src/NodeSpec.hpp"
+#include "NodeSpec.hpp"
 
 namespace tri {
 // Project templates are assembled from environment roles, not a node-type list.

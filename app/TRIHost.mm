@@ -1,5 +1,6 @@
 #import "../ui/SNLocalization.h"
 #import "TRIHost.h"
+#include "../src/MidiCaptureAccess.hpp"
 #import "AudioBridge.hpp"
 #include "PatchRouting.hpp"
 #include "WorkflowAssetStore.hpp"
@@ -134,8 +135,17 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
             }
         }
         if (validGraph && tri::validRouting(graph)) _rt->dsp.setRouting(graph);
-        NSDictionary *assets = [defaults dictionaryForKey:@"Soundnet.WorkflowAssets.1"];
-        if (assets) _assets.replace(assets,_rt->dsp);
+        NSURL *autosave=triassets::autosaveURL();
+        NSDictionary *savedProject=nil;
+        if(autosave&&[NSFileManager.defaultManager fileExistsAtPath:autosave.path]) {
+            NSString *why=nil;
+            savedProject=triassets::readProject(autosave,&why);
+            _projectError=why;
+        }
+        if(!savedProject||!_assets.replace(@{@"graph":savedProject},_rt->dsp)) {
+            NSDictionary *assets=[defaults dictionaryForKey:@"Soundnet.WorkflowAssets.1"];
+            if(assets)_assets.replace(assets,_rt->dsp);
+        }
         _audioConfiguration=_assets.environment;
         _patchLayout=tri::layout::defaults();
         NSArray *layout=[defaults arrayForKey:@"Ternary.NodeLayout.1"];
@@ -472,12 +482,14 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
 // Node-level stop: the graph applies it at the next block boundary, so this is
 // safe to call from the UI thread.
 - (void)stopNode:(uint64_t)nodeID { _rt->dsp.stopNode(nodeID); }
+- (NSDictionary *)midiCaptureCommand:(NSDictionary *)command {
+    return triassets::midiCaptureCommand(_rt->dsp,command);
+}
 - (void)savePatch {
     NSMutableArray *values = [NSMutableArray array];
     for (int i=0; i<tri::ParamCount; ++i) [values addObject:@(_rt->dsp.get(i))];
     NSUserDefaults *defaults=[NSUserDefaults standardUserDefaults];
     [defaults setObject:values forKey:@"Ternary.Patch.1"];
-    [defaults setObject:_assets.current forKey:@"Soundnet.WorkflowAssets.1"];
     NSMutableArray *layout=[NSMutableArray arrayWithCapacity:_patchLayout.size()];
     for (float v:_patchLayout) [layout addObject:@(v)];
     [defaults setObject:layout forKey:@"Ternary.NodeLayout.1"];
@@ -496,7 +508,18 @@ static AVAudioSourceNode *sourceNode(TRIRealtime *rt, AVAudioFormat *format, BOO
     auto rt = std::make_unique<TRIRealtime>();
     rt->dsp.prepare(48000);
     rt->input.prepare(48000,48000);
-    rt->dsp.set(tri::InputGain,1);
+    tri::GraphSpec check;
+    auto add=[&](uint64_t id,const char* key){tri::GraphNode node;node.id=id;node.key=key;
+        const auto* spec=tri::nodeSpecForKey(key);if(!spec)return false;
+        node.nodeVersion=spec->nodeVersion;node.stateVersion=spec->stateVersion;check.nodes.push_back(node);return true;};
+    if(!add(1,"soundnet.audio-input")||!add(2,"soundnet.midi-input")||!add(3,"soundnet.oscillator")||
+       !add(4,"soundnet.mixer")||!add(5,"soundnet.audio-output"))return 4;
+    check.nodes[0].parameters[tri::parameterID("soundnet.audio-input","input.gain")]=1;
+    check.nodes[2].parameters[tri::parameterID("soundnet.oscillator","osc1.level")]=.7f;
+    check.nodes[4].parameters[tri::parameterID("soundnet.audio-output","output.master")]=1;
+    check.edges={{1,4,0,0,"in1","audio"},{2,3,0,0,"notes","notes"},
+                 {3,4,1,0,"in2","audio"},{4,5,0,0,"audio","audio"}};
+    if(!rt->dsp.setGraph(check))return 5;
     AVAudioFormat *format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channels:2];
     AVAudioEngine *graph = [AVAudioEngine new];
     AVAudioSourceNode *source = sourceNode(rt.get(),format,YES);

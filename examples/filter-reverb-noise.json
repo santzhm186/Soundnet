@@ -1,77 +1,108 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 1,
       "x": 20,
       "y": 40,
-      "parameters": {}
+      "parameters": {},
+      "nodeKey": "soundnet.midi-input",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 3,
       "x": 230,
       "y": 40,
       "parameters": {
-        "0": 2,
-        "1": 0.38,
-        "2": 0,
-        "9": 0.02,
-        "10": 0.3,
-        "11": 0.6,
-        "12": 0.4
-      }
+        "osc1.wave": 2,
+        "osc1.level": 0.38,
+        "osc1.tune": 0,
+        "envelope.attack": 0.02,
+        "envelope.decay": 0.3,
+        "envelope.sustain": 0.6,
+        "envelope.release": 0.4
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 3,
-      "type": 28,
       "x": 440,
       "y": 40,
       "parameters": {
-        "1100": 0,
-        "1101": 1400,
-        "1102": 0.7,
-        "1103": 0.15
-      }
+        "filter.type": 0,
+        "filter.cutoff": 1400,
+        "filter.resonance": 0.7,
+        "filter.drive": 0.15
+      },
+      "nodeKey": "soundnet.filter",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 4,
-      "type": 29,
       "x": 650,
       "y": 40,
       "parameters": {
-        "1110": 0.4,
-        "1111": 0.8,
-        "1112": 0.5,
-        "1113": 0.9
-      }
+        "reverb.mix": 0.4,
+        "reverb.size": 0.8,
+        "reverb.damping": 0.5,
+        "reverb.width": 0.9
+      },
+      "nodeKey": "soundnet.reverb",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 5,
-      "type": 19,
       "nodeVersion": 2,
       "x": 1080,
       "y": 160,
       "parameters": {
-        "23": 0.7
-      }
+        "output.master": 0.7
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
     },
     {
       "id": 6,
-      "type": 30,
       "x": 230,
       "y": 230,
       "parameters": {
-        "1120": 0.04,
-        "1121": 1
-      }
+        "noise.level": 0.04,
+        "noise.type": 1
+      },
+      "nodeKey": "soundnet.noise",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 7,
-      "type": 7,
       "x": 860,
       "y": 160,
+      "parameters": {},
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 8,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 9,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
       "parameters": {}
     }
   ],
@@ -79,38 +110,42 @@
     {
       "source": 1,
       "target": 2,
-      "port": 0,
-      "sourcePort": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 2,
       "target": 3,
-      "port": 0,
-      "sourcePort": 0
+      "port": "audio",
+      "sourcePort": "audio"
     },
     {
       "source": 3,
       "target": 4,
-      "port": 0,
-      "sourcePort": 0
+      "port": "audio",
+      "sourcePort": "audio"
     },
     {
       "source": 6,
       "target": 7,
-      "port": 0,
-      "sourcePort": 0
+      "port": "in1",
+      "sourcePort": "audio"
     },
     {
       "source": 4,
       "target": 7,
-      "port": 1,
-      "sourcePort": 0
+      "port": "in2",
+      "sourcePort": "audio"
     },
     {
       "source": 7,
       "target": 5,
-      "port": 0,
-      "sourcePort": 0
+      "port": "audio",
+      "sourcePort": "audio"
     }
-  ]
+  ],
+  "projectId": "filter-reverb-noise",
+  "settings": {
+    "environmentRequired": true
+  }
 }

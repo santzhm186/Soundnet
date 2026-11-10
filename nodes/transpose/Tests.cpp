@@ -1,76 +1,25 @@
-#include "../../src/Engine.hpp"
+#include "Node.hpp"
 #include <cassert>
 #include <cstdio>
-
-static void testClampedNotes(int semitones, uint8_t first, uint8_t second, uint8_t boundary) {
-    tri::GraphSpec graph;
-    tri::GraphNode transpose{2,tri::TransposeNode};
-    transpose.nodeVersion=tri::nodeSpec(tri::TransposeNode)->nodeVersion;
-    transpose.parameters={{tri::TransposeSemitones,float(semitones)}};
-    graph.nodes={{1,tri::MidiNode},transpose,{3,tri::MidiOutNode}};
-    graph.edges={{1,2,0},{2,3,0}};
-    auto engine=std::make_unique<tri::Engine>();
-    engine->prepare(48000);
-    assert(engine->setGraph(graph));
-
-    struct Event {uint8_t status,pitch,velocity;};
-    std::vector<Event> events;
-    events.reserve(8);
-    engine->setMidiOutput(&events,[](void* sink,int,uint8_t status,uint8_t pitch,uint8_t velocity) {
-        static_cast<std::vector<Event>*>(sink)->push_back({status,pitch,velocity});
-    });
-    auto render=[&] {
-        float left[3]{},right[3]{};
-        engine->render(nullptr,nullptr,left,right,3);
-    };
-    engine->midi(0x93,first,100);
-    engine->midi(0x93,second,90);
-    engine->midi(0x94,second,80);
-    render();
-    assert(events.size()==2);
-    assert(events[0].status==0x93 && events[0].pitch==boundary && events[0].velocity==100);
-    assert(events[1].status==0x94 && events[1].pitch==boundary && events[1].velocity==80);
-    events.clear();
-    engine->midi(0x83,first,0);
-    render();
-    assert(events.empty());
-    engine->midi(0x94,second,0);
-    render();
-    assert(events.size()==1 && events[0].status==0x84 && events[0].pitch==boundary);
-    events.clear();
-    engine->midi(0x83,second,0);
-    render();
-    assert(events.size()==1 && events[0].status==0x83 && events[0].pitch==boundary);
-
-    // Bypass and re-enable while both original pitches are still held.
-    engine->midi(0x93,first,100);
-    engine->midi(0x93,second,90);
-    render();
-    events.clear();
-    graph.nodes[1].bypass=true;
-    assert(engine->setGraph(graph));
-    render();
-    assert(events.size()==3);
-    assert(events[0].status==0x83 && events[0].pitch==boundary);
-    assert(events[1].status==0x93 && events[1].pitch==std::min(first,second));
-    assert(events[2].status==0x93 && events[2].pitch==std::max(first,second));
-    events.clear();
-    graph.nodes[1].bypass=false;
-    assert(engine->setGraph(graph));
-    render();
-    assert(events.size()==3 && events[2].status==0x93 && events[2].pitch==boundary);
-    events.clear();
-    engine->setProcessingEnabled(false);
-    render();
-    assert(events.size()==1 && events[0].status==0x83 && events[0].pitch==boundary);
-    events.clear();
-    engine->setProcessingEnabled(true);
-    render();
-    assert(events.empty());
+#include <cmath>
+#include <array>
+using namespace tri;
+struct Harness {
+    std::array<KernelMidiEvent,8192> events{};
+    KernelInput input;KernelOutput output;KernelContext context;
+    Harness(){input.id="notes";output.id="notes";output.midi=events.data();output.midiCapacity=events.size();context.frames=128;context.sampleRate=1000;context.inputs=&input;context.inputCount=1;context.outputs=&output;context.outputCount=1;}
+    void feed(NodeKernel& kernel,const KernelMidiEvent* e,size_t n,int frames=128){input.midi=e;input.midiCount=n;context.frames=frames;output.midiCount=0;output.overflow=false;kernel.process(context);context.framePosition+=frames;}
+};
+using namespace tri::nodes::transpose;
+static void checkClamp(int shift,uint8_t first,uint8_t second,uint8_t boundary){
+    Kernel k;Harness h;k.prepare(1000,128);KernelConfig c;c.parameters[TransposeSemitones]=shift;k.configure(c);
+    KernelMidiEvent on[]={{0,0x93,first,100},{1,0x93,second,90},{2,0x94,second,80}};h.feed(k,on,3);
+    assert(h.output.midiCount==2&&h.events[0].a==boundary&&h.events[0].status==0x93&&h.events[1].status==0x94);
+    KernelMidiEvent off[]={{0,0x83,first,0},{1,0x84,second,0},{2,0x83,second,17}};h.feed(k,off,3);
+    assert(h.output.midiCount==2&&h.events[0].status==0x84&&h.events[1].status==0x83&&h.events[1].b==17);
+    h.feed(k,on,2);h.context.bypassed=true;h.feed(k,nullptr,0);
+    assert(h.output.midiCount==3&&h.events[0].status==0x83);
+    k.reset(KernelResetReason::Stop);h.feed(k,nullptr,0);assert(h.output.midiCount==0);
 }
-
-int main() {
-    testClampedNotes(24,103,127,127);
-    testClampedNotes(-24,24,0,0);
-    std::puts("PASS: transpose keeps clamped notes held until the last release on each channel");
-}
+static void overflowRecovery(){Kernel k;Harness h;k.prepare(1000,128);k.configure({});KernelMidiEvent on{0,0x90,60,100};h.feed(k,&on,1);h.output.midiCapacity=0;KernelMidiEvent off{0,0x80,60,0};h.feed(k,&off,1);assert(h.output.overflow);h.output.midiCapacity=h.events.size();h.feed(k,nullptr,0);assert(h.output.midiCount==1&&h.events[0].status==0x80);}
+int main(){overflowRecovery();checkClamp(24,103,127,127);checkClamp(-24,24,0,0);puts("PASS transpose: clamped overlap, channels, bypass and reset");}

@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include "../src/GraphSpec.hpp"
 #include <array>
 #include <cassert>
@@ -22,9 +23,9 @@ int main() {
         "soundnet.legacy-osc3","soundnet.disconnected","soundnet.master-output",
         "soundnet.daw-audio-input","soundnet.daw-audio-output"})
         assert(!nodeSpecForKey(retired));
-    for(int type:{ArpNode,ClipNode,ProgressNode,VelocityNode}) {
+    for(int type:{ntest::type("arp"),ntest::type("midi-clip"),ntest::type("progression"),ntest::type("velocity")}) {
         assert(nodeInputByRole(type,RoleClock)==-1);
-        assert(nodeAcceptsParam(type,ClockBPM));
+        assert(nodeAcceptsParam(type,nodeParamIdForKey(type,"clock.bpm")));
     }
     assert(nodeParamIdForKey(gain->type,"gain")==nodes::gain::amountID);
     assert(nodeParamIdForKey(split->type,"gain")==-1);
@@ -36,6 +37,17 @@ int main() {
     try {registerParameter(duplicate,1,{&nodes::gain::amountInfo,"other",false});}
     catch(const std::logic_error&) {rejected=true;}
     assert(rejected);
+    // A descriptor cannot borrow another module's parameter merely because
+    // that module was registered earlier in the catalog.
+    {
+        auto gainModule=nodes::gain::module();
+        auto transposeModule=nodes::transpose::module();
+        transposeModule.spec.params.push_back(gainModule.spec.params.front());
+        bool rejectedForeign=false;
+        try {makeNodeCatalog({gainModule,transposeModule});}
+        catch(const std::logic_error&) {rejectedForeign=true;}
+        assert(rejectedForeign);
+    }
     // Stereo, partial processing blocks, silence and bypass through public SDK.
     {
         auto kernel=gain->kernelFactory();kernel->prepare(48000,128);
@@ -99,7 +111,7 @@ int main() {
         assert(!compileGraph(graph,compiled));
         graph.nodes[0].parameters[nodes::project_settings::bitsID]=24;
         assert(compileGraph(graph,compiled));
-        graph.nodes[0].type=Osc1Node;assert(!compileGraph(graph,compiled));
+        graph.nodes[0].type=ntest::type("oscillator");assert(!compileGraph(graph,compiled));
         graph.nodes[0].type=0;graph.nodes[0].nodeVersion=99;
         assert(!compileGraph(graph,compiled));
     }

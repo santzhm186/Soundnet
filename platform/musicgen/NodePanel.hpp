@@ -3,7 +3,7 @@
 // `soundnet.ace-step` nodes.
 //
 // Layout: status + progress spinner, Generate/Stop, the take list (each entry
-// re-embeds an archived WAV through the normal commit transaction) and an
+// selects audio and score resources through the normal commit transaction) and an
 // audition transport (play/pause/stop plus a draggable seek bar). The
 // audition player is deliberately independent of the graph: in-graph playback
 // stays driven by the node's trigger port. Objective-C++: UI translation
@@ -13,7 +13,6 @@
 #include "MusicGenBackend.hpp"
 #include "GenerationArchive.hpp"
 #include "../NodeEditor.h"
-#import "../../src/WavFile.hpp"
 #import <objc/runtime.h>
 
 // The standalone editor and the AU editor may coexist in one process.
@@ -27,10 +26,10 @@ struct PanelSpec {
     // Node-specific behaviour, supplied by each node's Editor.hpp.
     std::function<GenRequest(NSDictionary* node,NSDictionary* environment,
                              NSString* workDir,bool feedback)> request;
-    std::function<soundnet::TaskService::Job(GenRequest,NSString* label,
-                                             NSString* folder,NSString* takes)> job;
+    std::function<soundnet::TaskService::Job(GenRequest,NSString* label)> job;
+    std::function<bool(NodeEditorContext,NSDictionary*,NSString**)> importScore;
     std::function<NSDictionary*(const soundnet::TaskResult&,NSDictionary*)> apply;
-    NSString* defaultLabel=@"Take";     // archive filename fallback
+    NSString* defaultLabel=@"Take";     // take name fallback
     NSString* promptKey=@"";            // texts key of the prompt
     NSString* promptMissing=@"";        // localized message when the prompt is empty
     NSString* scoreKey=@"";             // texts key of the ABC score ("" = none)
@@ -55,10 +54,10 @@ struct PanelSpec {
 @property(nonatomic,strong) NSTextField* timeField;
 @property(nonatomic,strong) AVAudioPlayer* player;
 @property(nonatomic,strong) NSTimer* timer;
-@property(nonatomic,copy) NSString* auditionPath;
 @property(nonatomic,copy) NSString* auditionFingerprint;
 -(void)run:(id)sender;
 -(void)runFromScore:(id)sender;
+-(void)importScore:(id)sender;
 -(void)cancel:(id)sender;
 -(void)takeChanged:(id)sender;
 -(void)play:(id)sender;
@@ -84,12 +83,19 @@ struct PanelSpec {
 }
 
 -(void)dealloc {
-    if(_auditionPath.length)[[NSFileManager defaultManager] removeItemAtPath:_auditionPath error:nil];
+    [_timer invalidate];
 }
 
 -(void)submitWithFeedback:(BOOL)feedback {
+    __attribute__((objc_precise_lifetime)) SNMusicGenPanel *keepAlive=self;
+    (void)keepAlive; // committing an active field can rebuild the inspector
     if(!context.submitTask)return;
-    NSDictionary* node=self.configuration ?: @{};
+    tri::NodeEditorContext current;
+    if(!context.captureTaskContext||!context.captureTaskContext(current)) {
+        _status.stringValue=context.text(@"无法读取节点参数，请重新选择节点。");
+        return;
+    }
+    NSDictionary* node=current.configuration;
     if(!feedback) {
         NSString* prompt=node[@"texts"][spec.promptKey];
         if(![prompt isKindOfClass:NSString.class]||!prompt.length) {
@@ -103,18 +109,12 @@ struct PanelSpec {
             return;
         }
     }
-    NSString* folder=[NSString stringWithFormat:@"soundnet-ai-%@",NSUUID.UUID.UUIDString];
-    NSString* work=[NSTemporaryDirectory() stringByAppendingPathComponent:folder];
-    tri::musicgen::GenRequest request=spec.request(node,context.environment,work,feedback);
+    tri::musicgen::GenRequest request=spec.request(node,current.environment,@"",feedback);
     NSString* rawLabel=node[@"name"];
     NSString* nodeLabel=[rawLabel isKindOfClass:NSString.class]&&rawLabel.length?rawLabel:spec.defaultLabel;
-    NSString* projectFolder=context.environment[@"projectFolder"];
-    if(![projectFolder isKindOfClass:NSString.class])projectFolder=@"";
-    NSString* previousTakes=node[@"texts"][@"gen.takes"];
-    if(![previousTakes isKindOfClass:NSString.class])previousTakes=@"";
     std::string why;
-    soundnet::TaskService::Job job=spec.job(std::move(request),nodeLabel,projectFolder,previousTakes);
-    if(context.submitTask(std::move(job),spec.apply,why)) {
+    soundnet::TaskService::Job job=spec.job(std::move(request),nodeLabel);
+    if(current.submitTask(std::move(job),spec.apply,why)) {
         _status.stringValue=context.text(@"正在生成…");
         [self startPolling];
         [self refresh];
@@ -142,7 +142,7 @@ struct PanelSpec {
         [self refresh];
         return;
     }
-    [_timer invalidate];_timer=nil;
+    if(!self.player.isPlaying) {[_timer invalidate];_timer=nil;}
     [_spinner stopAnimation:nil];
     _status.stringValue=(found&&!snapshot.message.empty())?
         [NSString stringWithUTF8String:snapshot.message.c_str()]:context.text(@"空闲");
@@ -153,34 +153,40 @@ struct PanelSpec {
 -(void)runFromScore:(id)sender {[self submitWithFeedback:YES];}
 -(void)cancel:(id)sender {if(context.cancelTask)context.cancelTask();[self tick:nil];}
 
-// Take switching: re-embed an archived WAV through the commit transaction so
-// undo, validation and autosave all apply. Takes without an archive (project
-// folder unset at generation time) can only be inspected.
+// Selection resolves immutable platform resources, including score-only takes.
 -(void)takeChanged:(id)sender {
-    NSDictionary* node=self.configuration ?: @{};
-    NSArray* takes=tri::musicgen::detail::decodeTakes(node[@"texts"][@"gen.takes"]);
-    const NSUInteger index=(NSUInteger)self.takePopup.indexOfSelectedItem-1;  // item 0 is the placeholder
+    __attribute__((objc_precise_lifetime)) SNMusicGenPanel *keepAlive=self;
+    (void)keepAlive; // commit synchronously replaces this panel
+    tri::NodeEditorContext current;
+    if(!context.captureTaskContext||!context.captureTaskContext(current)||!current.commit)return;
+    NSDictionary* node=current.configuration;
+    NSArray* takes=tri::projectresources::collection(node,@"generation.takes");
+    const NSUInteger index=(NSUInteger)self.takePopup.indexOfSelectedItem-1;
     if(index>=takes.count)return;
     NSDictionary* take=takes[index];
-    if(![take isKindOfClass:NSDictionary.class])return;
-    NSString* file=take[@"file"];
-    if(![file isKindOfClass:NSString.class]||!file.length||
-       ![[NSFileManager defaultManager] fileExistsAtPath:file]) {
-        _status.stringValue=context.text(@"该记录未归档或文件已移动（工程未设定文件夹）。");
-        return;
-    }
-    NSString* why=nil;
-    NSDictionary* asset=triassets::importAsset(@"audio",[NSURL fileURLWithPath:file],&why);
-    if(!asset) {
-        _status.stringValue=why.length?why:context.text(@"载入失败：文件缺失或已移动。");
-        return;
-    }
-    if(!context.commit)return;
+    NSDictionary* audio=tri::projectresources::entryResource(node,take,@"audio");
+    NSDictionary* score=tri::projectresources::entryResource(node,take,@"score");
+    if(!audio&&!score) {_status.stringValue=context.text(@"该记录的资源不可用。");return;}
     NSMutableDictionary* replacement=[node mutableCopy];
-    replacement[@"asset"]=[asset copy];
-    context.commit(replacement);
-    _status.stringValue=[NSString stringWithFormat:@"%@ · %@",
-        context.text(@"已载入所选记录。"),file.lastPathComponent];
+    if(audio)replacement[@"asset"]=audio[@"data"];
+    else replacement[@"asset"]=NSNull.null;
+    if(spec.scoreKey.length) {
+        NSMutableDictionary* texts=[node[@"texts"] mutableCopy] ?: [NSMutableDictionary new];
+        if(score)texts[spec.scoreKey]=score[@"text"];
+        else [texts removeObjectForKey:spec.scoreKey];
+        replacement[@"texts"]=texts;
+    }
+    current.commit(replacement);
+    _status.stringValue=context.text(@"已载入所选记录。");
+}
+-(void)importScore:(id)sender {
+    __attribute__((objc_precise_lifetime)) SNMusicGenPanel *keepAlive=self;
+    (void)keepAlive; // createNode may select a new node and destroy this panel
+    tri::NodeEditorContext current;
+    if(!spec.importScore||!context.captureTaskContext||!context.captureTaskContext(current))return;
+    NSString *why=nil;
+    if(!spec.importScore(current,current.configuration,&why))
+        _status.stringValue=why ?: context.text(@"乐谱无法转换为 MIDI 剪辑。");
 }
 
 // Audition transport — independent of the audio graph (no engine state).
@@ -202,28 +208,12 @@ struct PanelSpec {
         (unsigned long)pcm.length,[asset[@"rate"] doubleValue],
         [head base64EncodedStringWithOptions:0],[tail base64EncodedStringWithOptions:0]];
     if(self.player&&[fingerprint isEqualToString:self.auditionFingerprint])return YES;
-    // De-interleave the embedded float32 PCM into a temporary WAV.
-    const float* raw=(const float*)pcm.bytes;
-    const int channels=std::max(1,[asset[@"channels"] intValue]);
-    std::vector<float> left(frames),right(frames);
-    for(NSUInteger i=0;i<frames;++i) {
-        left[i]=raw[i*NSUInteger(channels)];
-        right[i]=channels>1?raw[i*NSUInteger(channels)+1]:left[i];
-    }
-    if(_auditionPath.length)[[NSFileManager defaultManager] removeItemAtPath:_auditionPath error:nil];
-    _auditionPath=[NSTemporaryDirectory() stringByAppendingPathComponent:
-        [@"soundnet-audition-" stringByAppendingString:NSUUID.UUID.UUIDString]];
-    std::string why;
-    if(!tri::wav::write(_auditionPath.UTF8String ?: "",left,right,
-                        [asset[@"rate"] doubleValue],why,32)) {
-        _status.stringValue=[NSString stringWithUTF8String:why.c_str()];
-        _auditionPath=@"";
-        return NO;
-    }
+    NSString *why=nil;
+    NSData *wav=tri::projectresources::audioFileData(asset,&why);
+    if(!wav) {_status.stringValue=why ?: context.text(@"还没有素材可试听。");return NO;}
     self.auditionFingerprint=fingerprint;
     NSError* error=nil;
-    AVAudioPlayer* player=[[AVAudioPlayer alloc]initWithContentsOfURL:
-        [NSURL fileURLWithPath:_auditionPath] error:&error];
+    AVAudioPlayer* player=[[AVAudioPlayer alloc]initWithData:wav error:&error];
     if(!player) {_status.stringValue=error.localizedDescription?:@"无法播放。";return NO;}
     self.player=player;
     self.seek.maxValue=std::max(0.01,player.duration);
@@ -232,7 +222,7 @@ struct PanelSpec {
 
 -(void)play:(id)sender {
     if(![self prepareAudition])return;
-    [self.player play];
+    if([self.player play]) [self startPolling];
     [self refresh];
 }
 -(void)pause:(id)sender {[self.player pause];[self refresh];}
@@ -277,7 +267,7 @@ inline NSView* makeNodePanel(NodeEditorContext context,const PanelSpec& spec) {
     NSDictionary* node=context.configuration ?: @{};
     const bool scoreLoop=spec.scoreKey.length>0;
     SNMusicGenPanel* action=[[SNMusicGenPanel alloc]initWithContext:context spec:spec configuration:node];
-    const CGFloat height=scoreLoop?252:208;
+    const CGFloat height=scoreLoop?360:280;
     NSView* panel=[[NSView alloc]initWithFrame:NSMakeRect(0,0,270,height)];
     static const char owner=0;
     objc_setAssociatedObject(panel,&owner,action,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -308,6 +298,11 @@ inline NSView* makeNodePanel(NodeEditorContext context,const PanelSpec& spec) {
         action.feedbackButton.frame=NSMakeRect(0,y-30,270,28);
         [panel addSubview:action.feedbackButton];
         y-=40;
+        if(spec.importScore) {
+            NSButton *button=[NSButton buttonWithTitle:context.text(@"导入为 MIDI 剪辑")
+                target:action action:@selector(importScore:)];
+            button.frame=NSMakeRect(0,y-30,270,28);[panel addSubview:button];y-=40;
+        }
     }
 
     NSTextField* takeLabel=[NSTextField labelWithString:context.text(@"生成记录")];
@@ -317,10 +312,10 @@ inline NSView* makeNodePanel(NodeEditorContext context,const PanelSpec& spec) {
     action.takePopup=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(0,y-46,270,26) pullsDown:NO];
     action.takePopup.target=action;action.takePopup.action=@selector(takeChanged:);
     [action.takePopup addItemWithTitle:context.text(@"选择记录…")];
-    for(NSDictionary* take in tri::musicgen::detail::decodeTakes(node[@"texts"][@"gen.takes"])) {
+    for(NSDictionary* take in tri::projectresources::collection(node,@"generation.takes")) {
         if(![take isKindOfClass:NSDictionary.class])continue;
-        const double seconds=[take[@"seconds"] doubleValue];
-        NSString* date=[take isKindOfClass:NSDictionary.class]&&[take[@"date"] isKindOfClass:NSString.class]?take[@"date"]:@"";
+        const double seconds=[take[@"metadata"][@"seconds"] doubleValue];
+        NSString* date=[take[@"metadata"][@"date"] isKindOfClass:NSString.class]?take[@"metadata"][@"date"]:@"";
         [action.takePopup addItemWithTitle:[NSString stringWithFormat:@"%@ · %d:%02d · %@",
             [take[@"name"] isKindOfClass:NSString.class]?take[@"name"]:@"?",
             int(seconds/60),int(std::fmod(seconds,60)),date]];
@@ -364,7 +359,11 @@ inline NSView* makeNodePanel(NodeEditorContext context,const PanelSpec& spec) {
     hint.frame=NSMakeRect(0,0,270,30);
     [panel addSubview:hint];
 
-    [action refresh];
+    soundnet::TaskService::Snapshot snapshot;
+    if(context.taskSnapshot&&context.taskSnapshot(snapshot)&&snapshot.active()) {
+        [action startPolling];
+        [action tick:nil];
+    } else [action refresh];
     return panel;
 }
 

@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include "../src/OfflineRender.hpp"
 #include "../src/WavFile.hpp"
 #include "../src/AudioFile.hpp"
@@ -19,13 +20,13 @@ int main() {
     // Exports go to build/tests-offline; a clean tree has no such directory yet.
     std::filesystem::create_directories("build/tests-offline");
     GraphSpec graph;
-    GraphNode start;start.id=1;start.type=StartNode;start.x=0;start.y=0;graph.nodes.push_back(start);
-    GraphNode clip;clip.id=2;clip.type=ClipNode;clip.nodeVersion=nodeSpec(ClipNode)->nodeVersion;clip.x=120;clip.y=0;
+    GraphNode start;start.id=1;start.type=ntest::type("start");start.x=0;start.y=0;graph.nodes.push_back(start);
+    GraphNode clip;clip.id=2;clip.type=ntest::type("midi-clip");clip.nodeVersion=nodeSpec(ntest::type("midi-clip"))->nodeVersion;clip.x=120;clip.y=0;
     clip.clip.lengthBeats=2;
     clip.clip.events={{0,0x90,60,100},{1,0x80,60,0}};
     graph.nodes.push_back(clip);
-    GraphNode osc;osc.id=3;osc.type=Osc1Node;osc.x=240;osc.y=0;osc.parameters[Level1]=.6f;graph.nodes.push_back(osc);
-    GraphNode out;out.id=4;out.type=AudioOutputNode;out.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;out.x=360;out.y=0;out.parameters[Master]=1;graph.nodes.push_back(out);
+    GraphNode osc;osc.id=3;osc.type=ntest::type("oscillator");osc.x=240;osc.y=0;osc.parameters[ntest::param("oscillator","osc1.level")]=.6f;graph.nodes.push_back(osc);
+    GraphNode out;out.id=4;out.type=ntest::type("audio-output");out.nodeVersion=nodeSpec(ntest::type("audio-output"))->nodeVersion;out.x=360;out.y=0;out.parameters[ntest::param("audio-output","output.master")]=1;graph.nodes.push_back(out);
     edge(graph,1,2);edge(graph,2,3);edge(graph,3,4);
     std::vector<size_t> order;assert(graphOrder(graph,order));
 
@@ -38,12 +39,12 @@ int main() {
     puts("start-triggered graph renders offline");
 
     GraphSpec midiGraph;
-    GraphNode midiStart;midiStart.id=1;midiStart.type=StartNode;midiGraph.nodes.push_back(midiStart);
-    GraphNode midiClip;midiClip.id=2;midiClip.type=ClipNode;midiClip.nodeVersion=nodeSpec(ClipNode)->nodeVersion;midiClip.clip.lengthBeats=1;
+    GraphNode midiStart;midiStart.id=1;midiStart.type=ntest::type("start");midiGraph.nodes.push_back(midiStart);
+    GraphNode midiClip;midiClip.id=2;midiClip.type=ntest::type("midi-clip");midiClip.nodeVersion=nodeSpec(ntest::type("midi-clip"))->nodeVersion;midiClip.clip.lengthBeats=1;
     midiClip.clip.events={{0,0x90,67,110},{.5,0x80,67,0}};
-    midiClip.parameters[ClockBPM]=90; // tempo belongs to this clip
+    midiClip.parameters[ntest::param("midi-clip","clock.bpm")]=90; // tempo belongs to this clip
     midiGraph.nodes.push_back(midiClip);
-    GraphNode midiOut;midiOut.id=3;midiOut.type=MidiOutNode;midiGraph.nodes.push_back(midiOut);
+    GraphNode midiOut;midiOut.id=3;midiOut.type=ntest::type("midi-output");midiGraph.nodes.push_back(midiOut);
     edge(midiGraph,1,2);edge(midiGraph,2,3);
     GraphNode midiClock;midiClock.id=4;midiClock.type=nodeTypeID("soundnet.timecode");
     midiGraph.nodes.push_back(midiClock);
@@ -124,17 +125,17 @@ int main() {
     puts("44.1 kHz offline rendering is supported");
 
     GraphSpec stemGraph;
-    GraphNode noise;noise.id=1;noise.type=NoiseNode;noise.parameters[NoiseLevel]=.5f;stemGraph.nodes.push_back(noise);
-    GraphNode outA;outA.id=2;outA.type=AudioOutputNode;outA.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;outA.parameters[Master]=1;stemGraph.nodes.push_back(outA);
-    GraphNode noiseB;noiseB.id=3;noiseB.type=NoiseNode;noiseB.parameters[NoiseLevel]=.3f;stemGraph.nodes.push_back(noiseB);
-    GraphNode outB;outB.id=4;outB.type=AudioOutputNode;outB.nodeVersion=nodeSpec(AudioOutputNode)->nodeVersion;outB.parameters[Master]=1;stemGraph.nodes.push_back(outB);
+    GraphNode noise;noise.id=1;noise.type=ntest::type("noise");noise.parameters[ntest::param("noise","noise.level")]=.5f;stemGraph.nodes.push_back(noise);
+    GraphNode outA;outA.id=2;outA.type=ntest::type("audio-output");outA.nodeVersion=nodeSpec(ntest::type("audio-output"))->nodeVersion;outA.parameters[ntest::param("audio-output","output.master")]=1;stemGraph.nodes.push_back(outA);
+    GraphNode noiseB;noiseB.id=3;noiseB.type=ntest::type("noise");noiseB.parameters[ntest::param("noise","noise.level")]=.3f;stemGraph.nodes.push_back(noiseB);
+    GraphNode outB;outB.id=4;outB.type=ntest::type("audio-output");outB.nodeVersion=nodeSpec(ntest::type("audio-output"))->nodeVersion;outB.parameters[ntest::param("audio-output","output.master")]=1;stemGraph.nodes.push_back(outB);
     edge(stemGraph,1,2);edge(stemGraph,3,4);
     std::vector<offline::Stem> stems;
     assert(offline::renderStems(stemGraph,.25,48000,stems,why));
     assert(stems.size()==2);
     for(const offline::Stem& stem:stems){assert(stem.result.peak>.01);assert(stem.name.find('#')!=std::string::npos);}
     GraphSpec noOutput;
-    GraphNode lonely;lonely.id=1;lonely.type=Osc1Node;noOutput.nodes.push_back(lonely);
+    GraphNode lonely;lonely.id=1;lonely.type=ntest::type("oscillator");noOutput.nodes.push_back(lonely);
     stems.clear();
     assert(!offline::renderStems(noOutput,.1,48000,stems,why));
     puts("offline stems isolate each audio output");

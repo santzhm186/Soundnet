@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::limiter {
 class LimiterProcessor final : public AudioProcessor {
     std::atomic<float> threshold_{-6},release_{.12f},ceiling_{-0.3f},gain_{1};
     double rate_=48000;

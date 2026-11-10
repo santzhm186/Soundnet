@@ -14,11 +14,11 @@ int main() { @autoreleasepool {
     assert(graph);
     tri::WorkflowAssetStore store;
     assert(store.replace(@{@"graph":graph},engine));
-    assert(store.lastGraph.nodes.size()==5);
+    assert(store.lastGraph.nodes.size()==7);
     auto sample=store.lastGraph.nodes[1].sample;
     assert(sample && sample->frames()>1000);
 
-    graph[@"nodes"][1][@"parameters"][@"1131"]=@.4f;
+    graph[@"nodes"][1][@"parameters"][@"sampler.gain"]=@.4f;
     assert(store.replace(@{@"graph":graph},engine));
     assert(store.lastGraph.nodes[1].sample.get()==sample.get());
 
@@ -33,8 +33,8 @@ int main() { @autoreleasepool {
         for(int i=0;i<128;++i)peak=std::max(peak,std::fabs(outL[i]));
     }
     assert(peak>.01f);
-    // v4 has nodeKey rather than type. An unrelated new node and a parameter
-    // edit must preserve the decoded sample, not just an identical v3 graph.
+    // An unrelated new node and a parameter edit must preserve the decoded
+    // sample, including when the document has been canonicalized.
     NSString* why=nil;
     NSDictionary* canonical=triassets::canonicalGraph(graph,&why);
     assert(canonical);
@@ -69,5 +69,16 @@ int main() { @autoreleasepool {
     engine.render(nullptr,nullptr,outL,outR,128);
     peak=0;for(float sample:outL)peak=std::max(peak,std::fabs(sample));
     assert(peak>0.01f);
-    puts("PASS: per-node v4 asset reuse, invalid update rollback and unavailable host nodes.");
+    // A refresh between preparation and publication must not combine decoded
+    // configuration from one catalog with factories from another catalog.
+    tri::PreparedAssets prepared;
+    assert(prepared.load(store.current));
+    const auto preparedGeneration=prepared.catalog->generation;
+    tri::publishNodeCatalog(tri::makeNodeCatalog(tri::builtinNodeModules()));
+    assert(tri::nodeCatalogSnapshot()->generation!=preparedGeneration);
+    assert(store.apply(prepared,engine));
+    assert(store.catalogGeneration==preparedGeneration);
+    assert(store.replace(store.current,engine));
+    assert(store.catalogGeneration==tri::nodeCatalogSnapshot()->generation);
+    puts("PASS: asset reuse, invalid update rollback, unavailable nodes and catalog-consistent publication.");
 }}

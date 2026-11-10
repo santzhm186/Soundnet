@@ -1,4 +1,5 @@
 #import "TRIHost.h"
+#import "NodeLibraryRefresh.hpp"
 #import "../ui/TriEditor.h"
 #import "../ui/SNLocalization.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -40,7 +41,13 @@
         ^BOOL{ return host.processingEnabled; },
         ^(BOOL enabled){ host.processingEnabled=enabled; },
         ^(uint64_t nodeID){ [host stopNode:nodeID]; },
-        ^NSDictionary *{ return host.audioEnvironment; });
+        ^NSDictionary *{ return host.audioEnvironment; },
+        ^NSDictionary *(NSDictionary *command){ return [host midiCaptureCommand:command]; });
+    __weak NSView *refreshEditor=editor;
+    TRISetNodeLibraryRefresh(editor,^(void (^completed)(NSString *)) {
+        NSView *view=refreshEditor;
+        if(view)tri::node_refresh::refresh(view,^BOOL{return host.isRecording||host.isInputRecording;},completed);
+    });
     _window = [[NSWindow alloc] initWithContentRect:editor.frame
             styleMask:(NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable)
             backing:NSBackingStoreBuffered defer:NO];
@@ -246,6 +253,7 @@
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
 - (void)applicationWillTerminate:(NSNotification *)note {
+    TRIFlushEditorAutosave(_window.contentView);
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     if (_keyboard) [NSEvent removeMonitor:_keyboard];
     [_host savePatch];
@@ -255,15 +263,14 @@
 
 static int runExport(const char *input,const char *output,double seconds,int rate,int bits) {
     @autoreleasepool {
-        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
-        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
-        NSError *error=nil;
-        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-        if(![object isKindOfClass:NSDictionary.class]) {
-            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+        NSString *why=nil;
+        NSString *path=[NSString stringWithUTF8String:input];
+        NSDictionary *object=path?triassets::readProject([NSURL fileURLWithPath:path],&why):nil;
+        if(!object) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
         }
-        tri::GraphSpec graph;NSString *why=nil;
+        tri::GraphSpec graph;
         if(!triassets::decodeGraph(object,graph,&why)) {
             std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
@@ -283,15 +290,14 @@ static int runExport(const char *input,const char *output,double seconds,int rat
 
 static int runExportMidi(const char *input,const char *output,double seconds) {
     @autoreleasepool {
-        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
-        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
-        NSError *error=nil;
-        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-        if(![object isKindOfClass:NSDictionary.class]) {
-            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+        NSString *why=nil;
+        NSString *path=[NSString stringWithUTF8String:input];
+        NSDictionary *object=path?triassets::readProject([NSURL fileURLWithPath:path],&why):nil;
+        if(!object) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
         }
-        tri::GraphSpec graph;NSString *why=nil;
+        tri::GraphSpec graph;
         if(!triassets::decodeGraph(object,graph,&why)) {
             std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
@@ -314,15 +320,15 @@ static int runExportMidi(const char *input,const char *output,double seconds) {
 
 static int runExportStems(const char *input,const char *directory,double seconds,int rate,int bits) {
     @autoreleasepool {
-        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
-        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
-        NSError *error=nil;
-        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-        if(![object isKindOfClass:NSDictionary.class]) {
-            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+        NSString *why=nil;
+        NSString *path=[NSString stringWithUTF8String:input];
+        NSDictionary *object=path?triassets::readProject([NSURL fileURLWithPath:path],&why):nil;
+        if(!object) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
         }
-        tri::GraphSpec graph;NSString *why=nil;
+        tri::GraphSpec graph;
+        NSError *error=nil;
         if(!triassets::decodeGraph(object,graph,&why)) {
             std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
@@ -354,15 +360,14 @@ static int runExportStems(const char *input,const char *directory,double seconds
 
 static int runValidate(const char *input) {
     @autoreleasepool {
-        NSData *data=[NSData dataWithContentsOfFile:[NSString stringWithUTF8String:input]];
-        if(!data) { std::fprintf(stderr,"Soundnet: cannot read %s\n",input); return 1; }
-        NSError *error=nil;
-        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
-        if(![object isKindOfClass:NSDictionary.class]) {
-            std::fprintf(stderr,"Soundnet: invalid workflow: %s\n",error.localizedDescription.UTF8String ?: "not JSON");
+        NSString *why=nil;
+        NSString *path=[NSString stringWithUTF8String:input];
+        NSDictionary *object=path?triassets::readProject([NSURL fileURLWithPath:path],&why):nil;
+        if(!object) {
+            std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
             return 1;
         }
-        tri::GraphSpec graph;NSString *why=nil;
+        tri::GraphSpec graph;
         std::vector<tri::Diagnostic> diagnostics;
         if(!triassets::decodeGraph(object,graph,&why,false,false,&diagnostics)) {
             std::fprintf(stderr,"Soundnet: %s\n",why.UTF8String ?: "invalid workflow");
@@ -378,11 +383,13 @@ static int runValidate(const char *input) {
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
+        const auto loaded=tri::refreshNodePackages(tri::defaultNodePackageRoots(NSBundle.mainBundle),true);
+        if(!loaded.ok){std::fprintf(stderr,"Soundnet: %s\n",loaded.message.c_str());return 1;}
         if (argc==2 && strcmp(argv[1],"--self-test")==0) return [TRIHost runOfflineCheck];
         if (argc==2 && (strcmp(argv[1],"--version")==0 || strcmp(argv[1],"-v")==0)) {
             NSDictionary *info=[NSBundle mainBundle].infoDictionary;
-            std::printf("Soundnet %s (%s)\n",[info[@"CFBundleShortVersionString"] UTF8String] ?: "2.9.1",
-                        [info[@"CFBundleVersion"] UTF8String] ?: "91");
+            std::printf("Soundnet %s (%s)\n",[info[@"CFBundleShortVersionString"] UTF8String] ?: "3.0.0",
+                        [info[@"CFBundleVersion"] UTF8String] ?: "100");
             return 0;
         }
         if (argc==3 && strcmp(argv[1],"--validate")==0) return runValidate(argv[2]);

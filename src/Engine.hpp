@@ -1,9 +1,11 @@
 #pragma once
+#include "LegacyEngine.hpp"
+#include "NodeSpec.hpp"
 #include "InstanceGraph.hpp"
 
 namespace tri {
-// Legacy parameter IDs continue to load older AU presets. New documents own their
-// instance graph and publish complete topology edits through a separate plan.
+// Historical AU parameter storage remains for the host property bridge. Production
+// hosts execute only the instance graph; an empty graph never enables built-in DSP.
 class Engine : public LegacyEngine {
     InstanceGraph graph;
     std::atomic<bool> processing{true};
@@ -26,6 +28,8 @@ public:
     // at the next audio boundary, including a stop/resume between two blocks.
     void panic() {legacyPanicRequested.store(true,std::memory_order_release);graph.panic();}
     void stopNode(InstanceID id) {graph.requestNodeStop(id);}
+    uint64_t startMidiCapture(InstanceID node,int tempoParameter) {return graph.startMidiCapture(node,tempoParameter);}
+    std::shared_ptr<MidiInputCapture> finishMidiCapture(uint64_t token) {return graph.finishMidiCapture(token);}
     bool processingEnabled() const {return processing.load(std::memory_order_acquire);}
     uint64_t processingGeneration() const {return stopGeneration.load(std::memory_order_acquire);}
     void setProcessingEnabled(bool enabled) {
@@ -40,12 +44,16 @@ public:
     void midi(uint8_t s,uint8_t a,uint8_t b) {
         if(!processingEnabled())return;
         if(graph.enabled())graph.midi(false,s,a,b);
+#ifndef SOUNDNET_DYNAMIC_NODES
         else {applyLegacyRequests();LegacyEngine::midi(s,a,b);}
+#endif
     }
     void dawMidi(uint8_t s,uint8_t a,uint8_t b) {
         if(!processingEnabled())return;
         if(graph.enabled())graph.midi(true,s,a,b);
+#ifndef SOUNDNET_DYNAMIC_NODES
         else {applyLegacyRequests();LegacyEngine::dawMidi(s,a,b);}
+#endif
     }
     void setHostTempo(double bpm) {LegacyEngine::setHostTempo(bpm);graph.setHostTempo(bpm);}
     void setHostTransport(bool playing,double beat) {LegacyEngine::setHostTransport(playing,beat);graph.setHostTransport(playing,beat);}
@@ -57,12 +65,16 @@ public:
     void render(const float* l,const float* r,float* outL,float* outR,int n) {
         if(graph.enabled())graph.render(l,r,outL,outR,n);
         else {
+#ifdef SOUNDNET_DYNAMIC_NODES
+            if(n>0&&outL&&outR){std::fill_n(outL,n,0.f);std::fill_n(outR,n,0.f);}
+#else
             applyLegacyRequests();
             if(!processingEnabled()) {
                 if(n>0 && outL && outR){std::fill_n(outL,n,0.f);std::fill_n(outR,n,0.f);}
                 return;
             }
             LegacyEngine::render(l,r,outL,outR,n);
+#endif
         }
     }
 };

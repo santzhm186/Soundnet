@@ -1,9 +1,5 @@
 #pragma once
-// YuE2 generation task. The editor assembles an immutable GenRequest from
-// the node configuration plus the project environment (archive folder) and
-// submits it through NodeEditorContext::submitTask; the result applier writes
-// the embedded asset, the score text and the take log back through commit.
-// Objective-C++: editor/host translation units only.
+// Generation uses platform-managed resources and publishes through the editor transaction.
 #import <Foundation/Foundation.h>
 #include "Node.hpp"
 #include "../../platform/musicgen/GenerationArchive.hpp"
@@ -42,9 +38,8 @@ inline tri::musicgen::GenRequest makeRequest(NSDictionary* node,NSDictionary* en
     return request;
 }
 
-inline soundnet::TaskService::Job makeJob(tri::musicgen::GenRequest request,NSString* nodeLabel,
-                                          NSString* projectFolder,NSString* previousTakes) {
-    return tri::musicgen::generationJob(std::move(request),nodeLabel,projectFolder,previousTakes);
+inline soundnet::TaskService::Job makeJob(tri::musicgen::GenRequest request,NSString* nodeLabel) {
+    return tri::musicgen::generationJob(std::move(request),nodeLabel);
 }
 
 // Control-thread applier: returns the replacement node content.
@@ -52,12 +47,14 @@ inline NSDictionary* applyResult(const soundnet::TaskResult& result,NSDictionary
     if(result.status!=soundnet::TaskStatus::Succeeded)return nil;
     auto payload=std::dynamic_pointer_cast<const tri::musicgen::GeneratedTake>(result.payload);
     if(!payload)return nil;
-    NSMutableDictionary* replacement=[current mutableCopy];
+    NSMutableDictionary* replacement=[tri::musicgen::appendTake(current,*payload) mutableCopy];
     if(payload->asset)replacement[@"asset"]=[payload->asset copy];
+    else replacement[@"asset"]=NSNull.null;
     NSMutableDictionary* texts=[current[@"texts"] isKindOfClass:NSDictionary.class]
         ? [current[@"texts"] mutableCopy] : [NSMutableDictionary new];
-    if(payload->takesJSON)texts[@"gen.takes"]=[payload->takesJSON copy];
+    [texts removeObjectForKey:@"gen.takes"];
     if(payload->score)texts[@"yue2.score"]=[payload->score copy];
+    else [texts removeObjectForKey:@"yue2.score"];
     replacement[@"texts"]=texts;
     return replacement;
 }

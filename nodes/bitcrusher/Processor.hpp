@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::bitcrusher {
 class BitcrusherProcessor final : public AudioProcessor {
     std::atomic<float> bits_{8},rate_{8000},mix_{1};
     double sampleRate_=48000,phase_=0;

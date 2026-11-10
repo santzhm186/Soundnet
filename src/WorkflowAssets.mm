@@ -1,8 +1,10 @@
 #import "WorkflowAssets.h"
 #import <CoreML/CoreML.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CommonCrypto/CommonDigest.h>
 #include "StandardMidiFile.hpp"
 #include "AudioFile.hpp"
+#include "WavFile.hpp"
 #include <climits>
 #include <set>
 #include <cmath>
@@ -26,9 +28,9 @@ bool named(id asset) {
 bool numeric(id value) {
     return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value)!=CFBooleanGetTypeID();
 }
-bool parseClip(NSData *bytes, tri::MidiClip& clip, NSString **why) {
+bool parseClip(NSData *bytes, tri::MidiClip& clip, NSString **why, bool performance=false) {
     try {
-        clip=tri::smf::parse(static_cast<const uint8_t *>(bytes.bytes),bytes.length);
+        clip=tri::smf::parse(static_cast<const uint8_t *>(bytes.bytes),bytes.length,performance);
         return true;
     } catch (const std::exception& error) {
         return fail(why,[NSString stringWithUTF8String:error.what()]);
@@ -144,7 +146,8 @@ NSArray *evaluatePitchModel(NSURL *url, NSString **why) {
 }
 }
 
-bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NSString **why) {
+static bool decodeAssetMap(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model,
+                         NSString **why, bool performance) {
     if (![assets isKindOfClass:NSDictionary.class]) return fail(why,@"工作流素材应为对象。");
     for (id key in assets)
         if (!([key isEqual:@"clip"] || [key isEqual:@"model"] || [key isEqual:@"graph"])) return fail(why,@"工作流包含未知类型的素材。");
@@ -160,7 +163,7 @@ bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NS
             return fail(why,@"Clip 数据缺失或过大。");
         NSData *data=[[NSData alloc] initWithBase64EncodedString:encoded options:0];
         if (!data) return fail(why,@"Clip 编码无效。");
-        if (!parseClip(data,nextClip,why)) return false;
+        if (!parseClip(data,nextClip,why,performance)) return false;
         size_t count=std::count_if(nextClip.events.begin(),nextClip.events.end(),[](auto& e){return (e.status&0xf0)==0x90;});
         if ((c[@"notes"] && (!numeric(c[@"notes"]) || [c[@"notes"] doubleValue]!=count)) ||
             (c[@"beats"] && (!numeric(c[@"beats"]) || !std::isfinite([c[@"beats"] doubleValue]) || std::abs([c[@"beats"] doubleValue]-nextClip.lengthBeats)>1e-6)))
@@ -174,6 +177,9 @@ bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NS
     clip=std::move(nextClip);
     model=nextModel;
     return true;
+}
+bool decode(NSDictionary *assets, tri::MidiClip& clip, tri::NoteModel& model, NSString **why) {
+    return decodeAssetMap(assets,clip,model,why,false);
 }
 
 namespace {
@@ -194,7 +200,7 @@ bool documentNodeType(NSDictionary *obj,bool allowUnknown,int& type,bool& unavai
     }
     if(numeric(legacy)) {
         const double value=[legacy doubleValue];
-        if(value!=std::trunc(value)||value<1||value>1.0e9)return fail(why,@"节点类型编号无效。");
+        if(value!=std::trunc(value)||value<1||value>INT_MAX)return fail(why,@"节点类型编号无效。");
         const tri::NodeSpec *spec=tri::nodeSpec(int(value));
         if(!spec||!spec->instantiable)return fail(why,@"节点类型编号无效或不可实例化。");
         type=int(value);return true;
@@ -261,6 +267,9 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
     if([document[@"edges"] count]>tri::maxGraphEdges)return fail(why,@"连线数量超过上限。");
     for(id obj in document[@"nodes"]) {
         if(![obj isKindOfClass:NSDictionary.class])return fail(why,@"节点格式无效。");
+        NSDictionary *previousRow=numeric(obj[@"id"])?preparedRows[obj[@"id"]]:nil;
+        const bool reusedResources=previousRow&&[obj[@"resources"] isEqual:previousRow[@"resources"]];
+        if(!tri::projectresources::validate(obj,why,decodeAssets&&!reusedResources))return false;
         if(!integer(obj[@"id"],1,9007199254740991.) || !numeric(obj[@"x"]) || !numeric(obj[@"y"]) ||
            !std::isfinite([obj[@"x"] doubleValue]) || !std::isfinite([obj[@"y"] doubleValue]))
             return fail(why,@"节点的实例 ID 或坐标无效。");
@@ -328,8 +337,6 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
                 return fail(why,[NSString stringWithFormat:@"参数必须为整数：%@",rawKey]);
             node.parameters[pid]=stored;
         }
-        if(node.type==tri::ArrangerNode && !tri::validArrangerRanges(node))
-            return fail(why,@"同一声部的最低音不能高于最高音。");
         // Text parameters: stable string keys declared by the descriptor. v3 has
         // no such concept; v4 rejects keys the node never declared so a typo
         // cannot silently create a parameter the inspector will never show.
@@ -372,8 +379,8 @@ bool decodeGraph(NSDictionary *document, tri::GraphSpec& graph, NSString **why, 
                     std::shared_ptr<tri::AudioSample> audio;
                     if(!parseAudioAsset(obj[@"asset"],audio,why))return false;
                     node.sample=std::move(audio);
-                } else if(!decode(@{[NSString stringWithUTF8String:kind]:obj[@"asset"]},
-                                   node.clip,node.model,why)) {
+                } else if(!decodeAssetMap(@{[NSString stringWithUTF8String:kind]:obj[@"asset"]},
+                                         node.clip,node.model,why,true)) {
                     return fail(why,@"节点素材无效。");
                 }
             }
@@ -620,7 +627,7 @@ NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
         if ([kind isEqual:@"clip"]) {
             NSData *data=readLimited(url,tri::smf::maxFileBytes,why);
             tri::MidiClip clip;
-            if (!data || !parseClip(data,clip,why)) return nil;
+            if (!data || !parseClip(data,clip,why,true)) return nil;
             size_t count=std::count_if(clip.events.begin(),clip.events.end(),[](auto& e){return (e.status&0xf0)==0x90;});
             return @{@"name":name,@"smf":[data base64EncodedStringWithOptions:0],@"beats":@(clip.lengthBeats),@"notes":@(count)};
         }
@@ -663,4 +670,479 @@ NSDictionary *importAsset(NSString *kind, NSURL *url, NSString **why) {
         if (access) [url stopAccessingSecurityScopedResource];
     }
 }
+
+namespace {
+NSString *assetKind(NSDictionary *asset) {
+    if(asset[@"pcm"])return @"audio";
+    if(asset[@"smf"])return @"clip";
+    if(asset[@"pitches"])return @"model";
+    return nil;
+}
+
+NSData *fileForAsset(NSDictionary *asset,NSString *kind,NSString **extension,NSString **why) {
+    if([kind isEqual:@"audio"]) {
+        std::shared_ptr<tri::AudioSample> sample;
+        if(!parseAudioAsset(asset,sample,why))return nil;
+        *extension=@"wav";
+        const uint16_t stride=uint16_t(sample->channels*sizeof(float));
+        const uint32_t rate=uint32_t(std::lround(sample->rate));
+        const uint32_t bytes=uint32_t(sample->samples.size()*sizeof(float));
+        std::vector<uint8_t> header{'R','I','F','F'};
+        tri::wav::put32(header,36+bytes);
+        header.insert(header.end(),{'W','A','V','E','f','m','t',' '});
+        tri::wav::put32(header,16);
+        tri::wav::put16(header,3);
+        tri::wav::put16(header,uint16_t(sample->channels));
+        tri::wav::put32(header,rate);
+        tri::wav::put32(header,rate*stride);
+        tri::wav::put16(header,stride);
+        tri::wav::put16(header,32);
+        header.insert(header.end(),{'d','a','t','a'});
+        tri::wav::put32(header,bytes);
+        NSMutableData *wav=[NSMutableData dataWithBytes:header.data() length:header.size()];
+        [wav appendBytes:sample->samples.data() length:bytes];
+        return wav;
+    }
+    if([kind isEqual:@"clip"]) {
+        *extension=@"mid";
+        if(![asset[@"smf"] isKindOfClass:NSString.class]) {
+            fail(why,@"MIDI 素材编码无效。");return nil;
+        }
+        NSData *data=[[NSData alloc] initWithBase64EncodedString:asset[@"smf"] options:0];
+        if(!data.length)fail(why,@"MIDI 素材编码无效。");
+        tri::MidiClip clip;
+        return data.length&&parseClip(data,clip,why,true)?data:nil;
+    }
+    *extension=@"json";
+    tri::NoteModel model;
+    if(!parsePitches(asset[@"pitches"],model,why))return nil;
+    return [NSJSONSerialization dataWithJSONObject:@{@"pitches":asset[@"pitches"]} options:0 error:nil];
+}
+
+NSURL *resolveProjectAsset(NSURL *directory,NSString *path,NSString **why) {
+    if(![path isKindOfClass:NSString.class]||!path.length||path.length>4096||path.isAbsolutePath) {
+        fail(why,@"工程素材引用须为相对路径。");return nil;
+    }
+    for(NSString *component in [path componentsSeparatedByString:@"/"]) {
+        if(!component.length||[component isEqual:@"."]||[component isEqual:@".."]) {
+            fail(why,@"工程素材引用不能越过工程目录。");return nil;
+        }
+    }
+    NSString *root=directory.path.stringByResolvingSymlinksInPath;
+    NSString *prefix=[root hasSuffix:@"/"]?root:[root stringByAppendingString:@"/"];
+    NSURL *asset=[directory URLByAppendingPathComponent:path isDirectory:NO];
+    if(![asset.path.stringByResolvingSymlinksInPath hasPrefix:prefix]) {
+        fail(why,@"工程素材引用不能越过工程目录。");return nil;
+    }
+    return asset;
+}
+
+NSString *storeProjectAsset(NSData *data,NSString *extension,NSURL *directory,NSString *folder,NSString **why) {
+    if(!data)return nil;
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH]{};
+    CC_SHA256(data.bytes,CC_LONG(data.length),digest);
+    NSMutableString *name=[NSMutableString string];
+    for(unsigned char byte:digest)[name appendFormat:@"%02x",unsigned(byte)];
+    NSString *path=[folder stringByAppendingPathComponent:[name stringByAppendingPathExtension:extension]];
+    NSURL *destination=resolveProjectAsset(directory,path,why);
+    if(!destination)return nil;
+    NSFileManager *manager=NSFileManager.defaultManager;
+    NSError *error=nil;
+    if(![manager createDirectoryAtURL:destination.URLByDeletingLastPathComponent
+              withIntermediateDirectories:YES attributes:nil error:&error]) {
+        fail(why,error.localizedDescription);return nil;
+    }
+    if([manager fileExistsAtPath:destination.path]) {
+        NSData *existing=[NSData dataWithContentsOfURL:destination options:NSDataReadingMappedIfSafe error:nil];
+        if([existing isEqualToData:data])return path;
+        NSString *alternate=[NSUUID.UUID.UUIDString stringByAppendingPathExtension:extension];
+        path=[folder stringByAppendingPathComponent:alternate];
+        destination=resolveProjectAsset(directory,path,why);
+        if(!destination)return nil;
+    }
+    if(![data writeToURL:destination options:NSDataWritingAtomic error:&error]) {
+        fail(why,error.localizedDescription);return nil;
+    }
+    return path;
+}
+
+const tri::TextSpec *projectTextSpec(NSDictionary *node,NSString *key) {
+    if(![node[@"nodeKey"] isKindOfClass:NSString.class]||![key isKindOfClass:NSString.class])return nullptr;
+    int type=tri::nodeTypeForKey([node[@"nodeKey"] UTF8String]);
+    return tri::nodeTextSpec(type,key.UTF8String);
+}
+
+NSDictionary *writeResource(NSDictionary *resource,NSURL *directory,NSString *folder,NSString **why) {
+    NSString *kind=resource[@"kind"],*extension=nil;
+    NSData *bytes=nil;
+    if([kind isEqual:@"text"]) {
+        extension=resource[@"extension"];
+        bytes=[resource[@"text"] dataUsingEncoding:NSUTF8StringEncoding];
+    } else bytes=fileForAsset(resource[@"data"],kind,&extension,why);
+    NSString *path=storeProjectAsset(bytes,extension,directory,folder,why);
+    if(!path)return nil;
+    return @{@"kind":kind,@"name":resource[@"name"],@"path":path,@"extension":extension};
+}
+NSDictionary *readResource(NSDictionary *ref,NSURL *directory,NSString **why) {
+    if(!named(ref)||![@[@"audio",@"clip",@"model",@"text"] containsObject:ref[@"kind"] ?: NSNull.null]) {
+        fail(why,@"工程素材引用格式无效。");return nil;
+    }
+    NSURL *url=resolveProjectAsset(directory,ref[@"path"],why);
+    if(!url)return nil;
+    NSString *kind=ref[@"kind"],*extension=[kind isEqual:@"text"]?ref[@"extension"]:
+        @{@"audio":@"wav",@"clip":@"mid",@"model":@"json"}[kind];
+    if(![extension isKindOfClass:NSString.class]||!extension.length||
+       ![url.pathExtension.lowercaseString isEqual:extension]) {
+        fail(why,[NSString stringWithFormat:@"工程素材类型与文件扩展名不符：%@",ref[@"path"]]);return nil;
+    }
+    if([kind isEqual:@"text"]) {
+        NSData *bytes=readLimited(url,maxTextBytes,nullptr);
+        NSString *value=bytes?[[NSString alloc]initWithData:bytes encoding:NSUTF8StringEncoding]:nil;
+        if(!value) {fail(why,[NSString stringWithFormat:@"无法读取工程文本素材 %@。",ref[@"path"]]);return nil;}
+        return tri::projectresources::textResource(ref[@"name"],extension,value);
+    }
+    NSString *error=nil;
+    NSMutableDictionary *asset=[importAsset(kind,url,&error) mutableCopy];
+    if(!asset) {
+        fail(why,[NSString stringWithFormat:@"无法读取工程素材 %@。%@",ref[@"path"],error ?: @""]);return nil;
+    }
+    asset[@"name"]=ref[@"name"];
+    return tri::projectresources::assetResource(kind,asset);
+}
+// v5's former generation log stored external file paths in text. Convert that
+// old platform convention once on file import; new nodes never create it.
+NSDictionary *upgradeLegacyTakeRecords(NSDictionary *document,NSString **why) {
+    if(![document[@"nodes"] isKindOfClass:NSArray.class])return document;
+    NSMutableArray *nodes=[NSMutableArray new];bool changed=false;
+    for(id raw in document[@"nodes"]) {
+        if(![raw isKindOfClass:NSDictionary.class])return document;
+        NSDictionary *row=raw;
+        id texts=row[@"texts"];
+        id encoded=[texts isKindOfClass:NSDictionary.class]?texts[@"gen.takes"]:nil;
+        if(encoded) {
+            if(![encoded isKindOfClass:NSString.class]||
+               [encoded lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>maxTextBytes) {
+                fail(why,@"旧生成记录格式无效或超过容量。");return nil;
+            }
+            NSData *data=[encoded dataUsingEncoding:NSUTF8StringEncoding];
+            id takes=[encoded length]?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:@[];
+            if(![takes isKindOfClass:NSArray.class]||[takes count]>1024) {fail(why,@"旧生成记录格式无效。");return nil;}
+            for(NSUInteger index=0;index<[takes count];++index) {
+                NSDictionary *take=takes[index];
+                if(![take isKindOfClass:NSDictionary.class]) {fail(why,@"旧生成记录格式无效。");return nil;}
+                NSMutableDictionary *resources=[NSMutableDictionary new];
+                NSString *path=[take[@"file"] isKindOfClass:NSString.class]?take[@"file"]:@"";
+                if(path.length) {
+                    NSString *error=nil;
+                    NSDictionary *asset=importAsset(@"audio",[NSURL fileURLWithPath:path],&error);
+                    if(!asset) {fail(why,[NSString stringWithFormat:@"无法收集旧生成素材 %@。%@",path,error ?: @""]);return nil;}
+                    resources[@"audio"]=tri::projectresources::assetResource(@"audio",asset);
+                }
+                // Old unarchived takes contained only metadata. Preserve the
+                // final active result when available, never invent old audio.
+                if(index+1==[takes count]) {
+                    if(!resources[@"audio"]&&row[@"asset"])
+                        resources[@"audio"]=tri::projectresources::assetResource(@"audio",row[@"asset"]);
+                    for(NSString *key in texts) {
+                        const auto* spec=projectTextSpec(row,key);
+                        if(spec&&spec->assetExtension&&std::strcmp(spec->assetExtension,"abc")==0&&
+                           [texts[key] isKindOfClass:NSString.class]&&[texts[key] length])
+                            resources[@"score"]=tri::projectresources::textResource(@"Score",@"abc",texts[key]);
+                    }
+                }
+                NSMutableDictionary *metadata=[take mutableCopy];
+                [metadata removeObjectForKey:@"file"];[metadata removeObjectForKey:@"name"];
+                metadata[@"unavailable"]=@(resources.count==0);
+                row=tri::projectresources::appendEntry(row,@"generation.takes",
+                    [take[@"name"] isKindOfClass:NSString.class]?take[@"name"]:@"Take",resources,metadata);
+            }
+            NSMutableDictionary *replacement=[row mutableCopy],*updatedTexts=[texts mutableCopy];
+            [updatedTexts removeObjectForKey:@"gen.takes"];replacement[@"texts"]=updatedTexts;
+            row=replacement;changed=true;
+        }
+        [nodes addObject:row];
+    }
+    if(!changed)return document;
+    NSMutableDictionary *result=[document mutableCopy];result[@"nodes"]=nodes;return result;
+}
+} // namespace
+
+NSURL *autosaveURL() {
+    NSURL *base=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                   inDomains:NSUserDomainMask].firstObject;
+    return [[base URLByAppendingPathComponent:@"Soundnet" isDirectory:YES]
+                 URLByAppendingPathComponent:@"Autosave.json" isDirectory:NO];
+}
+
+bool writeProject(NSDictionary *document,NSURL *url,NSString **why) {
+    if(!url.isFileURL)return fail(why,@"请选择本机工程文件。");
+    NSDictionary *graph=canonicalGraph(document,why);
+    if(!graph)return false;
+    NSURL *directory=url.URLByDeletingLastPathComponent;
+    NSString *folder=[url.lastPathComponent.stringByDeletingPathExtension stringByAppendingString:@".assets"];
+    NSMutableArray *nodes=[NSMutableArray new];
+    for(NSDictionary *node in graph[@"nodes"]) {
+        NSMutableDictionary *row=[node mutableCopy];
+        if(row[@"assetRef"]||row[@"textRefs"]||row[@"resourceRefs"])return fail(why,@"保存前须先解析工程素材引用。");
+        if(row[@"asset"]) {
+            NSDictionary *asset=row[@"asset"];
+            if(!named(asset))return fail(why,@"工程包含无效素材。");
+            NSString *kind=assetKind(asset),*extension=nil;
+            if(!kind)return fail(why,@"工程包含无法另存的素材类型。");
+            NSData *data=fileForAsset(asset,kind,&extension,why);
+            NSString *path=storeProjectAsset(data,extension,directory,folder,why);
+            if(!path)return false;
+            row[@"assetRef"]=@{@"kind":kind,@"path":path,@"name":asset[@"name"]};
+            [row removeObjectForKey:@"asset"];
+        }
+        if([row[@"texts"] isKindOfClass:NSDictionary.class]) {
+            NSMutableDictionary *texts=[row[@"texts"] mutableCopy],*refs=[NSMutableDictionary new];
+            for(NSString *key in texts.allKeys) {
+                const auto* spec=projectTextSpec(row,key);
+                NSString *extension=[row[@"textResourceTypes"] isKindOfClass:NSDictionary.class]
+                    ?row[@"textResourceTypes"][key]:nil;
+                if(!extension&&spec&&spec->assetExtension)extension=@(spec->assetExtension);
+                NSString *value=texts[key];
+                if(!extension||![value isKindOfClass:NSString.class]||!value.length)continue;
+                NSDictionary *ref=writeResource(tri::projectresources::textResource(key,extension,value),directory,folder,why);
+                if(!ref)return false;
+                refs[key]=ref;
+                [texts removeObjectForKey:key];
+            }
+            if(refs.count) {row[@"texts"]=texts;row[@"textRefs"]=refs;}
+        }
+        if(row[@"resources"]) {
+            NSMutableDictionary *refs=[NSMutableDictionary new];
+            for(NSString *key in row[@"resources"]) {
+                NSDictionary *ref=writeResource(row[@"resources"][key],directory,folder,why);
+                if(!ref)return false;
+                refs[key]=ref;
+            }
+            row[@"resourceRefs"]=refs;[row removeObjectForKey:@"resources"];
+        }
+        [row removeObjectForKey:@"textResourceTypes"];
+        [nodes addObject:row];
+    }
+    NSMutableDictionary *manifest=[graph mutableCopy];
+    manifest[@"version"]=@6;
+    manifest[@"nodes"]=nodes;
+    NSError *error=nil;
+    if(![NSFileManager.defaultManager createDirectoryAtURL:directory
+               withIntermediateDirectories:YES attributes:nil error:&error])
+        return fail(why,error.localizedDescription);
+    NSData *json=[NSJSONSerialization dataWithJSONObject:manifest
+                               options:NSJSONWritingPrettyPrinted error:&error];
+    return (json&&[json writeToURL:url options:NSDataWritingAtomic error:&error]) ||
+           fail(why,error.localizedDescription ?: @"无法保存工程文件。");
+}
+
+NSDictionary *readProject(NSURL *url,NSString **why) {
+    if(!url.isFileURL) {fail(why,@"请选择本机工程文件。");return nil;}
+    NSError *error=nil;
+    NSData *json=[NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&error];
+    id manifest=json?[NSJSONSerialization JSONObjectWithData:json options:0 error:&error]:nil;
+    if(![manifest isKindOfClass:NSDictionary.class]) {
+        fail(why,error.localizedDescription ?: @"工程文件无效。");return nil;
+    }
+    if(![manifest[@"version"] isEqual:@5]&&![manifest[@"version"] isEqual:@6])return upgradeLegacyTakeRecords(manifest,why);
+    const bool v6=[manifest[@"version"] isEqual:@6];
+    if(![manifest[@"nodes"] isKindOfClass:NSArray.class]||
+       [manifest[@"nodes"] count]>tri::maxGraphNodes) {
+        fail(why,@"工程节点格式无效。");return nil;
+    }
+    NSURL *directory=url.URLByDeletingLastPathComponent;
+    NSMutableArray *nodes=[NSMutableArray new];
+    for(id node in manifest[@"nodes"]) {
+        if(![node isKindOfClass:NSDictionary.class]||node[@"asset"]||node[@"resources"]) {
+            fail(why,@"工程节点须使用独立素材引用。");return nil;
+        }
+        NSMutableDictionary *row=[node mutableCopy];
+        if(id ref=row[@"assetRef"]) {
+            NSDictionary *resource=readResource(ref,directory,why);
+            if(!resource)return nil;
+            if([resource[@"kind"] isEqual:@"text"]) {
+                fail(why,@"主素材引用不能使用文本资源。");return nil;
+            }
+            row[@"asset"]=resource[@"data"];
+            [row removeObjectForKey:@"assetRef"];
+        }
+        if(id refs=row[@"textRefs"]) {
+            if(![refs isKindOfClass:NSDictionary.class]||
+               (row[@"texts"]&&![row[@"texts"] isKindOfClass:NSDictionary.class])) {
+                fail(why,@"工程文本素材引用格式无效。");return nil;
+            }
+            NSMutableDictionary *texts=[row[@"texts"] mutableCopy] ?: [NSMutableDictionary new];
+            NSMutableDictionary *types=[NSMutableDictionary new];
+            for(NSString *key in refs) {
+                if(![key isKindOfClass:NSString.class]||texts[key]) {
+                    fail(why,@"工程文本素材引用与节点配置不符。");return nil;
+                }
+                id ref=refs[key];
+                if(!v6&&[ref isKindOfClass:NSString.class])
+                    ref=@{@"kind":@"text",@"name":key,@"path":ref,@"extension":[ref pathExtension].lowercaseString};
+                NSDictionary *resource=readResource(ref,directory,why);
+                if(!resource)return nil;
+                if(![resource[@"kind"] isEqual:@"text"]) {
+                    fail(why,@"文本素材引用必须使用文本资源。");return nil;
+                }
+                texts[key]=resource[@"text"];
+                const auto* spec=projectTextSpec(row,key);
+                if(!spec||!spec->assetExtension||![@(spec->assetExtension) isEqual:resource[@"extension"]])
+                    types[key]=resource[@"extension"];
+            }
+            row[@"texts"]=texts;
+            if(types.count)row[@"textResourceTypes"]=types;
+            [row removeObjectForKey:@"textRefs"];
+        }
+        if(id refs=row[@"resourceRefs"]) {
+            if(![refs isKindOfClass:NSDictionary.class]||[refs count]>1024) {
+                fail(why,@"工程资源引用集合无效。");return nil;
+            }
+            NSMutableDictionary *resources=[NSMutableDictionary new];
+            for(NSString *key in refs) {
+                NSDictionary *resource=readResource(refs[key],directory,why);
+                if(!resource)return nil;
+                resources[key]=resource;
+            }
+            row[@"resources"]=resources;
+            [row removeObjectForKey:@"resourceRefs"];
+        }
+        [nodes addObject:row];
+    }
+    NSMutableDictionary *resolved=[manifest mutableCopy];
+    resolved[@"version"]=@4;
+    resolved[@"nodes"]=nodes;
+    NSDictionary *upgraded=upgradeLegacyTakeRecords(resolved,why);
+    return upgraded?canonicalGraph(upgraded,why):nil;
+}
 } // namespace triassets
+
+namespace tri::projectresources {
+NSDictionary *importAsset(NSString *kind,NSURL *url,NSString **why) {
+    return triassets::importAsset(kind,url,why);
+}
+NSDictionary *encodeClip(NSString *name,const MidiClip& clip,NSString **why) {
+    return triassets::encodeClipAsset(name,clip,why);
+}
+bool decodeClip(NSDictionary *asset,MidiClip& clip,NSString **why) {
+    if(![asset isKindOfClass:NSDictionary.class]) {
+        if(why)*why=@"MIDI 素材无效。";return false;
+    }
+    NoteModel model;
+    return triassets::decodeAssetMap(@{@"clip":asset},clip,model,why,true);
+}
+NSData *audioFileData(NSDictionary *asset,NSString **why) {
+    NSString *extension=nil;
+    return triassets::fileForAsset(asset,@"audio",&extension,why);
+}
+NSDictionary *assetResource(NSString *kind,NSDictionary *asset) {
+    if(!kind||!asset)return nil;
+    return @{@"kind":kind,@"name":asset[@"name"] ?: @"Resource",@"data":asset};
+}
+NSDictionary *textResource(NSString *name,NSString *extension,NSString *text) {
+    if(!name||!extension||!text)return nil;
+    return @{@"kind":@"text",@"name":name,@"extension":extension,@"text":text};
+}
+NSArray *collection(NSDictionary *node,NSString *key) {
+    id collections=node[@"resourceCollections"];
+    id result=[collections isKindOfClass:NSDictionary.class]?collections[key]:nil;
+    return [result isKindOfClass:NSArray.class]?result:@[];
+}
+NSDictionary *entryResource(NSDictionary *node,NSDictionary *entry,NSString *role) {
+    id refs=entry[@"resources"],resources=node[@"resources"];
+    id key=[refs isKindOfClass:NSDictionary.class]?refs[role]:nil;
+    id result=[resources isKindOfClass:NSDictionary.class]&&[key isKindOfClass:NSString.class]?resources[key]:nil;
+    return [result isKindOfClass:NSDictionary.class]?result:nil;
+}
+NSDictionary *appendEntry(NSDictionary *node,NSString *collectionKey,NSString *name,
+                          NSDictionary *resourcesByRole,NSDictionary *metadata) {
+    NSMutableDictionary *result=[node mutableCopy];
+    NSMutableDictionary *resources=[node[@"resources"] isKindOfClass:NSDictionary.class]
+        ?[node[@"resources"] mutableCopy]:[NSMutableDictionary new];
+    NSMutableDictionary *collections=[node[@"resourceCollections"] isKindOfClass:NSDictionary.class]
+        ?[node[@"resourceCollections"] mutableCopy]:[NSMutableDictionary new];
+    NSMutableDictionary *refs=[NSMutableDictionary new];
+    for(NSString *role in resourcesByRole) {
+        NSString *identifier=NSUUID.UUID.UUIDString;
+        resources[identifier]=resourcesByRole[role];refs[role]=identifier;
+    }
+    NSMutableArray *entries=[collection(node,collectionKey) mutableCopy];
+    [entries addObject:@{@"id":NSUUID.UUID.UUIDString,@"name":name ?: @"Resource",
+        @"metadata":metadata ?: @{},@"resources":refs}];
+    collections[collectionKey]=entries;
+    result[@"resources"]=resources;result[@"resourceCollections"]=collections;
+    return result;
+}
+static bool identifier(id value) {
+    if(![value isKindOfClass:NSString.class]||![value length]||[value length]>160)return false;
+    return [value rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"/\\\n\r"]].location==NSNotFound;
+}
+static bool extension(id value) {
+    if(![value isKindOfClass:NSString.class]||![value length]||[value length]>16)return false;
+    return [value rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:
+        @"abcdefghijklmnopqrstuvwxyz0123456789"] invertedSet]].location==NSNotFound;
+}
+bool validate(NSDictionary *node,NSString **why,bool decodeResources) {
+    auto invalid=[&](NSString *message){if(why)*why=message;return false;};
+    id resources=node[@"resources"],collections=node[@"resourceCollections"];
+    id textTypes=node[@"textResourceTypes"];
+    if(textTypes&&(![textTypes isKindOfClass:NSDictionary.class]||[textTypes count]>128))
+        return invalid(@"文本资源类型声明无效。");
+    for(id key in textTypes) {
+        id value=[node[@"texts"] isKindOfClass:NSDictionary.class]?node[@"texts"][key]:nil;
+        if(!identifier(key)||!extension(textTypes[key])||![value isKindOfClass:NSString.class]||
+           [value lengthOfBytesUsingEncoding:NSUTF8StringEncoding]>triassets::maxTextBytes)
+            return invalid(@"文本资源类型或内容无效。");
+    }
+    if(resources&&(![resources isKindOfClass:NSDictionary.class]||[resources count]>1024))
+        return invalid(@"节点资源集合格式无效或资源数量超过 1024。");
+    size_t bytes=0;
+    for(id key in resources) {
+        NSDictionary *resource=resources[key];
+        if(!identifier(key)||!triassets::named(resource))return invalid(@"工程资源 ID 或名称无效。");
+        NSString *kind=resource[@"kind"];
+        if([kind isEqual:@"text"]) {
+            if(!extension(resource[@"extension"])||![resource[@"text"] isKindOfClass:NSString.class])
+                return invalid(@"工程文本资源格式无效。");
+            const NSUInteger length=[resource[@"text"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+            if(length>triassets::maxTextBytes)return invalid(@"工程文本资源超过容量。");
+            bytes+=length;
+        } else {
+            if(![@[@"audio",@"clip",@"model"] containsObject:kind ?: NSNull.null]||!triassets::named(resource[@"data"]))
+                return invalid(@"工程资源类型或内容无效。");
+            NSDictionary *asset=resource[@"data"];
+            id encoded=asset[@"pcm"] ?: asset[@"smf"];
+            if(encoded&&![encoded isKindOfClass:NSString.class])return invalid(@"工程资源编码无效。");
+            bytes+=[encoded length];
+            if(decodeResources) {
+                if([kind isEqual:@"audio"]) {
+                    std::shared_ptr<AudioSample> sample;
+                    if(!triassets::parseAudioAsset(asset,sample,why))return false;
+                } else {
+                    MidiClip clip;NoteModel model;
+                    if(!triassets::decodeAssetMap(@{kind:asset},clip,model,why,true))return false;
+                }
+            }
+        }
+        if(bytes>size_t(512)*1024*1024)return invalid(@"单个节点的资源集合超过 512 MiB。");
+    }
+    if(collections&&(![collections isKindOfClass:NSDictionary.class]||[collections count]>128))
+        return invalid(@"工程资源记录集合格式无效。");
+    for(id key in collections) {
+        id entries=collections[key];
+        if(!identifier(key)||![entries isKindOfClass:NSArray.class]||[entries count]>1024)
+            return invalid(@"工程资源记录格式无效或数量过多。");
+        NSMutableSet *ids=[NSMutableSet new];
+        for(id entry in entries) {
+            if(!triassets::named(entry)||!identifier(entry[@"id"])||[ids containsObject:entry[@"id"]]||
+               ![entry[@"resources"] isKindOfClass:NSDictionary.class]||
+               ![entry[@"metadata"] isKindOfClass:NSDictionary.class])return invalid(@"工程资源记录格式无效。");
+            [ids addObject:entry[@"id"]];
+            for(id role in entry[@"resources"])
+                if(!identifier(role)||!identifier(entry[@"resources"][role])||!resources[entry[@"resources"][role]])
+                    return invalid(@"工程资源记录指向不存在的资源。");
+        }
+    }
+    return true;
+}
+}

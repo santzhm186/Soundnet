@@ -48,7 +48,7 @@ int main(){setenv("SOUNDNET_NO_AUTOSAVE","1",1);@autoreleasepool {
     auto engine=std::make_shared<tri::Engine>();
     auto store=std::make_shared<tri::WorkflowAssetStore>();
     __block BOOL managed=NO;
-    NSView* editor=TRICreateEditor(^float(int p){return tri::params[p].def;},^(int,float){},^(uint8_t,uint8_t,uint8_t){},
+    NSView* editor=TRICreateEditor(^float(int p){return 0.f;},^(int,float){},^(uint8_t,uint8_t,uint8_t){},
         nil,nil,^NSString*{return @"TEST";},^NSDictionary*{return store->current;},
         ^BOOL(NSDictionary* replacement){return store->replace(replacement,*engine);},nil,nil,nil,^NSDictionary*{
             return @{@"hostManaged":@(managed),@"actualRate":@48000,@"deviceRate":@44100,
@@ -91,7 +91,7 @@ int main(){setenv("SOUNDNET_NO_AUTOSAVE","1",1);@autoreleasepool {
     ((NSMutableDictionary*)findNode(document,"soundnet.timecode"))[@"id"]=@101;
     ((NSMutableDictionary*)findNode(document,"soundnet.project-settings"))[@"id"]=@102;
     assert([editor commit:before]);
-    insert.tag=tri::ClipNode;[editor insert:insert];
+    insert.tag=tri::nodeTypeID("soundnet.midi-clip");[editor insert:insert];
     assertClipEnvironment([editor valueForKey:@"document"],1);
     [editor selectAll:nil];[editor duplicate:nil];
     document=[editor valueForKey:@"document"];

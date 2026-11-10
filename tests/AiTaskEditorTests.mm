@@ -50,7 +50,7 @@ static bool submitGeneration(NSView *editor,uint64_t id) {
     tri::musicgen::GenRequest request=tri::nodes::yue2::makeRequest(node,@{},work,false);
     std::string why;
     return context.submitTask(
-        tri::nodes::yue2::makeJob(std::move(request),@"YuE2",@"",@""),
+        tri::nodes::yue2::makeJob(std::move(request),@"YuE2"),
         tri::nodes::yue2::applyResult,why);
 }
 static void cancelGeneration(NSView *editor,uint64_t id) {
@@ -87,11 +87,30 @@ int main() { @autoreleasepool {
     [nodes addObject:makeNode(a)];[nodes addObject:makeNode(b)];
     [editor setValue:document forKey:@"document"];[editor commit:nil];
 
-    // A configured full path succeeds; the score and take log are published.
+    // Fill a backend path after opening the inspector and submit from that
+    // same panel. The initial inspector snapshot has no usable backend path.
+    findNode(editor,a)[@"texts"]=@{@"yue2.style":@"test",@"gen.execPath":@"/missing/audiocpp_cli",
+        @"gen.modelPath":directory};
+    [editor commit:nil];
     [editor selectOnly:a];
-    assert(submitGeneration(editor,a));
+    NSView *inspector=[editor valueForKey:@"inspector"];
+    NSTextField *backendField=nil;
+    NSButton *generateButton=nil;
+    for(NSView *view in inspector.subviews) {
+        if([view isKindOfClass:NSTextField.class]&&
+            [[(NSTextField *)view stringValue] isEqual:@"/missing/audiocpp_cli"])
+            backendField=(NSTextField *)view;
+        for(NSView *control in view.subviews) {
+            if([control isKindOfClass:NSButton.class]&&[(NSButton *)control action]==@selector(run:))
+                generateButton=(NSButton *)control;
+        }
+    }
+    assert(backendField&&generateButton);
+    backendField.stringValue=script;
+    assert([NSApp sendAction:backendField.action to:backendField.target from:backendField]);
+    assert([NSApp sendAction:generateButton.action to:generateButton.target from:generateButton]);
     assert(waitFor(editor,[&]{return [findNode(editor,a)[@"texts"][@"yue2.score"] length]>0;}));
-    assert([findNode(editor,a)[@"texts"][@"gen.takes"] length]>0);
+    assert(tri::projectresources::collection(findNode(editor,a),@"generation.takes").count==1);
     assert([assets[@"graph"][@"nodes"] count]>=2);
 
     // Two nodes run independently. Cancelling B must not cancel A.
@@ -216,6 +235,67 @@ int main() { @autoreleasepool {
     assert(!wrongJobRan);
     releaseActive=true;
     assert(waitFor(editor,[&]{return activeApplied;}));
+    // History works without a chosen folder, including score-only records.
+    // Publish a second complete take through the same public transaction.
+    [editor selectOnly:a];
+    tri::NodeEditorContext historyContext;
+    [editor configureTaskContext:&historyContext forNode:a];
+    auto payload=std::make_shared<tri::musicgen::GeneratedTake>();
+    float audioFrames[]={.1f,-.1f,.2f,-.2f};
+    payload->asset=@{@"name":@"Historical audio",@"rate":@48000,@"channels":@2,
+        @"pcm":[[NSData dataWithBytes:audioFrames length:sizeof(audioFrames)] base64EncodedStringWithOptions:0]};
+    payload->score=@"X:2\nQ:1/4=90\nL:1/4\nK:D\nD E|\n";
+    payload->label=@"History";payload->date=@"test";
+    const NSUInteger historyCount=tri::projectresources::collection(findNode(editor,a),@"generation.takes").count+1;
+    assert(historyContext.submitTask([payload](soundnet::TaskContext&) {
+        return soundnet::TaskResult{soundnet::TaskStatus::Succeeded,payload,{}};
+    },tri::nodes::yue2::applyResult,why));
+    assert(waitFor(editor,[&]{return tri::projectresources::collection(findNode(editor,a),@"generation.takes").count==historyCount;}));
+    assert([findNode(editor,a)[@"asset"] isEqual:payload->asset]);
+    assert([findNode(editor,a)[@"texts"][@"yue2.score"] isEqual:payload->score]);
+    auto selectTake=[&](NSInteger position) {
+        [editor selectOnly:a];
+        NSView *inspector=[editor valueForKey:@"inspector"];
+        NSPopUpButton *popup=nil;
+        for(NSView *view in inspector.subviews)for(NSView *control in view.subviews)
+            if([control isKindOfClass:NSPopUpButton.class]&&[(NSPopUpButton *)control action]==@selector(takeChanged:))
+                popup=(NSPopUpButton *)control;
+        assert(popup);[popup selectItemAtIndex:position];
+        assert([NSApp sendAction:popup.action to:popup.target from:popup]);
+    };
+    selectTake(1); // first score-only take must clear a later audio selection
+    assert(!findNode(editor,a)[@"asset"]);
+    assert(![findNode(editor,a)[@"texts"][@"yue2.score"] isEqual:payload->score]);
+    selectTake((NSInteger)historyCount);
+    assert([findNode(editor,a)[@"asset"] isEqual:payload->asset]);
+    assert([findNode(editor,a)[@"texts"][@"yue2.score"] isEqual:payload->score]);
+    NSURL *project=[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"Project/History.json"]];
+    NSString *saveWhy=nil;
+    assert(triassets::writeProject([editor valueForKey:@"document"],project,&saveWhy));
+    NSURL *relocated=[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"Moved"]];
+    assert([NSFileManager.defaultManager moveItemAtURL:project.URLByDeletingLastPathComponent toURL:relocated error:nil]);
+    NSDictionary *restored=triassets::readProject([relocated URLByAppendingPathComponent:@"History.json"],&saveWhy);
+    assert(restored);
+    NSDictionary *restoredNode=nil;
+    for(NSDictionary *node in restored[@"nodes"])if([node[@"id"] unsignedLongLongValue]==a)restoredNode=node;
+    NSArray *restoredTakes=tri::projectresources::collection(restoredNode,@"generation.takes");
+    assert(restoredTakes.count==historyCount);
+    assert([tri::projectresources::entryResource(restoredNode,restoredTakes.lastObject,@"audio")[@"data"] isEqual:payload->asset]);
+    assert([tri::projectresources::entryResource(restoredNode,restoredTakes.lastObject,@"score")[@"text"] isEqual:payload->score]);
+    // The node-owned ABC action creates the destination through the platform.
+    [editor selectOnly:a];
+    inspector=[editor valueForKey:@"inspector"];
+    NSButton *importButton=nil;
+    for(NSView *view in inspector.subviews)for(NSView *control in view.subviews)
+        if([control isKindOfClass:NSButton.class]&&[(NSButton *)control action]==@selector(importScore:))importButton=(NSButton *)control;
+    assert(importButton);
+    NSUInteger beforeCount=[[editor valueForKey:@"document"][@"nodes"] count];
+    assert([NSApp sendAction:importButton.action to:importButton.target from:importButton]);
+    assert([[editor valueForKey:@"document"][@"nodes"] count]==beforeCount+1);
+    NSDictionary *created=[[editor valueForKey:@"document"][@"nodes"] lastObject];
+    assert([created[@"nodeKey"] isEqual:@"soundnet.midi-clip"]);
+    assert([created[@"texts"][@"clip.score"] isEqual:payload->score]);
+    assert([created[@"parameters"][@"clock.bpm"] doubleValue]==90);
     [[NSFileManager defaultManager] removeItemAtPath:directory error:nil];
     std::puts("PASS: editor task publication, isolation, independent module, host rejection and thread ownership");
 } }

@@ -7,6 +7,7 @@ namespace tri {
 // Accessed on the editor / AU property thread. The render thread sees only the
 // compiled clip and model published by Engine.
 struct PreparedAssets {
+    std::shared_ptr<const NodeCatalog> catalog;
     NSDictionary *dictionary = nil;
     MidiClip clip{};
     NoteModel model{};
@@ -40,6 +41,8 @@ struct PreparedAssets {
         }
     }
     bool load(NSDictionary *input,NSDictionary *previousGraph=nil,const GraphSpec *previous=nil) {
+        catalog=nodeCatalogSnapshot();
+        NodeCatalogReadScope scope(catalog);
         if (![input isKindOfClass:NSDictionary.class])return false;
         // Top-level legacy assets are decoded separately. Passing the graph to
         // decode() here used to perform a full asset decode before the cache.
@@ -61,12 +64,16 @@ struct WorkflowAssetStore {
     NSDictionary *current = @{};
     GraphSpec lastGraph;
     ProjectEnvironment environment;
+    uint64_t catalogGeneration=UINT64_MAX;
     bool apply(const PreparedAssets& next, Engine& engine) {
+        if(!next.catalog)return false;
+        NodeCatalogReadScope scope(next.catalog);
         auto changed = [&](NSString *key) {
             id previous = current[key], replacement = next.dictionary[key];
             return previous != replacement && ![previous isEqual:replacement];
         };
-        if(changed(@"graph")) {
+        const uint64_t generation=nodeCatalogSnapshot()->generation;
+        if(changed(@"graph")||catalogGeneration!=generation) {
             if(next.dictionary[@"graph"]) {
                 if(!engine.setGraph(next.graph,true))return false;
             }
@@ -75,6 +82,7 @@ struct WorkflowAssetStore {
         if (changed(@"clip")) engine.setClip(next.clip);
         if (changed(@"model")) engine.setModel(next.model);
         current = next.dictionary;
+        catalogGeneration=generation;
         lastGraph=next.graph;
         environment=next.environment;
         return true;

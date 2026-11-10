@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::tremolo {
 class TremoloProcessor final : public AudioProcessor {
     std::atomic<float> rate_{4},depth_{.5f},mix_{1},stereo_{0};
     double sampleRate_=48000,phase_=0;

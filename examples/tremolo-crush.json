@@ -1,104 +1,139 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
     {
       "id": 1,
-      "type": 23,
       "x": 80,
       "y": 140,
       "parameters": {
-        "85": 0
-      }
+        "trigger.pulse": 0
+      },
+      "nodeKey": "soundnet.start",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 2,
-      "type": 16,
       "nodeVersion": 2,
       "x": 220,
       "y": 140,
-      "parameters": {
-        "24": 1
-      },
+      "parameters": {},
       "asset": {
         "beats": 4,
         "name": "FourBeat.mid",
         "notes": 5,
         "smf": "TVRoZAAAAAYAAAABAGBNVHJrAAAALACQPGxIgDwAGJBAWCSAQAAMkENgJIBDAAyQRXB4gEUAGJBDUCSAQwAM/y8A"
-      }
+      },
+      "nodeKey": "soundnet.midi-clip",
+      "stateVersion": 1
     },
     {
       "id": 3,
-      "type": 3,
       "x": 390,
       "y": 140,
       "parameters": {
-        "0": 2,
-        "1": 0.32,
-        "9": 0.01,
-        "10": 0.18,
-        "11": 0.6,
-        "12": 0.2
-      }
+        "osc1.wave": 2,
+        "osc1.level": 0.32,
+        "envelope.attack": 0.01,
+        "envelope.decay": 0.18,
+        "envelope.sustain": 0.6,
+        "envelope.release": 0.2
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 4,
-      "type": 37,
       "x": 550,
       "y": 140,
       "parameters": {
-        "1190": 6,
-        "1191": 0.8,
-        "1192": 1,
-        "1193": 0.6
-      }
+        "tremolo.rate": 6,
+        "tremolo.depth": 0.8,
+        "tremolo.mix": 1,
+        "tremolo.stereo": 0.6
+      },
+      "nodeKey": "soundnet.tremolo",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 5,
-      "type": 38,
       "x": 710,
       "y": 140,
       "parameters": {
-        "1200": 6,
-        "1201": 6000,
-        "1202": 0.7
-      }
+        "crush.bits": 6,
+        "crush.rate": 6000,
+        "crush.mix": 0.7
+      },
+      "nodeKey": "soundnet.bitcrusher",
+      "nodeVersion": 1,
+      "stateVersion": 1
     },
     {
       "id": 6,
-      "type": 19,
       "nodeVersion": 2,
       "x": 870,
       "y": 140,
       "parameters": {
-        "24": 1
-      }
+        "output.master": 1
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
+    },
+    {
+      "id": 7,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 8,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
     }
   ],
   "edges": [
     {
       "source": 1,
       "target": 2,
-      "port": 0
+      "port": "trigger",
+      "sourcePort": "trigger"
     },
     {
       "source": 2,
       "target": 3,
-      "port": 0
+      "port": "notes",
+      "sourcePort": "notes"
     },
     {
       "source": 3,
       "target": 4,
-      "port": 0
+      "port": "audio",
+      "sourcePort": "audio"
     },
     {
       "source": 4,
       "target": 5,
-      "port": 0
+      "port": "audio",
+      "sourcePort": "audio"
     },
     {
       "source": 5,
       "target": 6,
-      "port": 0
+      "port": "audio",
+      "sourcePort": "audio"
     }
-  ]
+  ],
+  "projectId": "tremolo-crush",
+  "settings": {
+    "environmentRequired": true
+  }
 }

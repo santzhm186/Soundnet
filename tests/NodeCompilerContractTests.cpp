@@ -1,3 +1,4 @@
+#include "NodeTestLookup.hpp"
 #include "../src/GraphSpec.hpp"
 #include <cassert>
 #include <cstdio>

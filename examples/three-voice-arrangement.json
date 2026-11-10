@@ -1,22 +1,180 @@
 {
-  "version": 3,
+  "version": 4,
   "nodes": [
-    {"id": 2, "type": 12, "nodeVersion": 2, "x": 205, "y": 145, "parameters": {"57": 96,"54": 1, "55": 4, "56": 1, "63": 60, "64": 0, "65": 69, "66": 1, "67": 65, "68": 0, "69": 67, "70": 0}},
-    {"id": 3, "type": 27, "x": 410, "y": 145, "parameters": {"1024": 72, "1025": 95, "1026": 0, "1027": 55, "1028": 71, "1029": 1, "1030": 36, "1031": 54, "1032": 2}},
-    {"id": 4, "type": 3, "x": 630, "y": 0, "parameters": {"0": 0, "1": 0.38, "9": 0.025, "12": 0.12}},
-    {"id": 5, "type": 3, "x": 630, "y": 145, "parameters": {"0": 3, "1": 0.26, "9": 0.07, "12": 0.16}},
-    {"id": 6, "type": 3, "x": 630, "y": 290, "parameters": {"0": 0, "1": 0.46, "9": 0.008, "12": 0.09}},
-    {"id": 7, "type": 7, "x": 840, "y": 145, "parameters": {}},
-    {"id": 8, "type": 19, "nodeVersion": 2, "x": 1050, "y": 80, "parameters": {"24": 0.72}}
+    {
+      "id": 2,
+      "nodeVersion": 2,
+      "x": 205,
+      "y": 145,
+      "parameters": {
+        "clock.bpm": 96,
+        "progression.run": 1,
+        "progression.length": 4,
+        "progression.bars": 1,
+        "progression.root.1": 60,
+        "progression.quality.1": 0,
+        "progression.root.2": 69,
+        "progression.quality.2": 1,
+        "progression.root.3": 65,
+        "progression.quality.3": 0,
+        "progression.root.4": 67,
+        "progression.quality.4": 0
+      },
+      "nodeKey": "soundnet.progression",
+      "stateVersion": 1
+    },
+    {
+      "id": 3,
+      "x": 410,
+      "y": 145,
+      "parameters": {
+        "high.minimum": 72,
+        "high.maximum": 95,
+        "high.texture": 0,
+        "middle.minimum": 55,
+        "middle.maximum": 71,
+        "middle.texture": 1,
+        "low.minimum": 36,
+        "low.maximum": 54,
+        "low.texture": 2
+      },
+      "nodeKey": "soundnet.voice-arranger",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 4,
+      "x": 630,
+      "y": 0,
+      "parameters": {
+        "osc1.wave": 0,
+        "osc1.level": 0.38,
+        "envelope.attack": 0.025,
+        "envelope.release": 0.12
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 5,
+      "x": 630,
+      "y": 145,
+      "parameters": {
+        "osc1.wave": 3,
+        "osc1.level": 0.26,
+        "envelope.attack": 0.07,
+        "envelope.release": 0.16
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 6,
+      "x": 630,
+      "y": 290,
+      "parameters": {
+        "osc1.wave": 0,
+        "osc1.level": 0.46,
+        "envelope.attack": 0.008,
+        "envelope.release": 0.09
+      },
+      "nodeKey": "soundnet.oscillator",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 7,
+      "x": 840,
+      "y": 145,
+      "parameters": {},
+      "nodeKey": "soundnet.mixer",
+      "nodeVersion": 1,
+      "stateVersion": 1
+    },
+    {
+      "id": 8,
+      "nodeVersion": 2,
+      "x": 1050,
+      "y": 80,
+      "parameters": {
+        "output.master": 0.72
+      },
+      "nodeKey": "soundnet.audio-output",
+      "stateVersion": 1
+    },
+    {
+      "id": 9,
+      "nodeKey": "soundnet.timecode",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 0,
+      "y": -180,
+      "parameters": {}
+    },
+    {
+      "id": 10,
+      "nodeKey": "soundnet.project-settings",
+      "nodeVersion": 1,
+      "stateVersion": 1,
+      "x": 230,
+      "y": -180,
+      "parameters": {}
+    }
   ],
   "edges": [
-    {"source": 2, "target": 3, "port": 0},
-    {"source": 3, "sourcePort": 0, "target": 4, "port": 0},
-    {"source": 3, "sourcePort": 1, "target": 5, "port": 0},
-    {"source": 3, "sourcePort": 2, "target": 6, "port": 0},
-    {"source": 4, "target": 7, "port": 0},
-    {"source": 5, "target": 7, "port": 1},
-    {"source": 6, "target": 7, "port": 2},
-    {"source": 7, "target": 8, "port": 0}
-  ]
+    {
+      "source": 2,
+      "target": 3,
+      "port": "notes",
+      "sourcePort": "notes"
+    },
+    {
+      "source": 3,
+      "sourcePort": "high",
+      "target": 4,
+      "port": "notes"
+    },
+    {
+      "source": 3,
+      "sourcePort": "middle",
+      "target": 5,
+      "port": "notes"
+    },
+    {
+      "source": 3,
+      "sourcePort": "low",
+      "target": 6,
+      "port": "notes"
+    },
+    {
+      "source": 4,
+      "target": 7,
+      "port": "in1",
+      "sourcePort": "audio"
+    },
+    {
+      "source": 5,
+      "target": 7,
+      "port": "in2",
+      "sourcePort": "audio"
+    },
+    {
+      "source": 6,
+      "target": 7,
+      "port": "in3",
+      "sourcePort": "audio"
+    },
+    {
+      "source": 7,
+      "target": 8,
+      "port": "audio",
+      "sourcePort": "audio"
+    }
+  ],
+  "projectId": "three-voice-arrangement",
+  "settings": {
+    "environmentRequired": true
+  }
 }

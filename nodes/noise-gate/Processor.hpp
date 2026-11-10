@@ -1,6 +1,7 @@
 #pragma once
 #include "../../platform/AudioProcessor.hpp"
-namespace tri {
+#include "Parameters.hpp"
+namespace tri::nodes::noise_gate {
 class GateProcessor final : public AudioProcessor {
     std::atomic<float> threshold_{-40},attack_{.005f},release_{.15f},range_{.8f};
     double rate_=48000;
