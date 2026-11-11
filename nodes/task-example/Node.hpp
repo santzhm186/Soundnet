@@ -5,7 +5,7 @@
 // Hidden executable template: no audio callback, no central runtime branch.
 namespace tri::nodes::task_example {
 inline NodeModule module() {
-    NodeSpec spec{"soundnet.task-example",nodeTypeID("soundnet.task-example"),"后台任务示例","开发",1,1,
+    NodeSpec spec{"soundnet.task-example",nodeTypeID("soundnet.task-example"),"后台任务示例","工程与 I/O",1,1,
         false,true,CapTask,TimeMode::None,0,{},{},{},nullptr,
         {{"request","输入文本","hello",4096,true,false},
          {"result","处理结果","",4096,true,true}}};

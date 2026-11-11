@@ -16,7 +16,7 @@ inline bool validate(const KernelConfig& config,std::string& why) {
     return true;
 }
 inline NodeModule module() {
-    NodeSpec spec{"soundnet.project-settings",nodeTypeID("soundnet.project-settings"),"项目设定","工程",1,1,true,true,
+    NodeSpec spec{"soundnet.project-settings",nodeTypeID("soundnet.project-settings"),"项目设定","工程与 I/O",1,1,true,true,
         0,TimeMode::None,0,{},{},{rateID,bitsID,precisionID},nullptr,
         {{"project.inputDevice","输入设备","system",256,false,false,true},
          {"project.outputDevice","输出设备","system",256,false,false,true},

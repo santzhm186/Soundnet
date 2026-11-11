@@ -9,7 +9,7 @@ namespace tri::nodes::progression {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.progression",typeID,"和声走向","输入",2,1,true,true,
+    NodeSpec spec{"soundnet.progression",typeID,"和声走向","音符",2,1,true,true,
              CapNoteSource|CapData,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
              {pout("notes","音符",Signal::Midi,RoleMain)},

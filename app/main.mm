@@ -13,6 +13,7 @@
 #include <cstdlib>
 
 @interface TernaryApp : NSObject <NSApplicationDelegate>
+@property(nonatomic,copy) NSURL *startupProject;
 @end
 @implementation TernaryApp {
     TRIHost *_host;
@@ -55,6 +56,10 @@
     _window.releasedWhenClosed = NO;
     _window.contentMinSize = NSMakeSize(1180, 620);
     _window.contentView = editor;
+    if(self.startupProject) {
+        const BOOL loaded=TRIOpenEditorProject(editor,self.startupProject);
+        std::fprintf(stderr,"Soundnet: %s %s\n",loaded?"opened":"could not open",self.startupProject.fileSystemRepresentation);
+    }
     _window.initialFirstResponder = editor;
     [_window center];
     [_window makeKeyAndOrderFront:nil];
@@ -410,12 +415,14 @@ int main(int argc, const char **argv) {
             return runExportStems(argv[2],argv[3],seconds,rate,bits);
         }
         if (argc==2 && strcmp(argv[1],"--help")==0) {
-            std::printf("Usage: Soundnet [--self-test | --version | --validate workflow.json | --export workflow.json output.wav [seconds] [rate] [bits] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds] [rate] [bits]]\n");
+            std::printf("Usage: Soundnet [--self-test | --version | --open workflow.json | --validate workflow.json | --export workflow.json output.wav [seconds] [rate] [bits] | --export-midi workflow.json output.mid [seconds] | --export-stems workflow.json directory [seconds] [rate] [bits]]\n");
             return 0;
         }
         NSApplication *app = [NSApplication sharedApplication];
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
         __attribute__((objc_precise_lifetime)) TernaryApp *delegate = [TernaryApp new];
+        if(argc==3 && strcmp(argv[1],"--open")==0)
+            delegate.startupProject=[NSURL fileURLWithPath:@(argv[2])];
         app.delegate = delegate;
         [app run];
         (void)delegate; // Keep alive while NSApplication (weakly) references the delegate.

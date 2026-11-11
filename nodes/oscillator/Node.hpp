@@ -8,7 +8,7 @@ namespace tri::nodes::oscillator {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.oscillator",typeID,"振荡器","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.oscillator",typeID,"振荡器","发声",1,1,true,true,
              CapStream,TimeMode::Stream,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("audio","音频",Signal::Audio,RoleMain)},

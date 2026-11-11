@@ -7,7 +7,7 @@ namespace tri::nodes::midi_output {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.midi-output",typeID,"MIDI 输出","输出",1,1,true,true,
+    NodeSpec spec{"soundnet.midi-output",typeID,"MIDI 输出","工程与 I/O",1,1,true,true,
              CapNoteSource|CapData,TimeMode::None,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("notes","音符",Signal::Midi,RoleMain)}, {MidiOutChannel}, nullptr};

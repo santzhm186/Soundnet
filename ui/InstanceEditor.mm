@@ -3,8 +3,11 @@
 #include "../platform/ProjectEnvironment.hpp"
 #include "../nodes/GeneratedEditors.hpp"
 #import "SNLocalization.h"
+#include "CanvasZones.hpp"
 #include <atomic>
 #include <memory>
+#include <optional>
+#include <string_view>
 #import "../src/WorkflowAssets.h"
 #import "../src/OfflineRender.hpp"
 #include "../platform/TaskService.hpp"
@@ -12,17 +15,81 @@
 #import "../src/MidiFileWriter.hpp"
 #include "../src/StandardMidiFile.hpp"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <QuartzCore/QuartzCore.h>
 #include <cmath>
 #include <cstring>
 
 namespace {
-NSArray *catalog() {
-    NSMutableArray *rows=[NSMutableArray new];
-    for(int type:tri::nodeCatalog()) {
-        const tri::NodeMeta *meta=tri::nodeMeta(type);
-        if(meta)[rows addObject:@[@(type),SNNodeLocalized(type,@(meta->title)),SNNodeLocalized(type,@(meta->category))]];
+using soundnet::canvas::Stage;
+using soundnet::canvas::Zones;
+using soundnet::canvas::stageCount;
+constexpr CGFloat cardWidth=172, zoneHeaderHeight=28;
+
+bool isMediaPort(const tri::PortSpec& port) {
+    return port.signal==tri::Signal::Midi || port.signal==tri::Signal::Audio;
+}
+bool isFixedAudioClip(const tri::NodeSpec& spec) {
+    return spec.assetKind && std::strcmp(spec.assetKind,"audio")==0 &&
+        spec.timeMode==tri::TimeMode::Timed && !(spec.capabilities&tri::CapTask) &&
+        std::none_of(spec.inputs.begin(),spec.inputs.end(),isMediaPort);
+}
+Stage canvasStage(int type) {
+    const auto* spec=tri::nodeSpec(type);
+    if(!spec || spec->environmentRole!=tri::EnvironmentRole::None)return Stage::Free;
+    if(spec->capabilities&tri::CapOutputSink)return Stage::Output;
+    const std::string_view category=spec->category;
+    if(category=="音符" || isFixedAudioClip(*spec))return Stage::Notes;
+    if(category=="发声")return Stage::Sources;
+    if(category=="声音处理")return Stage::Effects;
+    if(category=="走带与控制")return Stage::Free;
+
+    // Existing descriptors also cover SDK 2 packages with custom categories.
+    const bool mediaIn=std::any_of(spec->inputs.begin(),spec->inputs.end(),isMediaPort);
+    if(std::any_of(spec->inputs.begin(),spec->inputs.end(),[](const auto& port){return port.role==tri::RoleOutput;}))
+        return Stage::Output;
+    if(category=="工程与 I/O" || category=="输入" || category=="输出") {
+        if(mediaIn && category!="输入")return Stage::Output;
+        if(!mediaIn && std::any_of(spec->outputs.begin(),spec->outputs.end(),isMediaPort) &&
+           !spec->assetKind && !(spec->capabilities&tri::CapTask))return Stage::Notes;
     }
-    return rows;
+    if(std::any_of(spec->outputs.begin(),spec->outputs.end(),[](const auto& port){return port.signal==tri::Signal::Audio;}))
+        return std::any_of(spec->inputs.begin(),spec->inputs.end(),[](const auto& port){return port.signal==tri::Signal::Audio;})
+            ? Stage::Effects : Stage::Sources;
+    if(std::any_of(spec->outputs.begin(),spec->outputs.end(),[](const auto& port){return port.signal==tri::Signal::Midi;}))
+        return Stage::Notes;
+    return Stage::Free;
+}
+
+const tri::NodeSpec *fileDropSpec(NSURL *url,BOOL clipMode) {
+    NSString *extension=url.pathExtension.lowercaseString;
+    const tri::NodeSpec *chosen=nullptr;
+    for(const auto& candidate:tri::nodeSpecs()) {
+        if(!candidate.assetKind||candidate.assetDropPriority<=0)continue;
+        const bool accepts=std::any_of(candidate.importExtensions.begin(),candidate.importExtensions.end(),
+            [&](const char *ext){return [extension isEqualToString:@(ext)];});
+        if(accepts && (!chosen || (clipMode?candidate.assetDropPriority>chosen->assetDropPriority:
+            candidate.assetDropPriority<chosen->assetDropPriority)))chosen=&candidate;
+    }
+    return chosen;
+}
+
+NSArray<NSString *> *creationCategories() {return @[@"音符",@"发声",@"声音处理"];}
+NSArray<NSString *> *utilityCategories() {return @[@"走带与控制",@"工程与 I/O"];}
+NSArray<NSString *> *libraryCategories(const std::vector<int>& types) {
+    NSMutableOrderedSet<NSString *> *categories=[NSMutableOrderedSet orderedSetWithArray:creationCategories()];
+    [categories addObjectsFromArray:utilityCategories()];
+    for(int type:types)[categories addObject:@(tri::nodeCategory(type))];
+    return categories.array;
+}
+NSString *librarySection(NSString *category) {
+    if([creationCategories() containsObject:category])return @"创作节点";
+    if([utilityCategories() containsObject:category])return @"辅助节点";
+    return @"其他节点";
+}
+NSColor *libraryTint(NSString *section) {
+    if([section isEqualToString:@"创作节点"])return [NSColor colorWithSRGBRed:.40 green:.75 blue:.94 alpha:1];
+    if([section isEqualToString:@"辅助节点"])return [NSColor colorWithSRGBRed:.90 green:.70 blue:.42 alpha:1];
+    return NSColor.lightGrayColor;
 }
 NSString *title(int type) { return SNNodeLocalized(type,@(tri::nodeTitle(type))); }
 // v4 documents identify a node by `nodeKey` and a parameter by its stable key.
@@ -161,8 +228,13 @@ namespace { NSRect nodeRect(NSDictionary *node); }
 static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
 
 @class SNInstanceEditor;
-@interface SNInstanceCanvas : NSView
+@interface SNInstanceCanvas : NSView <NSMenuDelegate>
 @property(weak) SNInstanceEditor *editor;
+-(BOOL)prepareInsertionOfType:(int)type at:(NSPoint *)point expand:(BOOL)expand
+                        starts:(NSMutableDictionary<NSNumber *,NSValue *> *)starts;
+-(void)invalidateLayout;
+-(void)animatePlacements:(NSDictionary<NSNumber *,NSValue *> *)starts focus:(uint64_t)focus;
+-(void)clearPlacementFeedback;
 @end
 
 @interface SNWaveformView : NSView
@@ -282,10 +354,10 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
 @property NSPoint menuPoint;
 @property uint64_t wireSource;
 @property int wirePort;
+@property NSPoint wireCursor;
 @property uint64_t moving;
 @property BOOL panning;
 @property NSPoint lastPoint;
-@property(strong) NSDictionary *dragStart;
 @property(strong) NSTimer *timer;
 @property(strong) dispatch_queue_t autosaveQueue;
 -(void)autosave;
@@ -402,6 +474,7 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     }
     [self reconcileBackgroundTasks];
     [self pruneSelection];
+    [_canvas invalidateLayout];
     _canvas.needsDisplay=YES;
     return applied;
 }
@@ -478,37 +551,29 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     b.font=[NSFont systemFontOfSize:12 weight:NSFontWeightMedium];b.bezelStyle=NSBezelStyleRounded;
     b.frame=frame;[parent addSubview:b];return b;
 }
--(NSMutableDictionary *)makeNode:(int)type at:(NSPoint)point id:(uint64_t)uid {
+-(NSMutableDictionary *)makeNode:(int)type at:(NSPoint)point id:(uint64_t)uid expand:(BOOL)expand
+                           starts:(NSMutableDictionary<NSNumber *,NSValue *> *)starts {
     const tri::NodeSpec *spec=tri::nodeSpec(type);
     if(!spec||!spec->instantiable)return nil;
+    NSPoint destination=point;
+    if(![_canvas prepareInsertionOfType:type at:&destination expand:expand starts:starts]) {
+        [self message:SNLocalized(@"区域太窄，按住 Shift 放置可展开。")];
+        return nil;
+    }
+    if(!NSEqualPoints(point,destination))starts[@(uid)]=[NSValue valueWithPoint:point];
     NSMutableDictionary *parameters=[NSMutableDictionary new];
     for(int p:controls(type))parameters[paramKeyName(p)]=@(tri::graphParamInfo(p).def);
     NSMutableDictionary *node=[@{@"id":@(uid),
         @"nodeKey":[NSString stringWithUTF8String:spec->key],
         @"nodeVersion":@(spec->nodeVersion),
         @"stateVersion":@(spec->stateVersion),
-        @"x":@(point.x),@"y":@(point.y),@"parameters":parameters} mutableCopy];
+        @"x":@(destination.x),@"y":@(destination.y),@"parameters":parameters} mutableCopy];
     [_document[@"nodes"] addObject:node];
+    [_canvas invalidateLayout];
     return node;
 }
 -(void)insert:(NSMenuItem *)sender {
-    const auto* descriptor=tri::nodeSpec(int(sender.tag));
-    if(!descriptor||!descriptor->instantiable)return;
-    if(descriptor&&descriptor->environmentRole!=tri::EnvironmentRole::None) {
-        for(NSDictionary* existing in _document[@"nodes"]) {
-            const auto* other=tri::nodeSpec(typeOf(existing));
-            if(other&&other->environmentRole==descriptor->environmentRole) {
-                [self selectOnly:[existing[@"id"] unsignedLongLongValue]];return;
-            }
-        }
-    }
-    NSDictionary *previous=copyJSON(_document);
-    uint64_t next=1;
-    for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
-    if(![self makeNode:(int)sender.tag at:_menuPoint id:next])return;
-    _selected=next;
-    [_selection removeAllObjects];[_selection addObject:@(next)];
-    [self commit:previous];[self inspect];
+    [self insertNodeType:int(sender.tag) atPoint:_menuPoint];
 }
 -(BOOL)dropFileURLs:(NSArray<NSURL *> *)urls atPoint:(NSPoint)point clipMode:(BOOL)clipMode {
     if(!urls.count)return NO;
@@ -517,13 +582,7 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     NSMutableArray<NSString *> *errors=[NSMutableArray new];
     for(NSURL *url in urls) {
         NSString *extension=url.pathExtension.lowercaseString;
-        const tri::NodeSpec *chosen=nullptr;
-        for(const auto& candidate:tri::nodeSpecs()) {
-            if(!candidate.assetKind||candidate.assetDropPriority<=0)continue;
-            bool accepts=false;for(const char* ext:candidate.importExtensions)if([extension isEqualToString:@(ext)]){accepts=true;break;}
-            if(!accepts)continue;
-            if(!chosen||(clipMode?candidate.assetDropPriority>chosen->assetDropPriority:candidate.assetDropPriority<chosen->assetDropPriority))chosen=&candidate;
-        }
+        const auto *chosen=fileDropSpec(url,clipMode);
         if(!chosen){[errors addObject:[NSString stringWithFormat:SNLocalized(@"%@：不支持的格式"),url.lastPathComponent]];continue;}
         NSString *kind=@(chosen->assetKind);const int type=chosen->type;
         [jobs addObject:@{@"url":url,@"kind":kind,@"type":@(type)}];
@@ -533,6 +592,7 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
         NSBeep();return NO;
     }
     if(![self beginExport])return NO;
+    const BOOL expand=(NSEvent.modifierFlags & NSEventModifierFlagShift)!=0;
     auto cancelled=_exportCancellation;
     NSDictionary *targetDocument=_document;
     auto catalog=tri::nodeCatalogSnapshot();
@@ -557,17 +617,21 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
                 if(!imported.count){[self finishExport:errors.firstObject ?: SNLocalized(@"无法读取")];return;}
                 NSDictionary *previous=copyJSON(self.document);
                 uint64_t next=1,last=0;NSUInteger offset=0;
+                NSMutableDictionary<NSNumber *,NSValue *> *starts=[NSMutableDictionary new];
                 for(NSDictionary *node in self.document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
                 for(NSDictionary *result in imported) {
                     const uint64_t uid=next++;int type=[result[@"type"] intValue];
-                    NSMutableDictionary *node=[self makeNode:type at:NSMakePoint(point.x+offset*30,point.y+offset*30) id:uid];
-                    if(!node)continue;
+                    const NSPoint requested=NSMakePoint(point.x+offset*30,point.y+offset*30);
+                    NSMutableDictionary *node=[self makeNode:type at:requested id:uid expand:expand starts:starts];
+                    if(!node){[errors addObject:self.status.stringValue];continue;}
                     node[@"asset"]=result[@"asset"];
                     if(const auto* spec=tri::nodeSpec(type))for(const auto& value:spec->importParameters)setParam(node,value.first,value.second);
                     last=uid;++offset;
                 }
+                if(!offset){[self finishExport:errors.firstObject];return;}
                 self.selected=last;[self.selection removeAllObjects];[self.selection addObject:@(last)];
-                [self commit:previous];[self inspect];
+                if([self commit:previous])[self.canvas animatePlacements:starts focus:offset==1?last:0];
+                [self inspect];
                 if(self.document!=targetDocument){[self finishExport:self.status.stringValue];return;}
                 if(errors.count)[self finishExport:[NSString stringWithFormat:SNLocalized(@"已添加 %lu 个节点；%@"),(unsigned long)offset,errors.firstObject]];
                 else [self finishExport:[NSString stringWithFormat:SNLocalized(@"已拖入 %lu 个文件"),(unsigned long)offset]];
@@ -844,7 +908,9 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
 -(void)updateProcessingControls {
     BOOL active=_processingRead?_processingRead():_processingActive;
     _processingActive=active;
-    _processingLabel.stringValue=SNLocalized(active?SNLocalized(@"● 处理中"):SNLocalized(@"■ 已停止"));
+    NSString *caption=SNLocalized(active?@"● 处理中":@"■ 已停止");
+    if(![_processingLabel.stringValue isEqualToString:caption])_canvas.needsDisplay=YES;
+    _processingLabel.stringValue=caption;
     _processingLabel.textColor=active?NSColor.systemGreenColor:NSColor.secondaryLabelColor;
     _playButton.title=SNLocalized(@"播放");_stopButton.title=SNLocalized(@"停止");
     _stopButton.contentTintColor=NSColor.systemRedColor;
@@ -959,10 +1025,16 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
         }
         NSDictionary* previous=copyJSON(strong.document);uint64_t uid=1;
         for(NSDictionary* row in strong.document[@"nodes"])uid=std::max(uid,[row[@"id"] unsignedLongLongValue]+1);
-        NSMutableDictionary* created=[strong makeNode:target->type at:NSMakePoint([targetNode[@"x"] doubleValue]+30,[targetNode[@"y"] doubleValue]+150) id:uid];
+        NSMutableDictionary *starts=[NSMutableDictionary new];
+        NSMutableDictionary* created=[strong makeNode:target->type at:NSMakePoint([targetNode[@"x"] doubleValue]+30,[targetNode[@"y"] doubleValue]+150) id:uid expand:NO starts:starts];
         if(!created)return false;
         applyNodeContent(created,configuration);
-        const bool committed=[strong commit:previous];if(committed)[strong selectOnly:uid];return committed;
+        const bool committed=[strong commit:previous];
+        if(committed) {
+            [strong.canvas animatePlacements:starts focus:uid];
+            [strong selectOnly:uid];
+        }
+        return committed;
     };
     __block uint64_t auditionEpoch=_playbackEpoch;
     context.resumePlayback=^{if(!current())return;SNInstanceEditor* strong=weak;[strong resumeProcessing];auditionEpoch=strong.playbackEpoch;};
@@ -1054,6 +1126,9 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
 }
 -(void)beginTaskSession {
     ++_playbackEpoch;
+    [_canvas clearPlacementFeedback];
+    _moving=0;
+    if(_wireSource){_wireSource=0;_canvas.needsDisplay=YES;}
     [self cancelMidiCapture];
     if(taskService)taskService->beginSession();
     taskInputRevisions.clear();taskApplications.clear();taskInputs=[NSMutableDictionary new];
@@ -1523,16 +1598,20 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     BOOL applied=[self commit:previous];[self fit:nil];[self inspect];
     return applied;
 }
+-(BOOL)openProject:(NSURL *)url {
+    NSString *why=nil;
+    NSDictionary *file=triassets::readProject(url,&why);
+    if(!file){[self message:why];return NO;}
+    NSMutableDictionary *document=copyJSON(file);
+    setProjectFolder(document,url.URLByDeletingLastPathComponent.path);
+    if(![self adoptFile:document])return NO;
+    self.projectURL=url;
+    return YES;
+}
 -(void)open:(id)sender {
     NSOpenPanel *panel=[NSOpenPanel openPanel];panel.allowedContentTypes=@[UTTypeJSON];
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
-        if(result!=NSModalResponseOK)return;
-        NSString *why=nil;
-        NSDictionary *file=triassets::readProject(panel.URL,&why);
-        if(file) {
-            NSMutableDictionary *document=copyJSON(file);setProjectFolder(document,panel.URL.URLByDeletingLastPathComponent.path);
-            if([self adoptFile:document])self.projectURL=panel.URL;
-        } else [self message:why];
+        if(result==NSModalResponseOK)[self openProject:panel.URL];
     }];
 }
 -(NSPoint)world:(NSPoint)p{return NSMakePoint((p.x-_origin.x)/_zoom,(p.y-_origin.y)/_zoom);}
@@ -1605,20 +1684,34 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     [self message:SNLocalized(@"缩放 100%")];
 }
 -(uint64_t)insertNodeType:(int)type atPoint:(NSPoint)point {
+    const auto *descriptor=tri::nodeSpec(type);
+    if(!descriptor || !descriptor->instantiable)return 0;
+    if(descriptor->environmentRole!=tri::EnvironmentRole::None) {
+        for(NSDictionary *existing in _document[@"nodes"]) {
+            const auto *other=tri::nodeSpec(typeOf(existing));
+            if(other && other->environmentRole==descriptor->environmentRole) {
+                const uint64_t uid=[existing[@"id"] unsignedLongLongValue];
+                [self selectOnly:uid];return uid;
+            }
+        }
+    }
     NSDictionary *previous=copyJSON(_document);
     uint64_t next=1;
     for(NSDictionary *node in _document[@"nodes"])next=std::max(next,[node[@"id"] unsignedLongLongValue]+1);
-    if(![self makeNode:type at:point id:next])return 0;
+    NSMutableDictionary *starts=[NSMutableDictionary new];
+    if(![self makeNode:type at:point id:next expand:(NSEvent.modifierFlags & NSEventModifierFlagShift)!=0 starts:starts])return 0;
     _selected=next;
     [_selection removeAllObjects];[_selection addObject:@(next)];
-    [self commit:previous];[self inspect];
-    return next;
+    const BOOL applied=[self commit:previous];
+    if(applied)[_canvas animatePlacements:starts focus:next];
+    [self inspect];
+    return applied?next:0;
 }
 -(void)insertFromLibrary:(int)type {
     NSSize size=_canvas.bounds.size;
     NSPoint center=[self world:NSMakePoint(size.width/2-86,size.height/2-50)];
-    [self insertNodeType:type atPoint:center];
-    [self message:[NSString stringWithFormat:SNLocalized(@"已添加 %@"),title(type)]];
+    if([self insertNodeType:type atPoint:center])
+        [self message:[NSString stringWithFormat:SNLocalized(@"已添加 %@"),title(type)]];
 }
 -(NSMutableArray *)groups {
     if(!_document)return [NSMutableArray array];
@@ -1715,10 +1808,10 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
     }
     if(NSIsEmptyRect(all))all=NSMakeRect(0,0,700,400);
     NSSize size=_canvas.bounds.size;
-    double availableW=std::max(200.,size.width-48),availableH=std::max(160.,size.height-48);
+    double availableW=std::max(200.,size.width-48),availableH=std::max(160.,size.height-48-zoneHeaderHeight);
     _zoom=std::clamp(std::min(availableW/all.size.width,availableH/all.size.height),.1,1.2);
     _origin=NSMakePoint((size.width-all.size.width*_zoom)/2-all.origin.x*_zoom,
-                        (size.height-all.size.height*_zoom)/2-all.origin.y*_zoom);
+                        (size.height+zoneHeaderHeight-all.size.height*_zoom)/2-all.origin.y*_zoom);
     [self updateZoomLabel];_canvas.needsDisplay=YES;
 }
 -(void)autoLayout:(id)sender {
@@ -1737,17 +1830,18 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
         }
         if(!changed)break;
     }
-    NSMutableDictionary<NSNumber*,NSNumber*> *slots=[NSMutableDictionary new];
+    NSMutableDictionary<NSNumber*,NSNumber*> *nextY=[NSMutableDictionary new];
     NSArray<NSDictionary*> *ordered=[nodes sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
         return [a[@"id"] compare:b[@"id"]];
     }];
     NSDictionary *previous=copyJSON(_document);
     for(NSDictionary *node in ordered) {
         NSNumber *level=depth[node[@"id"]] ?: @0;
-        NSUInteger slot=[slots[level] unsignedIntegerValue];slots[level]=@(slot+1);
+        double y=nextY[level] ? nextY[level].doubleValue : 60;
+        nextY[level]=@(y+NSHeight(nodeRect(node))+30);
         NSMutableDictionary *mutableNode=(NSMutableDictionary *)node;
         mutableNode[@"x"]=@(80+[level doubleValue]*240);
-        mutableNode[@"y"]=@(60+slot*150);
+        mutableNode[@"y"]=@(y);
     }
     [self commit:previous];[self fit:nil];_canvas.needsDisplay=YES;
     [self message:[NSString stringWithFormat:SNLocalized(@"已按信号深度排列 %lu 个节点"),(unsigned long)nodes.count]];
@@ -1778,13 +1872,35 @@ static NSString *const SNNodeTypePasteboard = @"com.soundnet.node-type";
 @end
 
 namespace {
-NSRect nodeRect(NSDictionary *node) {
-    int type=typeOf(node);
-    int count=std::max((int)tri::inputTypes(type).size(),tri::outputCount(type));
-    return NSMakeRect([node[@"x"] doubleValue],[node[@"y"] doubleValue],172,std::max(88,48+count*24));
+int nodePortRows(int type) {
+    const auto *spec=tri::nodeSpec(type);
+    return spec?int(std::max(spec->inputs.size(),spec->outputs.size())):0;
 }
-NSPoint jack(NSDictionary *node,bool out,int port) {
-    NSRect r=nodeRect(node);
+bool canvasParameter(const tri::NodeSpec& node,int parameter) {
+    const auto *spec=tri::paramSpec(parameter);
+    return spec && !spec->hidden && parameter!=node.triggerParameter;
+}
+bool hasAudioPreview(const tri::NodeSpec& node) {
+    return node.assetKind && std::strcmp(node.assetKind,"audio")==0;
+}
+double cardDetailsTop(int type) {
+    return std::max(40,38+nodePortRows(type)*24);
+}
+NSSize cardSize(int type) {
+    double bottom=cardDetailsTop(type)+8;
+    if(const auto *spec=tri::nodeSpec(type)) {
+        int count=0;
+        for(int p:spec->params)if(canvasParameter(*spec,p) && ++count==2)break;
+        bottom+=count*16;
+        if(spec->environmentRole==tri::EnvironmentRole::Timecode)bottom+=16;
+        if(hasAudioPreview(*spec))bottom+=35;
+    }
+    return NSMakeSize(cardWidth,std::max(88.0,bottom));
+}
+NSRect nodeRect(NSDictionary *node) {
+    return NSRect{NSMakePoint([node[@"x"] doubleValue],[node[@"y"] doubleValue]),cardSize(typeOf(node))};
+}
+NSPoint jack(NSRect r,bool out,int port) {
     return NSMakePoint(out?NSMaxX(r):NSMinX(r),NSMinY(r)+47+24*port);
 }
 double curveX(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
@@ -1793,10 +1909,7 @@ double curveX(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
 double curveY(NSPoint a,NSPoint c1,NSPoint c2,NSPoint b,double t) {
     double u=1-t;return u*u*u*a.y+3*u*u*t*c1.y+3*u*t*t*c2.y+t*t*t*b.y;
 }
-bool nearEdge(NSDictionary *edge,NSDictionary *a,NSDictionary *b,NSPoint point,double tolerance) {
-    if(!a || !b)return false;
-    int port=inputPortOf(b,edge),out=outputPortOf(a,edge);
-    NSPoint from=jack(a,true,out),to=jack(b,false,port);
+bool nearEdge(NSPoint from,NSPoint to,NSPoint point,double tolerance) {
     NSPoint c1=NSMakePoint(from.x+70,from.y),c2=NSMakePoint(to.x-70,to.y);
     for(int i=0;i<=32;++i) {
         double t=i/32.0;
@@ -1804,50 +1917,592 @@ bool nearEdge(NSDictionary *edge,NSDictionary *a,NSDictionary *b,NSPoint point,d
     }
     return false;
 }
-void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
+void drawText(NSString *text,NSRect rect,NSColor *color,double size=12,
+              NSTextAlignment alignment=NSTextAlignmentLeft) {
+    NSMutableParagraphStyle *style=[NSMutableParagraphStyle new];
+    style.alignment=alignment;style.lineBreakMode=NSLineBreakByTruncatingTail;
     [text drawInRect:rect withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size],
-        NSForegroundColorAttributeName:color}];
+        NSForegroundColorAttributeName:color,NSParagraphStyleAttributeName:style}];
+}
+NSString *canvasParameterValue(int type,int p,NSDictionary *node) {
+    const auto *spec=tri::paramSpec(p);
+    const auto& info=tri::graphParamInfo(p);
+    const double value=paramValue(node,p).doubleValue;
+    if(spec->options && spec->optionCount) {
+        const auto index=std::clamp<long>(std::lround(value-info.min),0,spec->optionCount-1);
+        return SNNodeLocalized(type,@(spec->options[index]));
+    }
+    NSString *number=spec->discrete?[NSString stringWithFormat:@"%.0f",value]:
+        [NSString stringWithFormat:@"%.4g",value];
+    return info.unit && *info.unit ? [number stringByAppendingFormat:@" %s",info.unit] : number;
+}
+constexpr NSUInteger waveformColumns=84;
+NSData *waveformEnvelope(NSString *encoded,NSUInteger channels) {
+    NSData *pcm=[[NSData alloc]initWithBase64EncodedString:encoded options:0];
+    const NSUInteger frames=pcm.length/(sizeof(float)*channels);
+    if(!frames)return [NSData data];
+    const float *samples=static_cast<const float *>(pcm.bytes);
+    float envelope[waveformColumns][2]={};
+    for(NSUInteger x=0;x<waveformColumns;++x) {
+        const NSUInteger start=frames*x/waveformColumns;
+        const NSUInteger end=std::max(start+1,frames*(x+1)/waveformColumns);
+        const NSUInteger step=std::max<NSUInteger>(1,(end-start)/512);
+        for(NSUInteger frame=start;frame<end;frame+=step) {
+            for(NSUInteger c=0;c<channels;++c) {
+                const float value=samples[frame*channels+c];
+                if(!std::isfinite(value))continue;
+                envelope[x][0]=std::min(envelope[x][0],std::max(-1.f,value));
+                envelope[x][1]=std::max(envelope[x][1],std::min(1.f,value));
+            }
+        }
+    }
+    return [NSData dataWithBytes:envelope length:sizeof(envelope)];
+}
+void drawCable(NSPoint from,NSPoint to,NSColor *color,CGFloat width) {
+    NSBezierPath *path=[NSBezierPath new];[path moveToPoint:from];
+    [path curveToPoint:to controlPoint1:NSMakePoint(from.x+70,from.y) controlPoint2:NSMakePoint(to.x-70,to.y)];
+    [color setStroke];path.lineWidth=width;[path stroke];
+}
+
+using soundnet::canvas::Extents;
+using soundnet::canvas::ZoneShifts;
+using soundnet::canvas::ZoneInsertion;
+
+NSRect clearVerticalSlot(NSRect proposed,NSArray<NSDictionary *> *nodes,
+                         const ZoneShifts& shifts,uint64_t moving=0) {
+    // Only the placed card may choose a nearby clear y.
+    constexpr double clearance=12;
+    std::vector<std::pair<double,double>> blocked;
+    for(NSDictionary *node in nodes) {
+        if(moving && [node[@"id"] unsignedLongLongValue]==moving)continue;
+        NSRect occupied=NSInsetRect(nodeRect(node),-clearance,-clearance);
+        const Stage stage=canvasStage(typeOf(node));
+        if(stage!=Stage::Free)occupied.origin.x+=shifts[int(stage)];
+        if(NSMaxX(occupied)>NSMinX(proposed) && NSMinX(occupied)<NSMaxX(proposed))
+            blocked.emplace_back(NSMinY(occupied)-NSHeight(proposed),NSMaxY(occupied));
+    }
+    std::sort(blocked.begin(),blocked.end());
+    for(size_t i=0;i<blocked.size();) {
+        auto [top,bottom]=blocked[i++];
+        while(i<blocked.size() && blocked[i].first<=bottom)
+            bottom=std::max(bottom,blocked[i++].second);
+        const double y=NSMinY(proposed);
+        if(y>top && y<bottom) {
+            proposed.origin.y=y-top<=bottom-y?top:bottom;
+            break;
+        }
+        if(y<=top)break;
+    }
+    return proposed;
+}
+
+NSRect placementRect(const Zones& zones,Stage stage,NSRect proposed,
+                     NSArray<NSDictionary *> *nodes,uint64_t moving) {
+    const double x=zones.placementX(stage,NSMidX(proposed));
+    if(x==NSMidX(proposed))return proposed;
+    proposed.origin.x=x-NSWidth(proposed)/2;
+    return clearVerticalSlot(proposed,nodes,{},moving);
+}
+
+struct RenderNode {
+    NSDictionary *node;
+    NSRect rect;
+    int type;
+    Stage stage;
+};
+struct RenderCable {
+    size_t source,target;
+    int output,input;
+    tri::Signal signal;
+    NSInteger index;
+};
+
+NSRect groupRect(NSDictionary *group) {
+    return NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
+                      [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
+}
+
+double zoneShift(const ZoneShifts& shifts,Stage stage) {
+    return stage==Stage::Free?0:shifts[int(stage)];
+}
+
+NSRect shiftedGroupRect(NSRect bounds,const std::vector<RenderNode>& nodes,const ZoneShifts& shifts) {
+    // Group membership is geometric. Keep the frame around its original members.
+    double left=0,right=0;
+    bool hasMember=false;
+    for(const auto& entry:nodes) {
+        if(!NSPointInRect(NSMakePoint(NSMidX(entry.rect),NSMidY(entry.rect)),bounds))continue;
+        const double dx=zoneShift(shifts,entry.stage);
+        left=hasMember?std::min(left,dx):dx;
+        right=hasMember?std::max(right,dx):dx;
+        hasMember=true;
+    }
+    bounds.origin.x+=left;
+    bounds.size.width+=right-left;
+    return bounds;
+}
+
+struct InsertionPlan {
+    NSRect card;
+    ZoneInsertion layout;
+    std::optional<Zones> preview;
+};
+
+InsertionPlan planInsertion(const Extents& extents,const Zones& zones,Stage stage,NSRect requested,
+                            NSArray<NSDictionary *> *nodes,bool expand) {
+    constexpr double margin=20;
+    const auto layout=soundnet::canvas::planZoneInsertion(extents,stage,NSMidX(requested),cardWidth+2*margin,
+        expand?std::numeric_limits<double>::infinity():soundnet::canvas::automaticZoneShift);
+    NSRect target=requested;
+    target.origin.x=layout.center-cardWidth/2;
+    if(!layout.fits)return {target,layout,{}};
+    target=clearVerticalSlot(target,nodes,layout.shifts);
+    if(stage==Stage::Free)return {target,layout,{}};
+
+    const int index=int(stage);
+    const auto& band=zones.bands[index];
+    bool boundedLeft=false,boundedRight=false,shifted=false;
+    for(int i=0;i<stageCount;++i) {
+        boundedLeft|=i<index && zones.bands[i].occupied;
+        boundedRight|=i>index && zones.bands[i].occupied;
+        shifted|=layout.shifts[i]!=0;
+    }
+    const bool grows=!band.occupied || (boundedLeft && NSMinX(target)-margin<band.left) ||
+                     (boundedRight && NSMaxX(target)+margin>band.right);
+    if(!grows && !shifted)return {target,layout,{}};
+
+    Extents projected=extents;
+    for(int i=0;i<stageCount;++i)projected[i].translate(layout.shifts[i]);
+    projected[index].add(layout.center);
+    return {target,layout,soundnet::canvas::makeZones(projected)};
+}
+
+NSColor *stageAccent(int stage) {
+    switch(stage) {
+        case 0:return [NSColor colorWithSRGBRed:.91 green:.68 blue:.35 alpha:1];
+        case 1:return [NSColor colorWithSRGBRed:.64 green:.57 blue:.88 alpha:1];
+        case 2:return [NSColor colorWithSRGBRed:.33 green:.76 blue:.74 alpha:1];
+        default:return [NSColor colorWithSRGBRed:.56 green:.75 blue:.63 alpha:1];
+    }
+}
+
+NSString *stageTitle(int stage) {
+    return SNLocalized((@[@"音符源区",@"音源区",@"效果区",@"输出区"])[stage]);
 }
 }
-@implementation SNInstanceCanvas
+@implementation SNInstanceCanvas {
+    NSMapTable<NSDictionary *,NSData *> *_waveforms;
+    BOOL _waveformPending;
+    __weak NSDictionary *_layoutDocument;
+    uint64_t _layoutGeneration;
+    Extents _extents;
+    Zones _zones;
+    std::vector<RenderNode> _renderNodes;
+    std::vector<RenderCable> _renderCables;
+    std::vector<NSRect> _frameRects;
+    CGGradientRef _zoneBlends[stageCount][stageCount];
+    std::optional<Zones> _dragZones, _previewZones;
+    std::optional<ZoneShifts> _dragPreviewShifts;
+    BOOL _placementBlocked, _droppingLibraryNode;
+    NSRect _placementPreview;
+    Stage _previewStage;
+    NSDictionary<NSNumber *,NSValue *> *_placementStarts;
+    __weak NSDictionary *_placementDocument;
+    CFTimeInterval _placementTime;
+    NSTimer *_placementTimer;
+    NSPoint _nodeGrab;
+    NSDictionary<NSNumber *,NSValue *> *_dragOrigins;
+    NSMutableDictionary<NSNumber *,NSValue *> *_dragPositions;
+    NSPoint _cameraStart, _cameraEnd, _cameraLast;
+}
 -(instancetype)initWithFrame:(NSRect)frame {
     if((self=[super initWithFrame:frame]))
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL,SNNodeTypePasteboard]];
     return self;
 }
+-(void)dealloc {
+    for(const auto& row:_zoneBlends)for(CGGradientRef blend:row)if(blend)CGGradientRelease(blend);
+}
 -(BOOL)isFlipped{return YES;}
+-(void)invalidateLayout {
+    _layoutDocument=nil;
+    if(_dragPreviewShifts)[self clearPlacementFeedback];
+}
+-(void)refreshLayout {
+    NSDictionary *document=_editor.document;
+    const auto catalog=tri::nodeCatalogSnapshot();
+    if(_layoutDocument==document && _layoutGeneration==catalog->generation)return;
+    if(_dragPreviewShifts)[self clearPlacementFeedback];
+    _layoutDocument=document;
+    _layoutGeneration=catalog->generation;
+    _extents={};
+    _renderNodes.clear();
+    _renderCables.clear();
+    NSMutableDictionary<NSNumber *,NSNumber *> *indices=[NSMutableDictionary new];
+    for(NSDictionary *node in document[@"nodes"]) {
+        const int type=typeOf(node);
+        const NSRect rect=nodeRect(node);
+        const Stage stage=canvasStage(type);
+        if(stage!=Stage::Free)_extents[int(stage)].add(NSMidX(rect));
+        indices[node[@"id"]]=@(_renderNodes.size());
+        _renderNodes.push_back({node,rect,type,stage});
+    }
+    _zones=soundnet::canvas::makeZones(_extents);
+    NSInteger index=0;
+    for(NSDictionary *edge in document[@"edges"]) {
+        NSNumber *source=indices[edge[@"source"]],*target=indices[edge[@"target"]];
+        if(source && target) {
+            const size_t a=source.unsignedIntegerValue,b=target.unsignedIntegerValue;
+            const int out=outputPortOf(_renderNodes[a].node,edge),in=inputPortOf(_renderNodes[b].node,edge);
+            _renderCables.push_back({a,b,out,in,tri::outputType(_renderNodes[a].type,out),index});
+        }
+        ++index;
+    }
+}
+-(BOOL)prepareInsertionOfType:(int)type at:(NSPoint *)point expand:(BOOL)expand
+                        starts:(NSMutableDictionary<NSNumber *,NSValue *> *)starts {
+    [self refreshLayout];
+    NSArray<NSMutableDictionary *> *nodes=_editor.document[@"nodes"];
+    const auto plan=planInsertion(_extents,_zones,canvasStage(type),{*point,cardSize(type)},nodes,expand);
+    if(!plan.layout.fits)return NO;
+    const auto& shifts=plan.layout.shifts;
+    const bool movesRegions=shifts!=ZoneShifts{};
+    const bool fromPreview=_droppingLibraryNode && _dragPreviewShifts.has_value();
+    if(movesRegions)for(NSMutableDictionary *group in [_editor groupList]) {
+        const NSRect bounds=groupRect(group);
+        const NSRect target=shiftedGroupRect(bounds,_renderNodes,shifts);
+        if(target.origin.x!=bounds.origin.x)group[@"x"]=@(target.origin.x);
+        if(target.size.width!=bounds.size.width)group[@"w"]=@(target.size.width);
+    }
+    if(movesRegions || fromPreview)for(const auto& entry:_renderNodes) {
+        const double dx=zoneShift(shifts,entry.stage);
+        const double shown=fromPreview?zoneShift(*_dragPreviewShifts,entry.stage):0;
+        auto *node=(NSMutableDictionary *)entry.node;
+        // Continue from the position already shown on hover. A matching drop
+        // stays in place while the graph transaction adopts the preview.
+        if(dx!=shown && !starts[node[@"id"]])
+            starts[node[@"id"]]=[NSValue valueWithPoint:NSMakePoint(entry.rect.origin.x+shown,entry.rect.origin.y)];
+        if(dx!=0)node[@"x"]=@(entry.rect.origin.x+dx);
+    }
+    *point=plan.card.origin;
+    return YES;
+}
+-(void)clearPlacementFeedback {
+    if(NSIsEmptyRect(_placementPreview) && !_previewZones && !_dragPreviewShifts && !_placementBlocked)return;
+    _placementPreview=NSZeroRect;
+    _previewZones.reset();
+    _dragPreviewShifts.reset();
+    _placementBlocked=NO;
+    self.needsDisplay=YES;
+}
+-(void)showPlacementPreview:(NSRect)target from:(NSRect)source stage:(Stage)stage {
+    if(NSEqualRects(target,source)){[self clearPlacementFeedback];return;}
+    _placementPreview=target;_previewStage=stage;
+    self.needsDisplay=YES;
+}
+-(void)previewPlacementForType:(int)type at:(NSPoint)point libraryDrag:(BOOL)libraryDrag {
+    [self refreshLayout];
+    const NSRect source={point,cardSize(type)};
+    const Stage stage=canvasStage(type);
+    const auto plan=planInsertion(_extents,_zones,stage,source,_editor.document[@"nodes"],
+        (NSEvent.modifierFlags & NSEventModifierFlagShift)!=0);
+    [self clearPlacementFeedback];
+    _previewZones=plan.preview;
+    if(libraryDrag && plan.layout.fits && plan.layout.shifts!=ZoneShifts{})
+        _dragPreviewShifts=plan.layout.shifts;
+    _placementBlocked=!plan.layout.fits;
+    if(_previewZones || _placementBlocked || !NSEqualRects(plan.card,source)) {
+        _placementPreview=plan.card;_previewStage=stage;
+        self.needsDisplay=YES;
+    }
+}
+-(void)animatePlacements:(NSDictionary<NSNumber *,NSValue *> *)starts focus:(uint64_t)focus {
+    if(!starts.count)return;
+    _cameraStart=_cameraEnd=_cameraLast=_editor.origin;
+    if(focus && starts[@(focus)] && self.window) {
+        NSNumber *uid=@(focus);
+        const NSPoint from=[starts[uid] pointValue];
+        const NSPoint fromView=NSMakePoint(_editor.origin.x+from.x*_editor.zoom,_editor.origin.y+from.y*_editor.zoom);
+        NSDictionary *node=[_editor node:uid.unsignedLongLongValue];
+        if(node && NSPointInRect(fromView,NSInsetRect(self.bounds,-12,-12))) {
+            const NSRect target=nodeRect(node);
+            const double centerX=_editor.origin.x+NSMidX(target)*_editor.zoom;
+            const double centerY=_editor.origin.y+NSMidY(target)*_editor.zoom;
+            // Bring an offscreen destination into view without reframing the graph.
+            if(centerX<NSMinX(self.bounds) || centerX>NSMaxX(self.bounds)) {
+                const double inset=std::min(NSWidth(self.bounds)*.5,NSWidth(target)*_editor.zoom*.5+18);
+                _cameraEnd.x+=std::clamp(centerX,NSMinX(self.bounds)+inset,NSMaxX(self.bounds)-inset)-centerX;
+            }
+            if(centerY<zoneHeaderHeight || centerY>NSMaxY(self.bounds)) {
+                const double inset=std::min(std::max(0.,NSHeight(self.bounds)-zoneHeaderHeight)*.5,
+                    NSHeight(target)*_editor.zoom*.5+12);
+                if(NSHeight(self.bounds)>zoneHeaderHeight)
+                    _cameraEnd.y+=std::clamp(centerY,zoneHeaderHeight+inset,NSMaxY(self.bounds)-inset)-centerY;
+            }
+        }
+    }
+    [_placementTimer invalidate];
+    if(NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion) {
+        _editor.origin=_cameraEnd;
+        _placementTimer=nil;_placementStarts=nil;
+        self.needsDisplay=YES;
+        return;
+    }
+    _placementDocument=_editor.document;
+    _placementStarts=[starts copy];
+    _placementTime=CACurrentMediaTime();
+    __weak SNInstanceCanvas *weak=self;
+    _placementTimer=[NSTimer timerWithTimeInterval:1./60 repeats:YES block:^(NSTimer *timer) {
+        SNInstanceCanvas *canvas=weak;
+        if(!canvas){[timer invalidate];return;}
+        canvas.needsDisplay=YES;
+        const double elapsed=CACurrentMediaTime()-canvas->_placementTime;
+        const BOOL current=canvas->_placementDocument==canvas.editor.document;
+        if(current && NSEqualPoints(canvas.editor.origin,canvas->_cameraLast) &&
+           !NSEqualPoints(canvas->_cameraStart,canvas->_cameraEnd)) {
+            const double progress=std::clamp(elapsed/.24,0.,1.);
+            const double t=progress*progress*(3-2*progress);
+            canvas->_cameraLast=NSMakePoint(canvas->_cameraStart.x+(canvas->_cameraEnd.x-canvas->_cameraStart.x)*t,
+                                           canvas->_cameraStart.y+(canvas->_cameraEnd.y-canvas->_cameraStart.y)*t);
+            canvas.editor.origin=canvas->_cameraLast;
+        }
+        if(elapsed>=.24 || !current) {
+            [timer invalidate];
+            canvas->_placementTimer=nil;
+            canvas->_placementStarts=nil;
+        }
+    }];
+    [NSRunLoop.mainRunLoop addTimer:_placementTimer forMode:NSRunLoopCommonModes];
+    self.needsDisplay=YES;
+}
+-(NSRect)cardRectForNode:(NSDictionary *)node {
+    return [self displayRect:nodeRect(node) forNode:node stage:canvasStage(typeOf(node))];
+}
+-(NSRect)displayRect:(NSRect)rect forNode:(NSDictionary *)node stage:(Stage)stage {
+    if(_dragPreviewShifts) {
+        rect.origin.x+=zoneShift(*_dragPreviewShifts,stage);
+        return rect;
+    }
+    if(_editor.moving) {
+        NSValue *dragged=_dragPositions[node[@"id"]];
+        if(dragged) {
+            rect.origin=dragged.pointValue;
+            return rect;
+        }
+    }
+    if(!_placementStarts.count || _placementDocument!=_editor.document)return rect;
+    NSValue *start=_placementStarts[node[@"id"]];
+    if(!start || [node[@"id"] unsignedLongLongValue]==_editor.moving)return rect;
+    const double progress=std::clamp((CACurrentMediaTime()-_placementTime)/.24,0.,1.);
+    const double t=progress*progress*(3-2*progress);
+    rect.origin=NSMakePoint(start.pointValue.x+(rect.origin.x-start.pointValue.x)*t,
+                            start.pointValue.y+(rect.origin.y-start.pointValue.y)*t);
+    return rect;
+}
 -(NSArray<NSURL *> *)draggedURLs:(id<NSDraggingInfo>)sender {
     return [sender.draggingPasteboard readObjectsForClasses:@[NSURL.class]
         options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
 }
 -(NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
-    if([sender.draggingPasteboard stringForType:SNNodeTypePasteboard])return NSDragOperationCopy;
-    return [self draggedURLs:sender].count?NSDragOperationCopy:NSDragOperationNone;
+    _cameraEnd=_cameraStart;
+    const NSPoint view=[self convertPoint:sender.draggingLocation fromView:nil];
+    NSPoint at=[_editor world:view];
+    NSString *nodeType=[sender.draggingPasteboard stringForType:SNNodeTypePasteboard];
+    if(nodeType && tri::nodeMeta(nodeType.intValue)) {
+        [self previewPlacementForType:nodeType.intValue at:NSMakePoint(at.x-cardWidth/2,at.y-40) libraryDrag:YES];
+        return NSDragOperationCopy;
+    }
+    const BOOL clipMode=([NSEvent modifierFlags]&NSEventModifierFlagOption)!=0;
+    for(NSURL *url in [self draggedURLs:sender]) {
+        if(const auto *spec=fileDropSpec(url,clipMode)) {
+            [self previewPlacementForType:spec->type at:at libraryDrag:NO];
+            return NSDragOperationCopy;
+        }
+    }
+    [self clearPlacementFeedback];
+    return NSDragOperationNone;
 }
 -(NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender { return [self draggingEntered:sender]; }
+-(void)draggingExited:(id<NSDraggingInfo>)sender {[self clearPlacementFeedback];}
+-(void)draggingEnded:(id<NSDraggingInfo>)sender {[self clearPlacementFeedback];}
 -(BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
     NSString *nodeType=[sender.draggingPasteboard stringForType:SNNodeTypePasteboard];
     NSPoint view=[self convertPoint:sender.draggingLocation fromView:nil];
     if(nodeType) {
         int type=nodeType.intValue;
-        if(!tri::nodeMeta(type))return NO;
-        NSPoint at=[_editor world:view];
-        [_editor insertNodeType:type atPoint:NSMakePoint(at.x-86,at.y-40)];
-        return YES;
+        const NSPoint at=[_editor world:view];
+        _droppingLibraryNode=YES;
+        const BOOL placed=[_editor insertNodeType:type atPoint:NSMakePoint(at.x-cardWidth/2,at.y-40)]!=0;
+        _droppingLibraryNode=NO;
+        [self clearPlacementFeedback];
+        return placed;
     }
+    [self clearPlacementFeedback];
     NSArray<NSURL *> *urls=[self draggedURLs:sender];
     if(!urls.count)return NO;
     BOOL clipMode=([NSEvent modifierFlags]&NSEventModifierFlagOption)!=0;
     return [_editor dropFileURLs:urls atPoint:[_editor world:view] clipMode:clipMode];
 }
 -(BOOL)acceptsFirstResponder{return YES;}
--(void)drawRect:(NSRect)dirty {
-    [[NSColor colorWithWhite:.09 alpha:1]setFill];NSRectFill(self.bounds);
+-(void)drawAudioPreview:(NSDictionary *)asset rect:(NSRect)rect {
+    [[NSColor colorWithWhite:.11 alpha:1] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:4 yRadius:4] fill];
+    NSString *encoded=asset[@"pcm"];
+    const NSUInteger channels=[asset[@"channels"] unsignedIntegerValue];
+    if(![encoded isKindOfClass:NSString.class]||!encoded.length||(channels!=1&&channels!=2)) {
+        drawText(SNLocalized(@"未载入素材"),NSInsetRect(rect,6,6),NSColor.lightGrayColor,10);
+        return;
+    }
+    if(!_waveforms)_waveforms=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality
+        valueOptions:NSPointerFunctionsStrongMemory];
+    NSData *envelope=[_waveforms objectForKey:asset];
+    if(!envelope && !_waveformPending) {
+        _waveformPending=YES;
+        __weak SNInstanceCanvas *weak=self;
+        // Only a visible asset can queue a job. Keep the PCM decode off the
+        // editor thread and bound the number of in-flight decodes per canvas.
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+            NSData *result=waveformEnvelope(encoded,channels);
+            dispatch_async(dispatch_get_main_queue(),^{
+                SNInstanceCanvas *canvas=weak;
+                if(!canvas)return;
+                [canvas->_waveforms setObject:result forKey:asset];
+                canvas->_waveformPending=NO;
+                canvas.needsDisplay=YES;
+            });
+        });
+    }
+    if(!envelope.length)return;
+    const float (*peaks)[2]=static_cast<const float (*)[2]>(envelope.bytes);
+    NSBezierPath *wave=[NSBezierPath new];wave.lineWidth=1;
+    const CGFloat middle=NSMidY(rect),height=NSHeight(rect)*.43;
+    for(NSUInteger i=0;i<waveformColumns;++i) {
+        const CGFloat x=NSMinX(rect)+3+(i+.5)*(NSWidth(rect)-6)/waveformColumns;
+        [wave moveToPoint:NSMakePoint(x,middle-std::max(.025f,peaks[i][1])*height)];
+        [wave lineToPoint:NSMakePoint(x,middle-std::min(-.025f,peaks[i][0])*height)];
+    }
+    [signalColor(tri::Signal::Audio) setStroke];[wave stroke];
+}
+-(NSDictionary *)wireTargetAt:(NSPoint)point signal:(tri::Signal)signal port:(int *)port {
     SNInstanceEditor *editor=_editor;
+    double nearest=14/editor.zoom;
+    NSDictionary *target=nil;
+    for(NSDictionary *node in [editor.document[@"nodes"] reverseObjectEnumerator]) {
+        const auto *spec=tri::nodeSpec(typeOf(node));
+        if(!spec)continue;
+        for(int p=0;p<int(spec->inputs.size());++p) {
+            const auto& input=spec->inputs[p];
+            if(input.signal!=signal)continue;
+            if([node[@"id"] unsignedLongLongValue]==editor.wireSource && !(input.flags&tri::PortFeedback))continue;
+            NSPoint position=jack([self cardRectForNode:node],false,p);
+            const double distance=std::hypot(position.x-point.x,position.y-point.y);
+            if(distance>=nearest)continue;
+            nearest=distance;target=node;*port=p;
+        }
+    }
+    return target;
+}
+-(void)drawZoneColors:(const Zones&)zones {
+    static NSColor *base=[NSColor colorWithSRGBRed:.09 green:.09 blue:.10 alpha:1];
+    if(zones.empty){[base setFill];NSRectFill(self.bounds);return;}
+    static NSArray<NSColor *> *tints=@[
+        [base blendedColorWithFraction:.17 ofColor:stageAccent(0)],
+        [base blendedColorWithFraction:.17 ofColor:stageAccent(1)],
+        [base blendedColorWithFraction:.17 ofColor:stageAccent(2)],
+        [base blendedColorWithFraction:.17 ofColor:stageAccent(3)]];
+    CGContextRef context=NSGraphicsContext.currentContext.CGContext;
+    const NSRect visible=NSIntersectionRect(self.bounds,CGContextGetClipBoundingBox(context));
+    if(NSIsEmptyRect(visible))return;
+    const double minX=NSMinX(visible),maxX=NSMaxX(visible);
+    const double zoom=_editor.zoom,origin=_editor.origin.x;
+    const auto blendWidth=[](const auto& band){return std::min(72.,(band.right-band.left)*.26);};
+    const auto stripe=[&](double left,double right) {
+        return CGRectMake(left,NSMinY(visible),right-left,NSHeight(visible));
+    };
+    const auto fill=[&](int stage,double left,double right) {
+        if(right<=left)return;
+        CGContextSetFillColorWithColor(context,tints[stage].CGColor);
+        CGContextFillRect(context,stripe(left,right));
+    };
+
+    // Paint solid spans directly. Only visible transitions need a gradient,
+    // and the same color pair can be reused at any zoom or scroll position.
+    CGContextSaveGState(context);
+    CGContextSetShouldAntialias(context,false);
+    double cursor=minX;
+    int previous=-1;
+    for(int i=0;i<stageCount;++i) {
+        if(!zones.bands[i].occupied)continue;
+        if(previous>=0) {
+            const auto& a=zones.bands[previous];
+            const auto& b=zones.bands[i];
+            const double from=origin+(a.right-blendWidth(a))*zoom,to=origin+(b.left+blendWidth(b))*zoom;
+            const double start=std::clamp(from,minX,maxX),end=std::clamp(to,minX,maxX);
+            fill(previous,cursor,start);
+            if(end>start) {
+                auto& blend=_zoneBlends[previous][i];
+                if(!blend) {
+                    NSArray *colors=@[(__bridge id)tints[previous].CGColor,(__bridge id)tints[i].CGColor];
+                    blend=CGGradientCreateWithColors(nullptr,(__bridge CFArrayRef)colors,nullptr);
+                }
+                CGContextSaveGState(context);
+                CGContextClipToRect(context,stripe(start,end));
+                CGContextDrawLinearGradient(context,blend,CGPointMake(from,0),CGPointMake(to,0),
+                    kCGGradientDrawsBeforeStartLocation|kCGGradientDrawsAfterEndLocation);
+                CGContextRestoreGState(context);
+            }
+            cursor=end;
+        }
+        previous=i;
+    }
+    fill(previous,cursor,maxX);
+    CGContextRestoreGState(context);
+}
+-(void)drawZoneTitles:(const Zones&)zones {
+    for(int i=0;i<stageCount;++i) {
+        const auto& band=zones.bands[i];
+        if(!band.occupied)continue;
+        const double width=(band.right-band.left)*_editor.zoom;
+        if(width<27)continue;
+        const double center=_editor.origin.x+band.center()*_editor.zoom;
+        drawText(stageTitle(i),NSMakeRect(center-width/2,NSMinY(self.bounds)+7,width,16),
+                 stageAccent(i),11,NSTextAlignmentCenter);
+    }
+}
+-(void)drawPlacementPreviewIn:(NSRect)visible {
+    if(NSIsEmptyRect(_placementPreview))return;
+    NSColor *accent=stageAccent(int(_previewStage));
+    NSPoint center=NSMakePoint(NSMidX(_placementPreview),NSMidY(_placementPreview));
+    const BOOL onScreen=NSIntersectsRect(visible,_placementPreview);
+    if(!onScreen) {
+        center.x=std::clamp(center.x,NSMinX(visible),NSMaxX(visible));
+        center.y=std::clamp(center.y,NSMinY(visible),NSMaxY(visible));
+    }
+    NSGradient *glow=[[NSGradient alloc]initWithStartingColor:[accent colorWithAlphaComponent:.33]
+        endingColor:[accent colorWithAlphaComponent:0]];
+    [glow drawFromCenter:center radius:0 toCenter:center radius:std::max(NSWidth(_placementPreview),NSHeight(_placementPreview))*.67
+        options:0];
+    if(onScreen) {
+        [[accent colorWithAlphaComponent:.12] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:_placementPreview xRadius:8 yRadius:8] fill];
+    }
+}
+-(void)drawRect:(NSRect)dirty {
+    SNInstanceEditor *editor=_editor;
+    [self refreshLayout];
+    const Zones& zones=_previewZones?*_previewZones:(editor.moving && _dragZones?*_dragZones:_zones);
     [NSGraphicsContext saveGraphicsState];
-    NSBezierPath *clip=[NSBezierPath bezierPathWithRect:self.bounds];[clip addClip];
+    [[NSBezierPath bezierPathWithRect:self.bounds] addClip];
+    [self drawZoneColors:zones];
+    NSRect content=self.bounds;
+    if(!zones.empty){content.origin.y+=zoneHeaderHeight;content.size.height=std::max(0.,content.size.height-zoneHeaderHeight);}
+    [NSGraphicsContext saveGraphicsState];
+    [[NSBezierPath bezierPathWithRect:content] addClip];
     NSAffineTransform *transform=[NSAffineTransform transform];
     [transform translateXBy:editor.origin.x yBy:editor.origin.y];[transform scaleBy:editor.zoom];[transform concat];
+    const NSPoint visibleOrigin=[editor world:content.origin];
+    const NSRect visible=NSInsetRect(NSMakeRect(visibleOrigin.x,visibleOrigin.y,NSWidth(content)/editor.zoom,
+        NSHeight(content)/editor.zoom),-8,-8);
     if(editor.snap) {
         NSPoint a=[editor world:NSMakePoint(NSMinX(self.bounds),NSMinY(self.bounds))];
         NSPoint b=[editor world:NSMakePoint(NSMaxX(self.bounds),NSMaxY(self.bounds))];
@@ -1859,8 +2514,9 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         [grid stroke];
     }
     for(NSDictionary *group in [editor groupList]) {
-        NSRect r=NSMakeRect([group[@"x"] doubleValue],[group[@"y"] doubleValue],
-                            [group[@"w"] doubleValue],[group[@"h"] doubleValue]);
+        NSRect r=groupRect(group);
+        if(_dragPreviewShifts)r=shiftedGroupRect(r,_renderNodes,*_dragPreviewShifts);
+        if(!NSIntersectsRect(visible,r))continue;
         [[NSColor colorWithWhite:1 alpha:.045]setFill];
         [[NSBezierPath bezierPathWithRoundedRect:r xRadius:9 yRadius:9]fill];
         NSBezierPath *border=[NSBezierPath bezierPathWithRoundedRect:r xRadius:9 yRadius:9];
@@ -1875,24 +2531,41 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         [[NSBezierPath bezierPathWithRect:NSMakeRect(r.origin.x,r.origin.y+27,r.size.width,1)]fill];
         drawText(group[@"title"] ?: SNLocalized(@"分组"),NSInsetRect(title,10,6),[NSColor colorWithWhite:.75 alpha:1],11);
     }
-    NSInteger edgeIndex=0;
-    for(NSDictionary *edge in editor.document[@"edges"]) {
-        NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
-        int port=inputPortOf(b,edge),out=outputPortOf(a,edge);
-        NSPoint from=jack(a,true,out),to=jack(b,false,port);
-        NSBezierPath *path=[NSBezierPath new];[path moveToPoint:from];
-        [path curveToPoint:to controlPoint1:NSMakePoint(from.x+70,from.y) controlPoint2:NSMakePoint(to.x-70,to.y)];
-        BOOL chosen=(edgeIndex==editor.selectedEdge);
-        [chosen?NSColor.whiteColor:signalColor(tri::outputType(typeOf(a),out)) setStroke];
-        path.lineWidth=chosen?3:2;[path stroke];
-        ++edgeIndex;
+    _frameRects.resize(_renderNodes.size());
+    const bool inMotion=_dragPreviewShifts || editor.moving ||
+        (_placementStarts.count && _placementDocument==editor.document);
+    for(size_t i=0;i<_renderNodes.size();++i) {
+        const auto& entry=_renderNodes[i];
+        _frameRects[i]=inMotion?[self displayRect:entry.rect forNode:entry.node stage:entry.stage]:entry.rect;
     }
-    for(NSDictionary *node in editor.document[@"nodes"]) {
-        int type=typeOf(node);NSRect r=nodeRect(node);BOOL bypassed=[node[@"bypass"] boolValue];
+    for(const auto& edge:_renderCables) {
+        const NSPoint from=jack(_frameRects[edge.source],true,edge.output);
+        const NSPoint to=jack(_frameRects[edge.target],false,edge.input);
+        // The cubic stays in the convex hull of its four control points.
+        // Keep crossing cables even when both of their cards are offscreen.
+        if(std::max(from.x+70,to.x)<NSMinX(visible) || std::min(from.x,to.x-70)>NSMaxX(visible) ||
+           std::max(from.y,to.y)<NSMinY(visible) || std::min(from.y,to.y)>NSMaxY(visible))continue;
+        const BOOL chosen=edge.index==editor.selectedEdge;
+        drawCable(from,to,chosen?NSColor.whiteColor:signalColor(edge.signal),chosen?3:2);
+    }
+    [self drawPlacementPreviewIn:visible];
+    for(size_t i=0;i<_renderNodes.size();++i) {
+        const NSRect r=_frameRects[i];
+        if(!NSIntersectsRect(visible,r))continue;
+        NSDictionary *node=_renderNodes[i].node;
+        const int type=_renderNodes[i].type;
+        const BOOL bypassed=[node[@"bypass"] boolValue];
         [[NSColor colorWithWhite:bypassed?.13:.18 alpha:1]setFill];[[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
         [[editor isSelected:[node[@"id"] unsignedLongLongValue]]?NSColor.whiteColor:[NSColor colorWithWhite:.4 alpha:1] setStroke];
         [[NSBezierPath bezierPathWithRect:r]stroke];
-        drawText([NSString stringWithFormat:@"%@ #%@",nodeLabel(node),node[@"id"]],NSMakeRect(r.origin.x+9,r.origin.y+8,160,28),NSColor.whiteColor);
+        if(const auto *spec=tri::nodeSpec(type);spec && isFixedAudioClip(*spec)) {
+            const NSRect accent=NSMakeRect(NSMinX(r)+2,NSMinY(r)+1,NSWidth(r)-4,2);
+            NSGradient *clipTint=[[NSGradient alloc]initWithStartingColor:stageAccent(int(Stage::Notes))
+                endingColor:stageAccent(int(Stage::Sources))];
+            [clipTint drawInRect:accent angle:0];
+        }
+        drawText([NSString stringWithFormat:@"%@ #%@",nodeLabel(node),node[@"id"]],
+            NSMakeRect(r.origin.x+9,r.origin.y+8,bypassed?112:154,20),NSColor.whiteColor);
         if(bypassed)drawText(SNLocalized(@"旁通"),NSMakeRect(NSMaxX(r)-46,r.origin.y+8,40,20),NSColor.systemOrangeColor,10);
         if(type==0) {
             [[NSColor systemRedColor]setStroke];
@@ -1902,15 +2575,53 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         }
         auto inputs=tri::inputTypes(type);
         for(int p=0;p<(int)inputs.size();++p) {
-            NSPoint at=jack(node,false,p);[signalColor(inputs[p])setFill];
+            NSPoint at=jack(r,false,p);[signalColor(inputs[p])setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
-            drawText(portLabel(type,true,p),NSMakeRect(at.x+9,at.y-8,55,20),NSColor.lightGrayColor);
+            drawText(portLabel(type,true,p),NSMakeRect(at.x+9,at.y-8,73,18),NSColor.lightGrayColor,10);
         }
         int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
-            NSPoint at=jack(node,true,p);[signalColor(tri::outputType(type,p))setFill];
+            NSPoint at=jack(r,true,p);[signalColor(tri::outputType(type,p))setFill];
             [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(at.x-5,at.y-5,10,10)]fill];
-            drawText(portLabel(type,false,p),NSMakeRect(at.x-68,at.y-8,62,20),NSColor.lightGrayColor);
+            drawText(portLabel(type,false,p),NSMakeRect(at.x-82,at.y-8,73,18),NSColor.lightGrayColor,10,NSTextAlignmentRight);
+        }
+        if(const auto *spec=tri::nodeSpec(type)) {
+            double y=NSMinY(r)+cardDetailsTop(type);
+            int count=0;
+            for(int p:spec->params) {
+                if(!canvasParameter(*spec,p))continue;
+                NSString *value=canvasParameterValue(type,p,node);
+                const CGFloat valueWidth=std::clamp([value sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:10]}].width+3,44.0,86.0);
+                drawText(parameterName(type,p),NSMakeRect(NSMinX(r)+9,y,150-valueWidth,16),
+                    [NSColor colorWithWhite:.67 alpha:1],10);
+                drawText(value,NSMakeRect(NSMaxX(r)-9-valueWidth,y,valueWidth,16),
+                    [NSColor colorWithWhite:.9 alpha:1],10,NSTextAlignmentRight);
+                y+=16;
+                if(++count==2)break;
+            }
+            if(spec->environmentRole==tri::EnvironmentRole::Timecode)
+                drawText(editor.processingLabel.stringValue,NSMakeRect(NSMinX(r)+9,y,154,16),
+                    editor.processingLabel.textColor ?: NSColor.lightGrayColor,10);
+            if(hasAudioPreview(*spec)) {
+                NSRect preview=NSMakeRect(NSMinX(r)+9,y+2,154,29);
+                [self drawAudioPreview:node[@"asset"] rect:preview];
+            }
+        }
+    }
+    if(editor.wireSource) {
+        NSDictionary *source=[editor node:editor.wireSource];
+        const auto *port=source?tri::nodePort(typeOf(source),false,size_t(editor.wirePort)):nullptr;
+        if(port) {
+            int targetPort=0;
+            NSDictionary *target=[self wireTargetAt:[editor world:editor.wireCursor] signal:port->signal port:&targetPort];
+            const NSPoint to=target?jack([self cardRectForNode:target],false,targetPort):[editor world:editor.wireCursor];
+            NSColor *color=signalColor(port->signal);
+            drawCable(jack([self cardRectForNode:source],true,editor.wirePort),to,color,2.5);
+            if(target) {
+                const CGFloat radius=8/editor.zoom;
+                NSBezierPath *ring=[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(to.x-radius,to.y-radius,2*radius,2*radius)];
+                [color setStroke];ring.lineWidth=1.5/editor.zoom;[ring stroke];
+            }
         }
     }
     if(editor.boxSelecting) {
@@ -1920,18 +2631,34 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
         path.lineWidth=1.5;[NSColor.whiteColor setStroke];[path stroke];
     }
     [NSGraphicsContext restoreGraphicsState];
+    [self drawZoneTitles:zones];
+    if(_placementBlocked)
+        drawText(SNLocalized(@"区域太窄，按住 Shift 放置可展开。"),
+                 NSMakeRect(NSMinX(self.bounds)+10,NSMinY(self.bounds)+zoneHeaderHeight+5,NSWidth(self.bounds)-20,20),
+                 NSColor.systemOrangeColor,11,NSTextAlignmentCenter);
+    [NSGraphicsContext restoreGraphicsState];
 }
 -(void)rightMouseDown:(NSEvent *)event {
+    _cameraEnd=_cameraStart;
     SNInstanceEditor *editor=_editor;
     editor.menuPoint=[editor world:[self convertPoint:event.locationInWindow fromView:nil]];
     NSMenu *menu=[NSMenu new];
-    for(NSString *group in @[SNLocalized(@"输入"),SNLocalized(@"处理"),SNLocalized(@"逻辑"),SNLocalized(@"注释"),SNLocalized(@"输出")]) {
-        NSMenuItem *category=[menu addItemWithTitle:group action:nil keyEquivalent:@""];
-        category.submenu=[NSMenu new];
-        for(NSArray *row in catalog())if([row[2] isEqual:group]) {
-            NSMenuItem *item=[category.submenu addItemWithTitle:row[1] action:@selector(insert:) keyEquivalent:@""];
-            item.target=editor;item.tag=[row[0] integerValue];
+    const auto types=tri::nodeCatalog();
+    NSString *lastSection=nil;
+    for(NSString *group in libraryCategories(types)) {
+        NSMenu *items=[NSMenu new];
+        items.delegate=self;
+        NSString *groupTitle=nil;
+        for(int type:types)if([@(tri::nodeCategory(type)) isEqual:group]) {
+            groupTitle=SNNodeLocalized(type,group);
+            NSMenuItem *item=[items addItemWithTitle:title(type) action:@selector(insert:) keyEquivalent:@""];
+            item.target=editor;item.tag=type;
         }
+        if(!items.numberOfItems)continue;
+        NSString *section=librarySection(group);
+        if(lastSection && ![lastSection isEqual:section])[menu addItem:[NSMenuItem separatorItem]];
+        lastSection=section;
+        [menu addItemWithTitle:groupTitle action:nil keyEquivalent:@""].submenu=items;
     }
     [menu addItem:[NSMenuItem separatorItem]];
     BOOL hasSelection=[editor activeIDs].count>0;
@@ -1956,22 +2683,42 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     NSMenuItem *all=[menu addItemWithTitle:SNLocalized(@"选择全部") action:@selector(selectAll:) keyEquivalent:@"a"];
     all.target=editor;all.enabled=[(NSArray *)editor.document[@"nodes"] count]>0;
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+    [self clearPlacementFeedback];
+}
+-(void)menu:(NSMenu *)menu willHighlightItem:(NSMenuItem *)item {
+    if(item.action==@selector(insert:))[self previewPlacementForType:int(item.tag) at:_editor.menuPoint libraryDrag:NO];
+    else [self clearPlacementFeedback];
+}
+-(void)menuDidClose:(NSMenu *)menu {
+    [self clearPlacementFeedback];
 }
 -(void)mouseDown:(NSEvent *)event {
+    _cameraEnd=_cameraStart;
     SNInstanceEditor *editor=_editor;[self.window makeFirstResponder:self];
     NSPoint view=[self convertPoint:event.locationInWindow fromView:nil],point=[editor world:view];
-    editor.lastPoint=view;editor.dragStart=copyJSON(editor.document);
+    editor.lastPoint=view;
+    _dragZones.reset();
+    _dragOrigins=nil;_dragPositions=nil;
+    [self clearPlacementFeedback];
+    [self refreshLayout];
+    if(view.y<NSMinY(self.bounds)+zoneHeaderHeight && !_zones.empty) {
+        editor.panning=YES;
+        return;
+    }
     BOOL additive=(event.modifierFlags&(NSEventModifierFlagShift|NSEventModifierFlagCommand))!=0;
     for(NSDictionary *node in [editor.document[@"nodes"] reverseObjectEnumerator]) {
         int type=typeOf(node);
+        const NSRect rect=[self cardRectForNode:node];
         int outputs=tri::outputCount(type);
         for(int p=0;p<outputs;++p) {
-            NSPoint pos=jack(node,true,p);
+            NSPoint pos=jack(rect,true,p);
             if(std::hypot(pos.x-point.x,pos.y-point.y)<12/editor.zoom) {
-                editor.wireSource=[node[@"id"] unsignedLongLongValue];editor.wirePort=p;return;
+                editor.wireSource=[node[@"id"] unsignedLongLongValue];editor.wirePort=p;
+                editor.wireCursor=view;self.needsDisplay=YES;return;
             }
         }
-        if(NSPointInRect(point,nodeRect(node))) {
+        if(NSPointInRect(point,rect)) {
+            _nodeGrab=point;
             uint64_t uid=[node[@"id"] unsignedLongLongValue];
             editor.moving=0;
             if(additive) {
@@ -1982,13 +2729,22 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
                 else {editor.selected=uid;[editor inspect];}
                 editor.moving=uid;
             }
+            if(editor.moving) {
+                NSMutableDictionary *origins=[NSMutableDictionary new];
+                for(NSNumber *key in [editor activeIDs]) {
+                    NSDictionary *selected=[editor node:key.unsignedLongLongValue];
+                    if(selected)origins[key]=[NSValue valueWithPoint:nodeRect(selected).origin];
+                }
+                _dragOrigins=origins;
+            }
             self.needsDisplay=YES;return;
         }
     }
     NSInteger index=0;
     for(NSDictionary *edge in editor.document[@"edges"]) {
         NSDictionary *a=[editor node:[edge[@"source"] unsignedLongLongValue]],*b=[editor node:[edge[@"target"] unsignedLongLongValue]];
-        if(nearEdge(edge,a,b,point,7/editor.zoom)) {
+        if(a && b && nearEdge(jack([self cardRectForNode:a],true,outputPortOf(a,edge)),
+            jack([self cardRectForNode:b],false,inputPortOf(b,edge)),point,7/editor.zoom)) {
             [editor selectNone:nil];editor.selectedEdge=index;
             [editor message:SNLocalized(@"已选中连线，按 Delete 删除。")];
             self.needsDisplay=YES;return;
@@ -2024,6 +2780,9 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 -(void)mouseDragged:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
     NSPoint view=[self convertPoint:event.locationInWindow fromView:nil];
+    if(editor.wireSource) {
+        editor.wireCursor=view;self.needsDisplay=YES;return;
+    }
     if(editor.groupDrag) {
         NSPoint point=[editor world:view];
         double dx=point.x-editor.groupGrab.x,dy=point.y-editor.groupGrab.y;
@@ -2041,6 +2800,7 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
             NSMutableDictionary *node=[editor node:key.unsignedLongLongValue];if(!node)continue;
             node[@"x"]=@([origin[0] doubleValue]+dx);node[@"y"]=@([origin[1] doubleValue]+dy);
         }
+        [self invalidateLayout];
         self.needsDisplay=YES;return;
     }
     if(editor.boxSelecting) {
@@ -2048,12 +2808,25 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     }
     double dx=view.x-editor.lastPoint.x,dy=view.y-editor.lastPoint.y;
     if(editor.moving) {
-        NSArray<NSNumber *> *ids=[editor activeIDs];
-        for(NSNumber *key in ids) {
-            NSMutableDictionary *node=[editor node:key.unsignedLongLongValue];if(!node)continue;
-            double x=[node[@"x"] doubleValue]+dx/editor.zoom,y=[node[@"y"] doubleValue]+dy/editor.zoom;
+        if(!_dragZones) {
+            [self refreshLayout];
+            _dragZones=_zones;
+            _dragPositions=[NSMutableDictionary new];
+        }
+        const NSPoint point=[editor world:view];
+        for(NSNumber *key in _dragOrigins) {
+            const NSPoint start=_dragOrigins[key].pointValue;
+            double x=start.x+point.x-_nodeGrab.x;
+            double y=start.y+point.y-_nodeGrab.y;
             if(editor.snap){x=std::round(x/20)*20;y=std::round(y/20)*20;}
-            node[@"x"]=@(x);node[@"y"]=@(y);
+            _dragPositions[key]=[NSValue valueWithPoint:NSMakePoint(x,y)];
+        }
+        if(_dragOrigins.count==1) {
+            NSDictionary *node=[editor node:editor.moving];
+            const Stage stage=canvasStage(typeOf(node));
+            const NSRect source=[self cardRectForNode:node];
+            const NSRect target=placementRect(*_dragZones,stage,source,editor.document[@"nodes"],editor.moving);
+            [self showPlacementPreview:target from:source stage:stage];
         }
     } else if(editor.panning)editor.origin=NSMakePoint(editor.origin.x+dx,editor.origin.y+dy);
     editor.lastPoint=view;self.needsDisplay=YES;
@@ -2077,26 +2850,52 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
     }
     if(editor.wireSource) {
         NSPoint point=[editor world:[self convertPoint:event.locationInWindow fromView:nil]];
-        for(NSDictionary *node in editor.document[@"nodes"]) {
-            int targetType=typeOf(node);
-            auto inputs=tri::inputTypes(targetType);
-            for(int p=0;p<(int)inputs.size();++p) {
-                NSPoint pos=jack(node,false,p);
-                if(std::hypot(pos.x-point.x,pos.y-point.y)>14/editor.zoom)continue;
-                uint64_t uid=[node[@"id"] unsignedLongLongValue];
-                NSIndexSet *existing=[editor.document[@"edges"] indexesOfObjectsPassingTest:^BOOL(NSDictionary *e,NSUInteger,BOOL*){
-                    return [e[@"target"] unsignedLongLongValue]==uid && inputPortOf(node,e)==p;
+        const uint64_t sourceID=editor.wireSource;
+        const int sourceType=typeOf([editor node:sourceID]),sourcePort=editor.wirePort;
+        const auto *output=tri::nodePort(sourceType,false,size_t(sourcePort));
+        int targetPort=0;
+        NSDictionary *target=output && NSPointInRect([self convertPoint:event.locationInWindow fromView:nil],self.bounds)
+            ? [self wireTargetAt:point signal:output->signal port:&targetPort] : nil;
+        editor.wireSource=0;self.needsDisplay=YES;
+        if(target) {
+            const uint64_t targetID=[target[@"id"] unsignedLongLongValue];
+            const int targetType=typeOf(target);
+            NSMutableArray *edges=editor.document[@"edges"];
+            NSMutableDictionary *edge=makeEdge(sourceID,targetID,targetType,targetPort,sourceType,sourcePort);
+            if([edges containsObject:edge])return;
+            NSDictionary *previous=copyJSON(editor.document);
+            const auto *input=tri::nodePort(targetType,true,size_t(targetPort));
+            if(!(input->flags&tri::PortMultiSource)) {
+                NSIndexSet *existing=[edges indexesOfObjectsPassingTest:^BOOL(NSDictionary *e,NSUInteger,BOOL*){
+                    return [e[@"target"] unsignedLongLongValue]==targetID && inputPortOf(target,e)==targetPort;
                 }];
-                if(inputs[p]!=tri::Signal::Trigger)[editor.document[@"edges"] removeObjectsAtIndexes:existing];
-                NSDictionary *source=[editor node:editor.wireSource];
-                [editor.document[@"edges"] addObject:makeEdge(editor.wireSource,uid,targetType,p,
-                    source?typeOf(source):0,editor.wirePort)];
-                [editor commit:editor.dragStart];editor.wireSource=0;editor.selectedEdge=-1;
-                self.needsDisplay=YES;return;
+                [edges removeObjectsAtIndexes:existing];
             }
+            [edges addObject:edge];
+            if([editor commit:previous])editor.selectedEdge=-1;
         }
+        return;
     }
-    if(editor.moving)[editor commit:editor.dragStart];
+    if(editor.moving && _dragZones) {
+        [self mouseDragged:event];
+        const uint64_t uid=editor.moving;
+        NSNumber *key=@(uid);
+        const NSPoint start=[_dragPositions[key] pointValue];
+        const BOOL corrected=[editor node:uid] && !NSIsEmptyRect(_placementPreview);
+        if(corrected)_dragPositions[key]=[NSValue valueWithPoint:_placementPreview.origin];
+        NSDictionary *previous=copyJSON(editor.document);
+        for(NSNumber *dragged in _dragPositions) {
+            NSMutableDictionary *node=[editor node:dragged.unsignedLongLongValue];
+            const NSPoint point=_dragPositions[dragged].pointValue;
+            node[@"x"]=@(point.x);node[@"y"]=@(point.y);
+        }
+        editor.moving=0;
+        if([editor commit:previous] && corrected)
+            [self animatePlacements:@{key:[NSValue valueWithPoint:start]} focus:uid];
+    }
+    [self clearPlacementFeedback];
+    _dragZones.reset();
+    _dragOrigins=nil;_dragPositions=nil;
     editor.wireSource=0;editor.moving=0;editor.panning=NO;
     self.needsDisplay=YES;
 }
@@ -2116,6 +2915,18 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 }
 -(void)keyDown:(NSEvent *)event {
     SNInstanceEditor *editor=_editor;
+    if(editor.wireSource) {
+        if(event.keyCode==53){editor.wireSource=0;self.needsDisplay=YES;}
+        return;
+    }
+    if(editor.moving && _dragZones && event.keyCode==53) {
+        editor.moving=0;
+        _dragZones.reset();
+        _dragOrigins=nil;_dragPositions=nil;
+        [self clearPlacementFeedback];
+        self.needsDisplay=YES;
+        return;
+    }
     if(event.modifierFlags&NSEventModifierFlagCommand) {
         NSString *key=event.charactersIgnoringModifiers.lowercaseString;
         if([key isEqualToString:@"c"]){[editor copy:nil];return;}
@@ -2283,22 +3094,17 @@ void drawText(NSString *text,NSRect rect,NSColor *color,double size=12) {
 -(void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
 -(BOOL)isFlipped{return YES;}
 -(BOOL)isOpaque{return NO;}
-static NSColor *categoryColor(NSString *category) {
-    if([category isEqualToString:@"输入"])return [NSColor colorWithCalibratedRed:.40 green:.72 blue:.78 alpha:1];
-    if([category isEqualToString:@"处理"])return [NSColor colorWithCalibratedRed:.58 green:.52 blue:.86 alpha:1];
-    if([category isEqualToString:@"逻辑"])return [NSColor colorWithCalibratedRed:.90 green:.45 blue:.40 alpha:1];
-    if([category isEqualToString:@"输出"])return [NSColor colorWithCalibratedRed:.45 green:.72 blue:.52 alpha:1];
-    return [NSColor colorWithWhite:.55 alpha:1];
-}
 -(NSString *)query {
     return [_searchField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 }
 -(BOOL)matchesType:(int)type category:(NSString *)category query:(NSString *)query {
     if(!query.length)return YES;
     NSString *name=@(tri::nodeTitle(type));
-    NSString *searchable=[NSString stringWithFormat:@"%@ %@ %@ %@ %s %d",
+    NSString *section=librarySection(category);
+    NSString *searchable=[NSString stringWithFormat:@"%@ %@ %@ %@ %@ %@ %s %d",
         SNNodeLocalizedForLanguage(type,name,NO),SNNodeLocalizedForLanguage(type,name,YES),
-        SNNodeLocalizedForLanguage(type,category,NO),SNNodeLocalizedForLanguage(type,category,YES),tri::nodeKey(type),type];
+        SNNodeLocalizedForLanguage(type,category,NO),SNNodeLocalizedForLanguage(type,category,YES),
+        section,SNLocalizedForLanguage(section,YES),tri::nodeKey(type),type];
     for(NSString *word in [query componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]) {
         if(word.length && [searchable rangeOfString:word options:(NSCaseInsensitiveSearch|NSDiacriticInsensitiveSearch)].location==NSNotFound)return NO;
     }
@@ -2317,23 +3123,29 @@ static NSColor *categoryColor(NSString *category) {
     double y=108;
     // Iterate descriptors directly: search remains bilingual even when the
     // canvas/menu catalogue has already translated its display strings.
-    NSMutableOrderedSet<NSString*> *categories=[NSMutableOrderedSet orderedSetWithArray:@[@"工程",@"输入",@"处理",@"逻辑",@"注释",@"输出"]];
-    for(int type:tri::nodeCatalog())[categories addObject:@(tri::nodeCategory(type))];
-    for(NSString *category in categories) {
+    const auto types=tri::nodeCatalog();
+    NSString *lastSection=nil;
+    for(NSString *category in libraryCategories(types)) {
         NSMutableArray<NSNumber *> *items=[NSMutableArray new];
-        for(int type:tri::nodeCatalog()) {
+        for(int type:types) {
             if([@(tri::nodeCategory(type)) isEqualToString:category] && [self matchesType:type category:category query:query])
                 [items addObject:@(type)];
         }
         if(!items.count)continue;
+        NSString *section=librarySection(category);
+        if(![section isEqualToString:lastSection]) {
+            if(lastSection)y+=7;
+            [_rows addObject:@{@"kind":@"section",@"title":SNLocalized(section),@"section":section,@"y":@(y),@"h":@25}];
+            y+=25;lastSection=section;
+        }
         _matchCount+=items.count;
         BOOL collapsed=!query.length && [_collapsedCategories containsObject:category];
         [_rows addObject:@{@"kind":@"header",@"title":SNNodeLocalized(items.firstObject.intValue,category),@"category":category,
-            @"count":@(items.count),@"collapsed":@(collapsed),@"y":@(y),@"h":@28}];
+            @"section":section,@"count":@(items.count),@"collapsed":@(collapsed),@"y":@(y),@"h":@28}];
         y+=30;
         if(!collapsed)for(NSNumber *type in items) {
             [_rows addObject:@{@"kind":@"item",@"title":SNNodeLocalized(type.intValue,@(tri::nodeTitle(type.intValue))),
-                @"type":type,@"category":category,@"y":@(y),@"h":@28}];
+                @"type":type,@"category":category,@"section":section,@"y":@(y),@"h":@28}];
             y+=28;
         }
         y+=6;
@@ -2402,7 +3214,7 @@ static NSColor *categoryColor(NSString *category) {
     for(NSUInteger i=0;i<_rows.count;++i) {
         NSDictionary *row=_rows[i];
         double y=[row[@"y"] doubleValue],h=[row[@"h"] doubleValue];
-        if(p.y>=y && p.y<y+h)return (NSInteger)i;
+        if(p.y>=y && p.y<y+h)return [row[@"kind"] isEqualToString:@"section"]?-1:(NSInteger)i;
     }
     return -1;
 }
@@ -2429,22 +3241,27 @@ static NSColor *categoryColor(NSString *category) {
         double y=[row[@"y"] doubleValue],h=[row[@"h"] doubleValue];
         NSRect r=NSMakeRect(5,y,self.bounds.size.width-10,h);
         if(!NSIntersectsRect(dirty,r))continue;
+        NSColor *tint=libraryTint(row[@"section"]);
+        BOOL section=[row[@"kind"] isEqualToString:@"section"];
         BOOL header=[row[@"kind"] isEqualToString:@"header"];
         BOOL hot=((NSInteger)i==_hover);
-        if(hot || header) {
-            [[NSColor colorWithWhite:1 alpha:hot?.075:.035]setFill];
-            [[NSBezierPath bezierPathWithRoundedRect:r xRadius:5 yRadius:5]fill];
+        [[tint colorWithAlphaComponent:hot?.22:section?.20:header?.12:.055]setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4]fill];
+        if(section) {
+            [self drawLibraryText:row[@"title"] rect:NSMakeRect(12,y+5,r.size.width-14,17)
+                color:tint size:11];
+            continue;
         }
         if(header) {
             [self drawLibraryText:[row[@"collapsed"] boolValue]?@"▸":@"▾" rect:NSMakeRect(11,y+5,12,18)
                 color:[NSColor colorWithWhite:.6 alpha:1] size:12];
             [self drawLibraryText:row[@"title"] rect:NSMakeRect(27,y+6,r.size.width-65,17)
-                color:categoryColor(row[@"category"]) size:11];
+                color:[NSColor colorWithWhite:.88 alpha:1] size:11];
             [self drawLibraryText:[row[@"count"] stringValue] rect:NSMakeRect(NSWidth(self.bounds)-33,y+6,24,17)
                 color:[NSColor colorWithWhite:.5 alpha:1] size:10.5];
             continue;
         }
-        [categoryColor(row[@"category"]) setFill];
+        [tint setFill];
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(14,y+h/2-2.5,5,5)]fill];
         [self drawLibraryText:row[@"title"] rect:NSMakeRect(28,y+6,r.size.width-32,18)
             color:[NSColor colorWithWhite:hot?.98:.81 alpha:1] size:11.5];
@@ -2616,6 +3433,10 @@ NSView *TRICreateEditor(TRIRead read,TRIWrite write,TRIMIDI midi,TRIInputRead in
     __weak SNInstanceEditor *weak=editor;
     editor.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer*){[weak tick];}];
     return editor;
+}
+
+BOOL TRIOpenEditorProject(NSView *view,NSURL *url) {
+    return [view isKindOfClass:SNInstanceEditor.class] && [(SNInstanceEditor *)view openProject:url];
 }
 
 void TRIFlushEditorAutosave(NSView *view) {

@@ -25,7 +25,7 @@ inline bool validate(const KernelConfig& config,std::string& why) {
 
 inline NodeModule module() {
     using namespace tri::detail;
-    NodeSpec spec{"soundnet.ace-step",nodeTypeID("soundnet.ace-step"),"ACE-Step 生成","输入",1,1,true,true,
+    NodeSpec spec{"soundnet.ace-step",nodeTypeID("soundnet.ace-step"),"ACE-Step 生成","发声",1,1,true,true,
         CapTask|CapGenerator|CapAssetAudio|CapStream|CapBypassable,TimeMode::Timed,0,
         {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional)},
         {pout("audio","音频",Signal::Audio,RoleMain)},

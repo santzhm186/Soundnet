@@ -7,7 +7,7 @@ namespace tri::nodes::audio_output {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.audio-output",typeID,"音频输出","输出",2,1,true,true,
+    NodeSpec spec{"soundnet.audio-output",typeID,"音频输出","工程与 I/O",2,1,true,true,
              CapOutputSink|CapBypassable,TimeMode::Stream,0,
              {pin("audio","音频",Signal::Audio,RoleOutput,req)},
              {pout("audio","音频",Signal::Audio,RoleMain)}, {Master,OutputWidth}, nullptr};

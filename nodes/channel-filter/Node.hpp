@@ -9,7 +9,7 @@ namespace tri::nodes::channel_filter {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.channel-filter",typeID,"通道过滤","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.channel-filter",typeID,"通道过滤","音符",1,1,true,true,
              CapNoteSource|CapData|CapBypassable,TimeMode::None,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("notes","音符",Signal::Midi,RoleMain)},

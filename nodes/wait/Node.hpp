@@ -9,7 +9,7 @@ namespace tri::nodes::wait {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.wait",typeID,"等待","逻辑",1,1,true,true,
+    NodeSpec spec{"soundnet.wait",typeID,"等待","走带与控制",1,1,true,true,
              CapTriggerSource|CapData|CapTemporal,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
              {pout("trigger","触发",Signal::Trigger,RoleTrigger)}, {WaitSeconds}, nullptr};

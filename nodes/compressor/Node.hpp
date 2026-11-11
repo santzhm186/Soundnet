@@ -8,7 +8,7 @@ namespace tri::nodes::compressor {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.compressor",typeID,"压缩器","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.compressor",typeID,"压缩器","声音处理",1,1,true,true,
              CapStream|CapBypassable,TimeMode::Stream,0,
              {pin("audio","音频",Signal::Audio,RoleMain,req),pin("sidechain","侧链",Signal::Audio,RoleSidechain)},
              {pout("audio","音频",Signal::Audio,RoleMain)},

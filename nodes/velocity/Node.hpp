@@ -9,7 +9,7 @@ namespace tri::nodes::velocity {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.velocity",typeID,"力度自动化","处理",2,1,true,true,
+    NodeSpec spec{"soundnet.velocity",typeID,"力度自动化","音符",2,1,true,true,
              CapNoteSource|CapData,TimeMode::Timed,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("notes","音符",Signal::Midi,RoleMain)},

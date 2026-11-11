@@ -8,7 +8,7 @@
 namespace tri::nodes::midi_clip {
 inline NodeModule module() {
     using namespace tri::detail;
-    NodeSpec spec{"soundnet.midi-clip",typeID,"MIDI Clip","输入",2,1,true,true,
+    NodeSpec spec{"soundnet.midi-clip",typeID,"MIDI Clip","音符",2,1,true,true,
              CapNoteSource|CapData|CapAssetClip|CapStream|CapMidiCapture,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback),
               pin("notes","MIDI 输入",Signal::Midi,RoleMain,PortOptional)},

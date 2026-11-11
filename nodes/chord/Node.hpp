@@ -9,7 +9,7 @@ namespace tri::nodes::chord {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.chord",typeID,"和弦输入","输入",1,1,true,true,
+    NodeSpec spec{"soundnet.chord",typeID,"和弦输入","音符",1,1,true,true,
              CapNoteSource|CapData|CapGenerator,TimeMode::Timed,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("notes","音符",Signal::Midi,RoleMain)},

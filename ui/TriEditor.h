@@ -21,6 +21,7 @@ NSView *TRICreateEditor(TRIRead read, TRIWrite write, TRIMIDI midi, TRIInputRead
                         TRIProcessingRead processingRead = nullptr, TRIProcessingWrite processingWrite = nullptr,
                         TRINodeStop nodeStop = nullptr, TRIEnvironmentRead environmentRead = nullptr,
                         TRIMidiCapture midiCapture = nullptr);
+BOOL TRIOpenEditorProject(NSView *view, NSURL *url);
 void TRIFlushEditorAutosave(NSView *view);
 typedef void (^TRINodeLibraryRefresh)(void (^completed)(NSString *message));
 void TRISetNodeLibraryRefresh(NSView *view, TRINodeLibraryRefresh refresh);

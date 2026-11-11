@@ -8,7 +8,7 @@ namespace tri::nodes::noise_gate {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.noise-gate",typeID,"噪声门","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.noise-gate",typeID,"噪声门","声音处理",1,1,true,true,
              CapStream|CapBypassable,TimeMode::Stream,0,
              {pin("audio","音频",Signal::Audio,RoleMain,req)},
              {pout("audio","音频",Signal::Audio,RoleMain)},

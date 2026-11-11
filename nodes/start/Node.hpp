@@ -9,7 +9,7 @@ namespace tri::nodes::start {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.start",typeID,"开始触发器","逻辑",1,1,true,true,
+    NodeSpec spec{"soundnet.start",typeID,"开始触发器","走带与控制",1,1,true,true,
              CapTriggerSource|CapData,TimeMode::None,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger)},
              {pout("trigger","触发",Signal::Trigger,RoleTrigger)}, {TriggerPulse}, nullptr};

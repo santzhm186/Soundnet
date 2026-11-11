@@ -6,7 +6,7 @@
 namespace tri::nodes::timecode {
 inline NodeModule module() {
     using namespace tri::detail;
-    NodeSpec spec{"soundnet.timecode",nodeTypeID("soundnet.timecode"),"时间码","工程",1,1,true,true,
+    NodeSpec spec{"soundnet.timecode",nodeTypeID("soundnet.timecode"),"时间码","走带与控制",1,1,true,true,
         CapStream|CapGenerator|CapClockSource,TimeMode::Stream,0,{},
         {pout("time","时间码",Signal::Clock,RoleClock)},{},nullptr};
     spec.kernelFactory=create;

@@ -17,7 +17,7 @@ inline bool validate(const KernelConfig& config,std::string& why) {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.voice-arranger",typeID,"三声部编排器","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.voice-arranger",typeID,"三声部编排器","音符",1,1,true,true,
              CapNoteSource|CapData|CapMultiOutput,TimeMode::Timed,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("high","高声部",Signal::Midi,RoleMain),pout("middle","中声部",Signal::Midi,RoleMain),

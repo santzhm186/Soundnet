@@ -9,7 +9,7 @@ namespace tri::nodes::metronome {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.metronome",typeID,"节拍器","逻辑",1,1,true,true,
+    NodeSpec spec{"soundnet.metronome",typeID,"节拍器","发声",1,1,true,true,
              CapStream|CapGenerator|CapBypassable|CapTemporal,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger)},
              {pout("audio","音频",Signal::Audio,RoleMain)},

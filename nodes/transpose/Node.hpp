@@ -9,7 +9,7 @@ namespace tri::nodes::transpose {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.transpose",typeID,"移调","处理",2,1,true,true,
+    NodeSpec spec{"soundnet.transpose",typeID,"移调","音符",2,1,true,true,
              CapNoteSource|CapData|CapBypassable,TimeMode::None,0,
              {pin("notes","音符",Signal::Midi,RoleMain)},
              {pout("notes","音符",Signal::Midi,RoleMain)},

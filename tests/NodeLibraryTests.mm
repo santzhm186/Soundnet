@@ -34,17 +34,22 @@ int main() {
         assert(library);
         const NSUInteger total=tri::nodeCatalog().size();
         assert(items(library).count==total);
-        const NSUInteger processCount=[[items(library) filteredArrayUsingPredicate:
-            [NSPredicate predicateWithFormat:@"category == %@",@"处理"]] count];
-        assert(processCount>0);
+        NSArray *rows=[library valueForKey:@"rows"];
+        NSArray *sections=[rows filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"kind == 'section'"]];
+        assert([[sections valueForKey:@"section"] isEqual:(@[@"创作节点",@"辅助节点"])]);
+        NSArray *headers=[rows filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"kind == 'header'"]];
+        assert([[headers valueForKey:@"category"] isEqual:(@[@"音符",@"发声",@"声音处理",@"走带与控制",@"工程与 I/O"])]);
+        const NSUInteger sourceCount=[[items(library) filteredArrayUsingPredicate:
+            [NSPredicate predicateWithFormat:@"category == %@",@"发声"]] count];
+        assert(sourceCount>0);
 
-        [library toggleCategory:@"处理"];
-        assert(items(library).count==total-processCount);
+        [library toggleCategory:@"发声"];
+        assert(items(library).count==total-sourceCount);
         // Filtering reveals matches in a collapsed category without changing
         // the user's category state. Both languages work in either UI language.
         [library setSearchQuery:@"oscillator"];
         assert(items(library).count>0);
-        for(NSDictionary *row in items(library))assert([row[@"category"] isEqual:@"处理"]);
+        for(NSDictionary *row in items(library))assert([row[@"category"] isEqual:@"发声"]);
         [library setSearchQuery:@"振荡器"];
         assert(items(library).count>0);
         [library setSearchQuery:@"soundnet.oscillator"];
@@ -53,25 +58,25 @@ int main() {
         assert(items(library).count==1 && [items(library).firstObject[@"type"] intValue]==tri::nodeTypeForKey("soundnet.project-settings"));
         [library setSearchQuery:@"Timecode"];
         assert(items(library).count==1 && [items(library).firstObject[@"type"] intValue]==tri::nodeTypeForKey("soundnet.timecode"));
-        [library setSearchQuery:@"  PROCESS oscillator  "];
+        [library setSearchQuery:@"  SOUND SOURCES oscillator  "];
         assert(items(library).count>0);
         [library setSearchQuery:@"definitely-no-such-node"];
         assert(items(library).count==0);
         assert([[library valueForKey:@"rows"] count]==0);
         [library setSearchQuery:@""];
-        assert(items(library).count==total-processCount);
+        assert(items(library).count==total-sourceCount);
 
         [library collapseAll:nil];
         assert(items(library).count==0);
         assert([[library valueForKey:@"rows"] count]>0);
-        [library setSearchQuery:@"输入"];
+        [library setSearchQuery:@"辅助节点"];
         assert(items(library).count>0);
         [library expandAll:nil]; // Search mode must not overwrite saved state.
         [library setSearchQuery:@""];
         assert(items(library).count==0);
         [library expandAll:nil];
         assert(items(library).count==total);
-        [library toggleCategory:@"输入"];
+        [library toggleCategory:@"工程与 I/O"];
         NSView *second=[[NSClassFromString(@"SNNodeLibrary") alloc]initWithFrame:NSMakeRect(0,0,216,600)];
         assert(items(second).count==items(library).count);
 

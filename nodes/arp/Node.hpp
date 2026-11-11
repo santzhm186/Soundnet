@@ -9,7 +9,7 @@ namespace tri::nodes::arp {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.arp",typeID,"ARP","处理",2,1,true,true,
+    NodeSpec spec{"soundnet.arp",typeID,"ARP","音符",2,1,true,true,
              CapNoteSource|CapData,TimeMode::Timed,0,
              {pin("notes","音符",Signal::Midi,RoleMain),
               pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},

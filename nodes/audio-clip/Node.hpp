@@ -14,7 +14,7 @@ inline bool validate(const KernelConfig& config,std::string& why) {
 inline NodeModule module() {
     using namespace tri::detail;
     const uint8_t req=0;
-    NodeSpec spec{"soundnet.audio-clip",typeID,"音频片段","处理",1,1,true,true,
+    NodeSpec spec{"soundnet.audio-clip",typeID,"音频片段","发声",1,1,true,true,
              CapStream|CapBypassable|CapAssetAudio,TimeMode::Timed,0,
              {pin("trigger","触发",Signal::Trigger,RoleTrigger,PortOptional|PortFeedback)},
              {pout("audio","音频",Signal::Audio,RoleMain)},
